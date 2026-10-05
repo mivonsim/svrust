@@ -65,7 +65,12 @@ fn write_bits_expr(expr: &Expr, out: &mut String, indent: &Indent) {
         Expr::SignalRef { signal, .. } => {
             out.push_str(&format!("self.signals[{}].read()", signal));
         }
-        Expr::Bin { op, lhs, rhs, data_type } => {
+        Expr::Bin {
+            op,
+            lhs,
+            rhs,
+            data_type,
+        } => {
             match *op {
                 // Pembagian/sisa lewat helper runtime agar pembagi nol aman.
                 BinOp::Div => {
@@ -78,9 +83,15 @@ fn write_bits_expr(expr: &Expr, out: &mut String, indent: &Indent) {
                 // pada vektor penuh `MAX_WIDTH`, sedangkan LRM §11.4.10
                 // menentukan lebar dari operand kiri dan meminta jumlah
                 // geser `x`/`z` menghasilkan unknown.
-                BinOp::Shl => {
-                    write_shift("geser_kiri", lhs.data_type().width, lhs, rhs, None, out, indent)
-                }
+                BinOp::Shl => write_shift(
+                    "geser_kiri",
+                    lhs.data_type().width,
+                    lhs,
+                    rhs,
+                    None,
+                    out,
+                    indent,
+                ),
                 BinOp::Shr => write_shift(
                     "geser_kanan_logis",
                     lhs.data_type().width,

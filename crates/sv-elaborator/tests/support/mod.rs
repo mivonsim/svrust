@@ -178,8 +178,13 @@ pub fn evaluasi(expr: &Expr, signals: &mut Vec<u64>) -> u64 {
                 // LRM §11.6.1: lebar hasil geser mengikuti operand KIRI, jadi
                 // hasilnya dipotong ke lebar operand kiri — `8'hFF << 1`
                 // adalah 8'hFE, bukan 0'h1FE.
-                Shl => (a << b) & lebar_mask(lhs.data_type().width),
-                Shr => a >> b,
+                //
+                // Operator Rust mentah `a << b` PANIC di build debug saat
+                // `b >= 64`, sedangkan `sv_runtime::geser_kiri` mengembalikan
+                // 0. Kedua jalur harus memakai helper yang sama supaya test
+                // bisa menguji jumlah geser yang melebihi lebar logis.
+                Shl => geser_kiri(a, b, lhs.data_type().width),
+                Shr => geser_kanan_logis(a, b, lhs.data_type().width),
                 // LRM §11.4.10: `>>>` mengisi bit sign tipe hasil. Lebar
                 // mengikuti operand kiri seperti geser lain.
                 Sar => geser_kanan_aritmetik(a, b, lhs.data_type().width, expr.data_type().signed),
@@ -388,27 +393,63 @@ pub fn lebar_mask(lebar: u32) -> u64 {
     }
 }
 
+/// `a << b` sepanjang lebar logis `lebar` (LRM §11.4.10).
+///
+/// Meniru `sv_runtime::geser_kiri` per digit: pengisi nol, dan jumlah geser
+/// yang melebihi lebar mengosongkan seluruh bit — bukan `u64` yang bergeser
+/// melewati kapasitas dan wraps atau panic.
+fn geser_kiri(a: u64, b: u64, lebar: u32) -> u64 {
+    geser_basis(a, b, lebar, true, false)
+}
+
+/// `a >> b` sepanjang lebar logis `lebar` (LRM §11.4.10).
+///
+/// Meniru `sv_runtime::geser_kanan_logis`: pengisi nol apa pun signedness-nya.
+fn geser_kanan_logis(a: u64, b: u64, lebar: u32) -> u64 {
+    geser_basis(a, b, lebar, false, false)
+}
+
 /// `a >>> b` pada lebar logis `lebar` (LRM §11.4.10).
 ///
 /// Geser logis lebih dulu, lalu posisi vacated diisi bit sign hanya bila tipe
 /// hasil signed. Jumlah gesar yang melebihi lebar membuat seluruh hasil sign
 /// (atau nol untuk unsigned), sama seperti `sv_runtime::geser_kanan_aritmetik`.
 fn geser_kanan_aritmetik(a: u64, b: u64, lebar: u32, signed: bool) -> u64 {
+    geser_basis(a, b, lebar, false, signed)
+}
+
+/// Badan bersama ketiga operator geser, per digit.
+///
+/// Meniru `sv_runtime::shift::geser`. Bucle per digit (bukan `a << b`) penting
+/// karena dua hal: jumlah geser `>= 64` tidak boleh panic di build debug, dan
+/// `b.min(63)` akan menyisakan bit 63 pada lebar 64 alih-alih mengosongkan
+/// seluruhnya.
+fn geser_basis(a: u64, b: u64, lebar: u32, kiri: bool, signed: bool) -> u64 {
     let w = (lebar as usize).min(64);
     if w == 0 {
         return 0;
     }
+    let nilai = a & lebar_mask(lebar);
     let jumlah = usize::try_from(b).unwrap_or(usize::MAX);
-    let hasil_logis = (a >> jumlah.min(63)) & lebar_mask(lebar);
-    if !signed || (a >> (w - 1)) & 1 == 0 {
-        return hasil_logis;
+    let sign = signed && (nilai >> (w - 1)) & 1 == 1;
+    let mut out = 0u64;
+    for i in 0..w {
+        let src = if kiri {
+            i.checked_sub(jumlah)
+        } else {
+            i.checked_add(jumlah)
+        };
+        let satu = match src {
+            Some(s) if s < w => (nilai >> s) & 1 == 1,
+            // Bit yang keluar dari jangkauan: nol untuk logis, sign untuk
+            // aritmetik.
+            _ => sign,
+        };
+        if satu {
+            out |= 1u64 << i;
+        }
     }
-    let mulai = jumlah.min(w);
-    let tinggi = w - mulai;
-    if tinggi == 0 || tinggi >= 64 {
-        return hasil_logis;
-    }
-    hasil_logis | (lebar_mask(tinggi as u32) << mulai)
+    out
 }
 
 /// Nilai `nilai` setelah `tipe'(nilai)` (LRM §6.14).

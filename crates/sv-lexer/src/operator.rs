@@ -310,7 +310,10 @@ mod tests {
         assert_eq!(lex("a <<< b").unwrap()[1].token, Token::Shl);
         assert_eq!(lex("a >>> b").unwrap()[1].token, Token::Sar);
         // `>>>` tidak boleh salah dibaca sebagai `>>` diikuti `>`.
-        assert_eq!(lex(">>>=").unwrap()[0].token, Token::CompoundAssign(CompoundOp::Sar));
+        assert_eq!(
+            lex(">>>=").unwrap()[0].token,
+            Token::CompoundAssign(CompoundOp::Sar)
+        );
         assert_eq!(
             lex("<<<= x").unwrap()[0].token,
             Token::CompoundAssign(CompoundOp::Shl)

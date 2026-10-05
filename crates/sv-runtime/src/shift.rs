@@ -99,7 +99,10 @@ mod tests {
     fn geser_kanan_aritmetik_mengisi_tanda_bila_signed() {
         let a = Bits::<8>::from_u64(0b1000_0000);
         let n = Bits::<8>::from_u64(1);
-        assert_eq!(geser_kanan_aritmetik::<8, 8>(&a, &n, true).to_u64(), 0b1100_0000);
+        assert_eq!(
+            geser_kanan_aritmetik::<8, 8>(&a, &n, true).to_u64(),
+            0b1100_0000
+        );
     }
 
     #[test]
@@ -107,7 +110,10 @@ mod tests {
         // LRM §11.4.10: `>>>` pada tipe hasil unsigned sama dengan `>>`.
         let a = Bits::<8>::from_u64(0b1000_0000);
         let n = Bits::<8>::from_u64(1);
-        assert_eq!(geser_kanan_aritmetik::<8, 8>(&a, &n, false).to_u64(), 0b0100_0000);
+        assert_eq!(
+            geser_kanan_aritmetik::<8, 8>(&a, &n, false).to_u64(),
+            0b0100_0000
+        );
     }
 
     #[test]
@@ -125,8 +131,10 @@ mod tests {
         // LRM §11.4.10: jumlah geser `x`/`z` menghasilkan unknown. Dulu
         // `to_u64()` menghitung `z` sebagai 0 sehingga hasilnya angka pasti.
         let a = Bits::<8>::from_u64(0b1010_0000);
-        for n in [Bits::from_unknown(0, 0b0010, 0b0010, 4), Bits::from_unknown(0, 0, 0b0010, 4)]
-        {
+        for n in [
+            Bits::from_unknown(0, 0b0010, 0b0010, 4),
+            Bits::from_unknown(0, 0, 0b0010, 4),
+        ] {
             assert_eq!(geser_kanan_logis::<8, 8>(&a, &n).to_hex_lebar(8), "xx");
             assert_eq!(geser_kiri::<8, 8>(&a, &n).to_hex_lebar(8), "xx");
         }

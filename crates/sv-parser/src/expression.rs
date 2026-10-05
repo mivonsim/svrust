@@ -848,6 +848,34 @@ mod tests {
     }
 
     #[test]
+    fn geser_aritmetik_diparse_terpisah_dari_logis() {
+        // LRM §11.4.10: `>>>` mengisi bit sign, jadi tidak boleh menyatu
+        // dengan `>>`. `<<<` identik dengan `<<`.
+        assert!(matches!(
+            parse("a >>> b"),
+            Expr::Binary {
+                op: BinaryOp::Sar,
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse("a <<< b"),
+            Expr::Binary {
+                op: BinaryOp::Shl,
+                ..
+            }
+        ));
+        // Presedensi sama dengan `>>`: `a >>> b + 1` = `a >>> (b + 1)`.
+        assert!(matches!(
+            parse("a >>> b + 1"),
+            Expr::Binary {
+                op: BinaryOp::Sar,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn parse_parenthesized() {
         assert_eq!(nama(&parse("(opcode)")), "opcode");
     }

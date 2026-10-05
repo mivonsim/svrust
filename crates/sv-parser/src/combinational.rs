@@ -699,6 +699,19 @@ mod tests {
     }
 
     #[test]
+    fn compound_geser_aritmetik_diparse_sebagai_operator_sar() {
+        // LRM §11.4.10: `>>>=` harus menjadi `x = x >>> n`, bukan `x = x >> n`.
+        let stmt = parse("q >>>= 2;");
+        let keluar = format!("{stmt:?}");
+        assert!(keluar.contains("Sar"), "dapat {keluar}");
+        let step = parse("for (i = 8; i > 0; i >>>= 1) s = s + 1;");
+        match &langkah(&step, false).rhs {
+            Expr::Binary { op, .. } => assert_eq!(*op, BinaryOp::Sar),
+            other => panic!("rhs tak terduga: {other:?}"),
+        }
+    }
+
+    #[test]
     fn langkah_penugasan_biasa_tetap_berfungsi() {
         // Regresi: `i = i + 1` harus tetap diterima apa adanya.
         let stmt = parse("for (i = 0; i < 4; i = i + 1) s = s + 1;");

@@ -127,8 +127,11 @@ fn geser_logis(a: u64, b: u64, lebar: u32, kiri: bool) -> u64 {
     out
 }
 
-/// Bit yang `>>>` isi dengan nilai sign: semua posisi di atas `jumlah - 1`
-/// sampai lebar logis, hanya bila tipe hasil signed.
+/// Bit yang `>>>` isi dengan nilai sign.
+///
+/// Posisi vacated pada geser kanan adalah bit-**atas** sebanyak jumlah geser,
+/// bukan bit bawah: `8'shF0 >>> 1` mengisi bit 7 saja (0xf8), sedangkan mengisi
+/// bit 1..7 memberi 0xfe.
 fn sign_fill(a: u64, b: u64, lebar: u32, signed: bool) -> u64 {
     let w = (lebar as usize).min(64);
     if !signed || w == 0 {
@@ -138,12 +141,11 @@ fn sign_fill(a: u64, b: u64, lebar: u32, signed: bool) -> u64 {
     if (a >> (w - 1)) & 1 == 0 {
         return 0;
     }
-    let mulai = jumlah.min(w);
-    let tinggi = w - mulai;
-    if tinggi == 0 || tinggi >= 64 {
-        return 0;
+    let tinggi = jumlah.clamp(1, w);
+    if tinggi >= 64 {
+        return u64::MAX;
     }
-    mask(tinggi as u32) << mulai
+    mask(tinggi as u32) << (w - tinggi)
 }
 
 /// Nilai bertanda sepanjang lebar logis `lebar`.
@@ -257,13 +259,16 @@ fn hitung(expr: &Expr) -> Option<Expr> {
             rhs,
             data_type,
         } => {
-            let (a, _, _) = sebagai_konst_nukil(lhs)?;
+            let (a, a_x, a_z) = sebagai_konst_nukil(lhs)?;
             let (b, b_x, b_z) = sebagai_konst_nukil(rhs)?;
-            // LRM §11.4.10: jumlah geser `x`/`z` menghasilkan unknown. Tanpa
-            // penjaga ini lipatan menghitung digit `z` sebagai 0 dan
-            // melipat shift berukuran `x`/`z` menjadi angka, persis kebalikan
-            // runtime yang mengembalikan `xxxx`.
-            if op.is_shift() && (b_x != 0 || b_z != 0) {
+            // LRM §11.4.10: jumlah geser `x`/`z` menghasilkan unknown, dan
+            // digit `x`/`z` pada operand kiri ikut terbawa ke posisi yang
+            // sama. `geser_logis`/`sign_fill` membaca bit mentah dari `u64`
+            // sehingga keduanya kehilangan digit itu — lipatan harus dilewati
+            // kalau salah satu operandnya belum pasti. Tanpa penjaga operand
+            // KIRI, `8'b1010_xx01 >>> 2` terlipat jadi `00101000` (28)
+            // sedangkan iverilog dan runtime helper memberi `00101xxx` (2x).
+            if op.is_shift() && (a_x != 0 || a_z != 0 || b_x != 0 || b_z != 0) {
                 return None;
             }
             // Perbandingan bertanda hanya sah bila kedua operand signed
@@ -842,10 +847,21 @@ mod tests {
         }
         assert_eq!(fold_expr(&mut e), 1);
         // Tipe hasil ikut terjaga: konstanta tetap signed seperti node asal.
-        assert_eq!(
-            e,
-            Expr::constant(0xF8, DataType::signed(8))
-        );
+        assert_eq!(e, Expr::constant(0xF8, DataType::signed(8)));
+    }
+
+    #[test]
+    fn geser_aritmetik_mengisi_hanya_bit_atas_kosong() {
+        // Posisi vacated pada geser kanan adalah bit ATAS sebanyak jumlah
+        // geser. Mengisi bit 1..7 (seolah-olah posisi kosong ada di bawah)
+        // menghasilkan 0xfe untuk `8'shF0 >>> 1`; iverilog dan LRM §11.4.10
+        // memberi 0xf8.
+        let mut e = bin(BinOp::Sar, kon(0xF0, 8), kon(1, 8), 8);
+        if let Expr::Bin { data_type, .. } = &mut e {
+            data_type.signed = true;
+        }
+        assert_eq!(fold_expr(&mut e), 1);
+        assert_eq!(e, Expr::constant(0xF8, DataType::signed(8)));
     }
 
     #[test]
@@ -873,5 +889,20 @@ mod tests {
         let mut e = bin(BinOp::Shl, kon(1, 8), kon(3, 8), 8);
         assert_eq!(fold_expr(&mut e), 1);
         assert_eq!(e, kon(8, 8));
+    }
+
+    #[test]
+    fn geser_operand_kiri_x_tidak_dilipat() {
+        // BUG: `geser_logis`/`sign_fill` membaca bit dari `a` mentah, jadi
+        // digit `x`/`z` pada operand KIRI hilang diam-diam: penjaga di
+        // `fold_expr` hanya mengecek masker Operand kanan. `8'b1010_xx01 >>> 2`
+        // jadi terlipat jadi `0x28`, sementara runtime (`geser` di sv-runtime)
+        // memindahkan digit `x` ke posisi barunya dan iverilog mencetak `2X`.
+        let kiri_x = Expr::constant_unknown(0b1010_0101, DataType::logic(8), 0b0000_1100);
+        for op in [BinOp::Shl, BinOp::Shr, BinOp::Sar] {
+            let mut e = bin(op, kiri_x.clone(), kon(2, 8), 8);
+            assert_eq!(fold_expr(&mut e), 0, "op {op:?} harus tidak terlipat");
+            assert!(matches!(e, Expr::Bin { .. }), "op {op:?}");
+        }
     }
 }

@@ -41,6 +41,42 @@ fn emits_bitwise_and_for_and_operator() {
 }
 
 #[test]
+fn emits_shift_helpers_dengan_lebar_logis() {
+    // LRM §11.4.10: operator Rust `<<` bekerja pada vektor penuh MAX_WIDTH,
+    // sedangkan LRM menentukan lebar dari operand kiri. `<<<` harus tetap
+    // memakai helper yang sama dengan `<<`.
+    let code = generate(
+        "module m(input [7:0] a, input [3:0] n, output [7:0] y); assign y = a << n; endmodule",
+    );
+    assert!(code.contains("geser_kiri::<8, MAX_WIDTH>"), "dapat {code}");
+    let code = generate(
+        "module m(input [7:0] a, input [3:0] n, output [7:0] y); assign y = a <<< n; endmodule",
+    );
+    assert!(code.contains("geser_kiri::<8, MAX_WIDTH>"), "dapat {code}");
+}
+
+#[test]
+fn geser_aritmetik_meneruskan_flag_signed_hasil() {
+    // LRM §11.4.10: bit pengisi `>>>` ditentukan signedness tipe HASIL.
+    let kode_signed = generate(
+        "module m(input signed [7:0] a, input [3:0] n, output signed [7:0] y); assign y = a >>> n; endmodule",
+    );
+    assert!(
+        kode_signed.contains("geser_kanan_aritmetik::<8, MAX_WIDTH>(")
+            && kode_signed.contains(", true)"),
+        "dapat {kode_signed}"
+    );
+    let kode_unsigned = generate(
+        "module m(input [7:0] a, input [3:0] n, output [7:0] y); assign y = a >>> n; endmodule",
+    );
+    assert!(
+        kode_unsigned.contains("geser_kanan_aritmetik::<8, MAX_WIDTH>(")
+            && kode_unsigned.contains(", false)"),
+        "dapat {kode_unsigned}"
+    );
+}
+
+#[test]
 fn sequential_assignment_uses_pending_queue() {
     let code =
         generate("module dff(input clk, input d, output q); always_ff @(posedge clk) begin q <= d; end endmodule");

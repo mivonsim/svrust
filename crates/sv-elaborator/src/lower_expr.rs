@@ -27,6 +27,27 @@ pub fn lower_expression_konteks(
     symbols: &SymbolTable,
     lebar_konteks: u32,
 ) -> Result<Expr, ElaborateError> {
+    lower_expression_dengan_konteks(expr, symbols, lebar_konteks, None)
+}
+
+/// Lower ekspresi dengan lebar **dan** signedness konteks dari luar.
+///
+/// `signed_konteks` hanya diisi pada cabang `? :`, yang LRM §11.6.1 langkah 3
+/// mewajibkan untuk mengonversi cabangnya ke tipe hasil. Itu penting untuk
+/// `>>>`: bit pengisinya ditentukan signedness tipe HASIL, jadi
+/// `c ? (a >>> 1) : 8'h00` dengan `a` signed harus tetap menggeser logis —
+/// hasilnya unsigned, sama seperti `iverilog`. Tanpa signedness konteks,
+/// cabang itu ikut sign-extend dan hasilnya keliru.
+///
+/// Assignment tidak mengirim signedness: LRM §11.8.1 menyatakan signedness
+/// hasil `>>>` ditentukan operand kiri dan sisa ekspresi, sehingga
+/// `yu = sa >>> 1` dengan target `yu` unsigned tetap sign-fill.
+pub fn lower_expression_dengan_konteks(
+    expr: &AstExpr,
+    symbols: &SymbolTable,
+    lebar_konteks: u32,
+    signed_konteks: Option<bool>,
+) -> Result<Expr, ElaborateError> {
     match expr {
         AstExpr::Ident { name, span } => {
             let symbol = symbols
@@ -56,24 +77,65 @@ pub fn lower_expression_konteks(
         )),
         AstExpr::Binary { op, lhs, rhs, .. } => {
             let bin_op = map_binary_op(*op);
+            // Tahap 1: turunkan kedua operand secara self-determined untuk
+            // mengetahui tipe hasil. Signedness hasil ini menentukan bukan
+            // hanya tipe node, tapi juga nilai `>>>` di dalam operand: LRM
+            // §11.4.10 menetapkan bit pengisi dari signedness tipe HASIL, jadi
+            // `(sa >>> 1) + 8'd0` yang hasilnya unsigned harus menggeser logis
+            // (0x78), sama seperti `c ? (sa >>> 1) : 8'h00`.
+            let (probe_lhs, probe_rhs) = if bin_op.is_shift() {
+                (
+                    lower_expression_dengan_konteks(lhs, symbols, lebar_konteks, None)?,
+                    lower_expression_dengan_konteks(rhs, symbols, 0, None)?,
+                )
+            } else {
+                (
+                    lower_expression_dengan_konteks(lhs, symbols, lebar_konteks, None)?,
+                    lower_expression_dengan_konteks(rhs, symbols, lebar_konteks, None)?,
+                )
+            };
+            let tipe_kiri = probe_lhs.data_type();
+            let tipe_kanan = probe_rhs.data_type();
+            let mut data_type = infer_binary(bin_op, tipe_kiri, tipe_kanan);
+            // Signedness konteks dari luar menang atas tipe operand kiri.
+            // Hanya `>>>` yang peduli: operator lain tidak melihat
+            // signedness hasil, dan operandnya sudah di-resize terpisah.
+            if bin_op == BinOp::Sar {
+                if let Some(signed) = signed_konteks {
+                    data_type = data_type.with_signed(signed);
+                }
+            }
+            // Tahap 2: turunkan ulang dengan signedness hasil.
             // LRM §11.6.1 Tabel 11-21: untuk `i << j` hanya `j` yang
             // self-determined; `i` ikut context-determined. Mematikan konteks
             // untuk keduanya membuat `sa << 4` dengan `sa` signed 8-bit
             // kehilangan sign-extension-nya.
             let (lowered_lhs, lowered_rhs) = if bin_op.is_shift() {
                 (
-                    lower_expression_konteks(lhs, symbols, lebar_konteks)?,
-                    lower_expression_konteks(rhs, symbols, 0)?,
+                    lower_expression_dengan_konteks(
+                        lhs,
+                        symbols,
+                        lebar_konteks,
+                        Some(data_type.signed),
+                    )?,
+                    lower_expression_dengan_konteks(rhs, symbols, 0, None)?,
                 )
             } else {
                 (
-                    lower_expression_konteks(lhs, symbols, lebar_konteks)?,
-                    lower_expression_konteks(rhs, symbols, lebar_konteks)?,
+                    lower_expression_dengan_konteks(
+                        lhs,
+                        symbols,
+                        lebar_konteks,
+                        Some(data_type.signed),
+                    )?,
+                    lower_expression_dengan_konteks(
+                        rhs,
+                        symbols,
+                        lebar_konteks,
+                        Some(data_type.signed),
+                    )?,
                 )
             };
-            let tipe_kiri = lowered_lhs.data_type();
-            let tipe_kanan = lowered_rhs.data_type();
-            let data_type = infer_binary(bin_op, tipe_kiri, tipe_kanan);
             // Ukuran ekspresi = max(ukuran konteks, ukuran self-determined).
             // Konteks `0` berarti tidak ada konteks. Untuk geser lebarnya
             // mengikuti operand kiri; konteks luar tidak mengembangkannya.
@@ -144,12 +206,35 @@ pub fn lower_expression_konteks(
             // LRM §11.6.1 Tabel 11-21: pada `i ? j : k` hanya `i` yang
             // self-determined; `j` dan `k` context-determined. Tanpa ini
             // cabang yang sempit dan signed kehilangan sign-extension-nya.
-            let lowered_true = lower_expression_konteks(when_true, symbols, lebar_konteks)?;
-            let lowered_false = lower_expression_konteks(when_false, symbols, lebar_konteks)?;
+            // Cabang adalah operand context-determined (LRM §11.6.1 langkah 3), jadi
+            // signedness tipe `? :` ikut diteruskan ke dalam cabang: `>>>` di
+            // dalam cabang memakai bit pengisi sesuai tipe `? :`, bukan tipe
+            // cabangnya sendiri. Tanpa ini `c ? (sa >>> 1) : 8'h00`
+            // sign-fill (0xf8) padahal tipe hasilnya unsigned (0x78).
+            //
+            // Cabangnya perlu dua tahap: signedness tipe `? :` belum diketahui
+            // sampai kedua cabang diturunkan, jadi tahap pertama lowered
+            // self-determined untuk menghitung `data_type`.
+            let probe_true = lower_expression_konteks(when_true, symbols, lebar_konteks)?;
+            let probe_false = lower_expression_konteks(when_false, symbols, lebar_konteks)?;
             // LRM §11.4.11: lebar hasil = max kedua cabang, signed hanya bila
             // keduanya signed.
             let data_type =
-                crate::width::infer_ternary(lowered_true.data_type(), lowered_false.data_type());
+                crate::width::infer_ternary(probe_true.data_type(), probe_false.data_type());
+            let (lowered_true, lowered_false) = (
+                lower_expression_dengan_konteks(
+                    when_true,
+                    symbols,
+                    lebar_konteks,
+                    Some(data_type.signed),
+                )?,
+                lower_expression_dengan_konteks(
+                    when_false,
+                    symbols,
+                    lebar_konteks,
+                    Some(data_type.signed),
+                )?,
+            );
             let lebar_ekspresi = lebar_konteks.max(data_type.width);
             // Sama seperti operand biner: cabang diprioritaskan ke tipe
             // *hasil*, bukan tipe cabangnya sendiri (LRM §11.6.1 langkah 3).
