@@ -1,0 +1,9 @@
+[package]
+name = "sv-preprocessor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Preprocessor SystemVerilog: `define, `include, `ifdef, macro expansion"
+
+[dependencies]
+sv-lexer = { path = "../sv-lexer" }

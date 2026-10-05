@@ -1,0 +1,19 @@
+[package]
+name = "sv-elaborator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Elaborator: resolve instances, parameters, generate"
+
+[dependencies]
+sv-ast = { path = "../sv-ast" }
+sv-ir = { path = "../sv-ir" }
+sv-lexer = { path = "../sv-lexer" }
+
+[dev-dependencies]
+sv-parser = { path = "../sv-parser" }
+# Dipakai evaluator test agar nilai cast diuji terhadap helper runtime yang
+# sama dengan yang dipakai codegen, bukan implementasi ulang yang bisa
+# menyimpang diam-diam (AGENTS.md: 1 bug = 1 new test).
+sv-runtime = { path = "../sv-runtime" }
+sv-opt = { path = "../sv-opt" }

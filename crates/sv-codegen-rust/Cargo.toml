@@ -1,0 +1,15 @@
+[package]
+name = "sv-codegen-rust"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CodeGen: HDL IR → Rust source"
+
+[dependencies]
+sv-ir = { path = "../sv-ir" }
+
+[dev-dependencies]
+sv-lexer = { path = "../sv-lexer" }
+sv-parser = { path = "../sv-parser" }
+sv-elaborator = { path = "../sv-elaborator" }
+sv-opt = { path = "../sv-opt" }

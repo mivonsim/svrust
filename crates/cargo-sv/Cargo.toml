@@ -1,0 +1,20 @@
+[package]
+name = "cargo-sv"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CLI binary: cargo sv ..."
+
+[[bin]]
+name = "cargo"
+path = "src/main.rs"
+
+[dependencies]
+sv-ast = { path = "../sv-ast" }
+sv-lexer = { path = "../sv-lexer" }
+sv-parser = { path = "../sv-parser" }
+sv-preprocessor = { path = "../sv-preprocessor" }
+sv-elaborator = { path = "../sv-elaborator" }
+sv-ir = { path = "../sv-ir" }
+sv-codegen-rust = { path = "../sv-codegen-rust" }
+sv-opt = { path = "../sv-opt" }

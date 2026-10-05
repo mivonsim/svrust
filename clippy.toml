@@ -1,0 +1,4 @@
+# Tanggung jawab: konfigurasi clippy untuk seluruh workspace.
+# MSRV: native codegen bergantung toolchain lokal; jangan sarankan API yang
+# lebih baru dari 1.75 (mis. `is_multiple_of`).
+msrv = "1.75"

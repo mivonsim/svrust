@@ -1,0 +1,38 @@
+# Build output Rust
+/target/
+target/
+**/*.rs.bk
+
+# Target directory subtree cargo-sv (generated Rust + source-map)
+target/sv/
+
+# Corpus vendor: checkout git terpisah, bukan bagian SVRust.
+# Dipakai sebagai test corpus RTL dan sengaja tidak ikut repo.
+/opentitan/
+
+# Log dan artefak sementara
+*.vvp
+*.log
+
+# Berkas uji sementara di root (p*.sv, u*.sv, cc*.sv)
+/p*.sv
+/u*.sv
+/cc*.sv
+
+# Data fuzz: corpus bisa besar dan bukan sumber.
+/fuzz/corpus/
+/fuzz/artifacts/
+/fuzz/target/
+/fuzz/Cargo.lock
+
+# Artefak build differensial: objyek verilator dan binary simulasi.
+/fuzz-diff/fuzz-diff/artifacts/
+/fuzz-diff/target/
+/fuzzkit/target/
+
+# Subworkspace fuzz punya lock sendiri; lock root saja yang di-version.
+/fuzz-diff/Cargo.lock
+/fuzzkit/Cargo.lock
+
+# Debug symbolize
+*.dSYM/

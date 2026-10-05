@@ -1,0 +1,30 @@
+// Tanggung jawab: error leksikal dengan span.
+use crate::span::Span;
+use std::fmt;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LexError {
+    pub message: String,
+    pub span: Span,
+}
+
+impl LexError {
+    pub fn new(message: impl Into<String>, span: Span) -> Self {
+        Self {
+            message: message.into(),
+            span,
+        }
+    }
+}
+
+impl fmt::Display for LexError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "lex error at {}:{}: {}",
+            self.span.line, self.span.col, self.message
+        )
+    }
+}
+
+impl std::error::Error for LexError {}

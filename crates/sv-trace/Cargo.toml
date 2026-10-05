@@ -1,0 +1,8 @@
+[package]
+name = "sv-trace"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Output VCD / waveform"
+
+[dependencies]

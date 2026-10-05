@@ -1,0 +1,9 @@
+[package]
+name = "sv-ast"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Definisi AST SystemVerilog"
+
+[dependencies]
+sv-lexer = { path = "../sv-lexer" }

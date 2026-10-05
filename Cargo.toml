@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/sv-lexer",
+  "crates/sv-preprocessor",
+  "crates/sv-ast",
+  "crates/sv-parser",
+  "crates/sv-ir",
+  "crates/sv-elaborator",
+  "crates/sv-opt",
+  "crates/sv-runtime",
+  "crates/sv-codegen-rust",
+  "crates/sv-trace",
+  "crates/cargo-sv",
+  "tests",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[profile.release]
+opt-level = 2
+debug = true

@@ -1,0 +1,9 @@
+[package]
+name = "sv-opt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Optimisasi HDL IR"
+
+[dependencies]
+sv-ir = { path = "../sv-ir" }

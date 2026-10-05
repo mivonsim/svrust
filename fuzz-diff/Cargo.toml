@@ -1,0 +1,17 @@
+[package]
+name = "sv-fuzz-diff"
+version = "0.0.0"
+publish = false
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+# Workspace sendiri: runner ini memanggil `cargo sv` dan `iverilog` sebagai
+# proses luar, jadi tidak boleh ikut workspace utama.
+[workspace]
+
+[[bin]]
+name = "diff_iverilog"
+path = "src/main.rs"
+
+[dependencies]
+sv-fuzzkit = { path = "../fuzzkit" }

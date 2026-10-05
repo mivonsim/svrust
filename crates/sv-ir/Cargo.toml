@@ -1,0 +1,8 @@
+[package]
+name = "sv-ir"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "HDL Semantic IR: types, signals, processes, timing"
+
+[dependencies]
