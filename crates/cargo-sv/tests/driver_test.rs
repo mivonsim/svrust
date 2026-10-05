@@ -179,6 +179,7 @@ fn finish_di_always_ff_menghasilkan_flag_pada_design_tanpa_initial() {
         kode.contains("self.finished = true;"),
         "$finish di always_ff tidak menandai flag finished"
     );
+    // Sisa statement proses ini dihentikan `return` di dalam badan proses.
     assert!(
         kode.contains("return;"),
         "$finish di always_ff tidak menghentikan sisa proses"

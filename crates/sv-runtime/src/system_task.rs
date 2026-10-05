@@ -96,6 +96,40 @@ impl<const M: usize> FormatArg<M> {
     }
 
     /// Digit biner MSB-dulu sepanjang lebar logis.
+    /// Digit oktal sepanjang `ceil(width/3)` (LRM §20.4 `%o`).
+    ///
+    /// `x`/`z` per три bit mengikuti `to_hex_str`: satu grup yang mengandung
+    /// `z` dicetak `z`, kalau tidak tapi ada `x` dicetak `x`.
+    fn to_oct_str(&self) -> String {
+        let digits = (self.width as usize).div_ceil(3);
+        let mut out = String::with_capacity(digits);
+        for d in (0..digits).rev() {
+            let mut nibble = 0u32;
+            let mut ada_x = false;
+            let mut ada_z = false;
+            for bit in 0..3usize {
+                let idx = d * 3 + bit;
+                if idx >= self.width as usize {
+                    continue;
+                }
+                match self.value.get(idx) {
+                    Logic::One => nibble |= 1 << bit,
+                    Logic::X => ada_x = true,
+                    Logic::Z => ada_z = true,
+                    Logic::Zero => {}
+                }
+            }
+            out.push(if ada_z {
+                'z'
+            } else if ada_x {
+                'x'
+            } else {
+                std::char::from_digit(nibble, 8).unwrap_or('0')
+            });
+        }
+        out
+    }
+
     fn to_bits_str(&self) -> String {
         let lebar = self.width as usize;
         let mut out = String::with_capacity(lebar);
@@ -156,6 +190,12 @@ impl<const M: usize> FormatArg<M> {
     }
 }
 
+/// Batas atas lebar field yang diterima.
+///
+/// Lebar lebih besar diabaikan:-padding sebesar itu tidak informatif dan
+/// membuat runtime mengulang karakter>sembilan miliar kali.
+const LEBAR_MAKS: usize = 4096;
+
 /// Skala waktu modul untuk format `%t` (LRM §21.8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TimeScale {
@@ -191,7 +231,7 @@ pub fn format_args<const M: usize>(
     let chars: Vec<char> = fmt.chars().collect();
     let mut i = 0;
 
-    while i < chars.len() {
+    'format_loop: while i < chars.len() {
         if chars[i] != '%' {
             out.push(chars[i]);
             i += 1;
@@ -199,8 +239,10 @@ pub fn format_args<const M: usize>(
         }
         i += 1;
         if i >= chars.len() {
-            out.push('%');
-            break;
+            // Format tak lengkap: `iverilog` menandainya dengan `<%>`, bukan
+            // `%` telanjang, supaya bedanya jelas dari `%` yang sah.
+            out.push_str("<%>");
+            break 'format_loop;
         }
         // `%0Nd` — nol di depan berarti rata kanan dengan lebar N.
         let mut nol = false;
@@ -208,7 +250,10 @@ pub fn format_args<const M: usize>(
         // LRM §20.4: `-` setelah `%` berarti rata KIRI. Versi lama berhenti
         // sebelum `-`, jadi `%-5d` dicetak apa adanya sebagai literal.
         let mut kiri = false;
-        if i < chars.len() && chars[i] == '-' {
+        // Flag `-` boleh diulang (`%--5d`); `iverilog` memperlakukannya
+        // sama dengan satu `-`. Tanpa loop, tanda kedua/specifier tak dikenali
+        // dan seluruh spesifikasi tercetak apa adanya.
+        while i < chars.len() && chars[i] == '-' {
             kiri = true;
             i += 1;
         }
@@ -221,12 +266,27 @@ pub fn format_args<const M: usize>(
                 nol = true;
             } else {
                 let d = chars[i].to_digit(10).unwrap_or(0) as usize;
-                lebar = Some(lebar.unwrap_or(0) * 10 + d);
+                // `saturating_*`: `%99999999999999999999d` meluap di debug
+                // (panic) dan wrap di release sehingga `pad` mengulang billions
+                // kali — hang, bukan output. Lebar dibatasi ke `LEBAR_MAKS` yang
+                // masih wajar; `iverilog` juga mengabaikan lebar yang tak
+                // terwakili.
+                lebar = Some(
+                    lebar
+                        .unwrap_or(0)
+                        .saturating_mul(10)
+                        .saturating_add(d)
+                        .min(LEBAR_MAKS),
+                );
             }
             i += 1;
         }
+        // `%` sebagai karakter terakhir: format tak lengkap. Argumen yang
+        // tersisa TIDAK boleh hilang — `iverilog` tetap mencetaknya sebagai
+        // argumen berlebih, jadi `break` hanya keluar dari loop format.
         if i >= chars.len() {
-            break;
+            out.push_str("<%>");
+            break 'format_loop;
         }
         let spec = chars[i];
         i += 1;
@@ -235,12 +295,53 @@ pub fn format_args<const M: usize>(
             out.push('%');
             continue;
         }
+        // Spekifier yang tidak dikenal tidak mengonsumsi argumen: `iverilog`
+        // mencetak format apa adanya lalu semua argumen jadi argumen berlebih.
+        // Versi lama menghapus argumen lebih dulu, jadi setiap kolom berikutnya
+        // bergeser satu kolom ke kiri.
+        if !matches!(
+            spec,
+            'd' | 'D'
+                | 'h'
+                | 'H'
+                | 'x'
+                | 'X'
+                | 'b'
+                | 'B'
+                | 'o'
+                | 'O'
+                | 'c'
+                | 'C'
+                | 't'
+                | 'T'
+                | 's'
+                | 'S'
+                | 'm'
+                | 'M'
+        ) {
+            let _ = write!(out, "%{}{}", if nol { "0" } else { "" }, spec);
+            continue;
+        }
         let Some(arg) = sisa.first().copied() else {
             // Tidak ada argumen tersisa: spesifikasi dicetak apa adanya.
             let _ = write!(out, "%{}{}", if nol { "0" } else { "" }, spec);
             continue;
         };
         sisa.remove(0);
+
+        // LRM §20.4: setiap format punya lebar baku saat `%Nd` tidak ditulis,
+        // yaitu ruang yang dibutuhkan nilai TERTINGGI tipe tersebut. Width-nya
+        // bergantung pada deklarasi: `%d` untuk `logic [7:0]` tercetak 3 kolom
+        // (`  5`) sedangkan untuk 32-bit 10 kolom (`         5`) — memakai
+        // lebar konstan 10 untuk keduanya membuat nilai 8-bit meleset ke kanan.
+        let lebar_baku = match spec {
+            'd' | 'D' => Some(lebar_desimal(arg.width, arg.signed)),
+            'o' | 'O' => Some((arg.width as usize).div_ceil(3)),
+            'h' | 'H' | 'x' | 'X' => Some((arg.width as usize).div_ceil(4)),
+            'b' | 'B' => Some(arg.width as usize),
+            _ => None,
+        };
+        let lebar = lebar.or(lebar_baku.filter(|_| !nol));
 
         let teks = match spec {
             'd' | 'D' => {
@@ -258,8 +359,22 @@ pub fn format_args<const M: usize>(
                     pad_arah(&arg.teks_unknown_desimal(), nol, lebar, kiri)
                 }
             }
-            'h' | 'H' | 'x' | 'X' => arg.to_hex_str(),
-            'b' | 'B' => arg.to_bits_str(),
+            'h' | 'H' | 'x' | 'X' => {
+                let teks = minimal(&arg.to_hex_str(), nol, lebar);
+                pad_arah(&teks, nol, lebar, kiri)
+            }
+            'b' | 'B' => {
+                let teks = minimal(&arg.to_bits_str(), nol, lebar);
+                pad_arah(&teks, nol, lebar, kiri)
+            }
+            // LRM §20.4: `%o` menampilkan nilai oktal. Implementasi baru
+            // ditambahkan karena `%o` sebelumnya tercetak apa adanya sebagai
+            // literal `%o` LALU argumennya ikut hilang, sehingga semua kolom
+            // berikutnya bergeser.
+            'o' | 'O' => {
+                let teks = minimal(&arg.to_oct_str(), nol, lebar);
+                pad_arah(&teks, nol, lebar, kiri)
+            }
             'c' | 'C' => char::from_u32(arg.value.to_u64() as u32)
                 .map(|c| c.to_string())
                 .unwrap_or_default(),
@@ -314,16 +429,59 @@ pub fn format_args<const M: usize>(
         out.push_str(&teks);
     }
 
-    // Argumen berlebih dicetak sebagai desimal dengan pemisah spasi (LRM §20.2).
-    for (n, arg) in sisa.iter().enumerate() {
-        if n > 0 || !out.is_empty() {
-            out.push(' ');
-        }
-        out.push_str(&arg.to_i64().to_string());
+    // Argumen berlebih dicetak sebagai desimal (LRM §20.2).
+    //
+    // Lebarnya mengikuti format `%d` untuk TIPE argumen itu sendiri, dan
+    // TIDAK ada pemisah tambahan: kolom kosong sebelum angka pertama sudah
+    // menjadi bagian dari lebarnya. `iverilog` untuk
+    // `$display("Z[%d]", a, b, c)` dengan `a`/`b` 32-bit dan `c` 8-bit
+    // mencetak `Z[  5]         5  6` — 10 kolom untuk `b`, 3 kolom untuk
+    // `c`, tanpa spasi sisipan. Versi lama menambah spasi di depan setiap
+    // sisa, sehingga kolom terakhir meleset satu ke kanan.
+    for arg in sisa.iter() {
+        let teks = match arg.teks_known_desimal() {
+            Some(t) => t,
+            None => arg.teks_unknown_desimal(),
+        };
+        out.push_str(&pad(
+            &teks,
+            false,
+            Some(lebar_desimal(arg.width, arg.signed)),
+        ));
     }
 
     out.push('\n');
     out
+}
+
+/// Lebar baku format `%d`: ruang untuk nilai terbesar tipe tersebut.
+///
+/// Lebar tipe `w` bit: unsigned bisa mencapai `2^w - 1`, signed bisa mencapai
+/// `-(2^(w-1))` yang butuh satu kolom tambahan untuk tanda minus.
+fn lebar_desimal(lebar: u32, signed: bool) -> usize {
+    let w = (lebar as usize).clamp(1, 126);
+    let maks = if signed {
+        (1u128 << (w - 1)).to_string().len()
+    } else {
+        ((1u128 << w) - 1).to_string().len()
+    };
+    maks + usize::from(signed)
+}
+
+/// Buang nol di depan saat format meminta digit minimal (`%0h`, `%0b`, `%0o`).
+///
+/// LRM §20.4: `%0h` menampilkan sesedikit mungkin digit. Tanpa ini
+/// `8'h05` tercetak `05` pada `%0h` (iverilog: `5`).
+fn minimal(teks: &str, nol: bool, lebar: Option<usize>) -> String {
+    if !nol || lebar.is_some() {
+        return teks.to_string();
+    }
+    let dipangkas = teks.trim_start_matches('0');
+    if dipangkas.is_empty() && !teks.is_empty() {
+        "0".to_string()
+    } else {
+        dipangkas.to_string()
+    }
 }
 
 /// Rata-kan teks ke lebar tertentu; `nol` berarti pad dengan karakter nol.
@@ -355,22 +513,35 @@ fn pad(teks: &str, nol: bool, lebar: Option<usize>) -> String {
     let Some(target) = lebar else {
         return teks.to_string();
     };
-    let panjang = teks.chars().count();
-    if panjang >= target {
+    if teks.chars().count() >= target {
         return teks.to_string();
     }
     let filler = if nol { '0' } else { ' ' };
+    // Rata kanan: tanda minus untuk angka negatif berada di dalam kolom, tepat
+    // sebelum digit — bukan di awal kolom. Versi lama menempelkannya di luar
+    // padding, jadi `%5d` dari -1 tercetak `-   1` (iverilog: `   -1`) dan
+    // kolomnya jadi satu terlalu lebar.
+    //
+    // Dengan nol-depan, tanda minus tetap mendahului nol: `%05d` dari -1
+    // adalah `-0001`, bukan `000-1`.
+    let (sign, digits) = match teks.strip_prefix('-') {
+        Some(stripped) => ("-", stripped),
+        None => ("", teks),
+    };
+    let panjang = digits.chars().count() + sign.len();
+    // Nol-depan menempel SETELAH tanda minus (`-0001`), sedangkan spasi
+    // rata-kanan menempel SEBELUM-nya (`   -1`).
     let mut out = String::new();
+    if nol {
+        out.push_str(sign);
+    }
     for _ in panjang..target {
         out.push(filler);
     }
-    // Rata kanan: sign untuk negatif harus tetap di depan digit.
-    if let Some(stripped) = teks.strip_prefix('-') {
-        out.insert(0, '-');
-        out.push_str(stripped);
-    } else {
-        out.push_str(teks);
+    if !nol {
+        out.push_str(sign);
     }
+    out.push_str(digits);
     out
 }
 
@@ -388,7 +559,7 @@ mod tests {
 
     #[test]
     fn format_desimal_dengan_baris_baru() {
-        let hasil = format_args("n=%d", &[arg(42, 8, false)], TimeScale::NANOSECOND);
+        let hasil = format_args("n=%0d", &[arg(42, 8, false)], TimeScale::NANOSECOND);
         assert_eq!(hasil, "n=42\n");
     }
 
@@ -489,7 +660,7 @@ mod tests {
             &[arg(7, 8, false), arg(9, 8, false)],
             TimeScale::NANOSECOND,
         );
-        assert_eq!(hasil, "7 9\n");
+        assert_eq!(hasil, format!("{:>3}{:>3}\n", 7, 9));
     }
 
     #[test]
@@ -506,7 +677,7 @@ mod tests {
 
     #[test]
     fn desimal_bertanda_menampilkan_minus() {
-        let hasil = format_args("%d", &[arg(0xFF, 8, true)], TimeScale::NANOSECOND);
+        let hasil = format_args("%0d", &[arg(0xFF, 8, true)], TimeScale::NANOSECOND);
         assert_eq!(hasil, "-1\n");
     }
 
@@ -525,7 +696,7 @@ mod tests {
     #[test]
     fn spesifikasi_tanpa_argumen_ditambah_otomatis() {
         // LRM §20.2: spesifikasi tanpa argumen ditampilkan apa adanya.
-        let hasil = format_args("a=%d b=%d", &[arg(1, 8, false)], TimeScale::NANOSECOND);
+        let hasil = format_args("a=%0d b=%d", &[arg(1, 8, false)], TimeScale::NANOSECOND);
         assert_eq!(hasil, "a=1 b=%d\n");
     }
 
@@ -536,7 +707,7 @@ mod tests {
             &[arg(1, 8, false), arg(2, 8, false)],
             TimeScale::NANOSECOND,
         );
-        assert_eq!(hasil, "x=1 2\n");
+        assert_eq!(hasil, format!("x={:>3}{:>3}\n", 1, 2));
     }
 
     #[test]
@@ -678,6 +849,47 @@ mod tests {
         // Nilai pasti tetap normal — penjaga tidak boleh terlalu longgar.
         let pasti = format_args::<64>("[%0t]", &[waktu(5)], TimeScale::NANOSECOND);
         assert_eq!(pasti, "[5]\n");
+    }
+
+    /// BUG: lebar baku `%d` mengabaikan tipe argumen, jadi `logic [7:0]`
+    /// tercetak 10 kolom (terlalu lebar) dan 8-bit signed kehilangan kolom
+    /// untuk tanda minus. LRM §20.4: lebar baku adalah ruang yang dibutuhkan
+    /// nilai tertinggi tipe itu.
+    #[test]
+    fn bug_lebar_baku_format_d_mengikuti_tipe_argumen() {
+        let delapan = arg(5, 8, false);
+        let tiga_puluh_sembilan = FormatArg {
+            value: Bits::<8>::from_u64(5),
+            width: 8,
+            signed: false,
+        };
+        // Lebar logis berbeda → lebar baku berbeda; nilai diuji terpisah oleh
+        // test yang memakai lebar 32 sungguhan lewat design.
+        let hasil = format_args::<8>("[%d]", &[delapan], TimeScale::NANOSECOND);
+        assert_eq!(hasil, "[  5]\n", "lebar baku 8-bit unsigned = 3 kolom");
+        let _ = tiga_puluh_sembilan;
+    }
+
+    /// BUG: tanda minus pada angka negatif ditempel di luar kolom rata kanan,
+    /// sehingga `%5d` dari -1 tercetak `-   1` (lebar 6!) dan `%05d` dari -1
+    /// tercetak `000-1`. `iverilog` dan `verilator` mencetak `   -1` dan
+    /// `-0001`.
+    #[test]
+    fn bug_tanda_minus_negatif_ditempel_di_dalam_kolom() {
+        let hasil = format_args::<8>(
+            "[%5d][%05d]",
+            &[arg(0xFF, 8, true), arg(0xFF, 8, true)],
+            TimeScale::NANOSECOND,
+        );
+        assert_eq!(hasil, "[   -1][-0001]\n");
+    }
+
+    /// BUG: penanda `-` hanya dibaca satu kali, jadi `%--5d` tercetak apa
+    /// adanya sebagai literal. `iverilog` memperlakukannya sama dengan `%-5d`.
+    #[test]
+    fn bug_flag_rata_kiri_berulang_dikenali() {
+        let hasil = format_args::<8>("[%--5d]", &[arg(11, 8, false)], TimeScale::NANOSECOND);
+        assert_eq!(hasil, "[11   ]\n");
     }
 }
 

@@ -170,18 +170,18 @@ cek "campur" "campur = 01" "$(echo "$keluaran" | grep '^campur =')"
 
 echo "=== 11. testbench: initial, \$display, \$finish ==="
 keluaran=$($SV run --rtl $RTL_DIR/tb_ops.sv --steps 4)
-cek "disp_a"     "a=42 b=3"  "$(echo "$keluaran" | grep '^a=')"
-cek "disp_jumlah" "jumlah=45" "$(echo "$keluaran" | grep '^jumlah=')"
+cek "disp_a"     "a= 42 b=  3"  "$(echo "$keluaran" | grep '^a=')"
+cek "disp_jumlah" "jumlah= 45" "$(echo "$keluaran" | grep '^jumlah=')"
 # %h mengikuti lebar logis (4'hA), %b memakai 4 digit.
 cek "disp_fmt"   "m=a m=1010" "$(echo "$keluaran" | grep '^m=')"
 # Tipe bertanda: 8'hFF dibaca -1.
-cek "disp_signed" "s=-1"      "$(echo "$keluaran" | grep '^s=')"
+cek "disp_signed" "s=  -1"      "$(echo "$keluaran" | grep '^s=')"
 cek "disp_teks"  "teks saja"  "$(echo "$keluaran" | grep '^teks saja')"
 
 # \$finish menghentikan simulasi sebelum clock berputar.
 selesai=$($SV run --rtl $RTL_DIR/tb_finish.sv --steps 8)
-cek "langkah_0" "langkah 0" "$(echo "$selesai" | grep '^langkah 0')"
-cek "langkah_2" "langkah 2" "$(echo "$selesai" | grep '^langkah 2')"
+cek "langkah_0" "langkah           0" "$(echo "$selesai" | grep '^langkah' | head -1)"
+cek "langkah_2" "langkah           2" "$(echo "$selesai" | grep '^langkah' | tail -1)"
 cek "selesai"   "selesai"   "$(echo "$selesai" | grep '^selesai$')"
 cek "tf_hitung" "hitung = 00" "$(echo "$selesai" | grep '^hitung =')"
 # LRM §20.3: statement setelah `$finish` tidak dijalankan.

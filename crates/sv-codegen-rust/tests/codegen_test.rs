@@ -728,9 +728,16 @@ fn design_dengan_sinyal_lebar_lebih_besar_dari_time() {
 fn finish_menghasilkan_return_setelah_flag() {
     let code = generate("module tb; initial begin $finish; end endmodule");
     assert!(code.contains("self.finished = true;"), "code:\n{code}");
+    // Sisa statement proses ini dihentikan `return`. Aman karena badan proses
+    // `initial` dibungkus closure, jadi `return` tidak keluar dari seluruh
+    // `eval_initial` dan tidak ikut mematikan proses lain.
     let posisi_flag = code.find("self.finished = true;").expect("flag");
     let posisi_return = code[posisi_flag..].find("return;").expect("return");
     assert!(posisi_return > 0, "return harus menyusul flag:\n{code}");
+    assert!(
+        code.contains("(|| {"),
+        "badan proses initial harus dibungkus closure agar return terisolasi:\n{code}"
+    );
 }
 
 // --- BUG-35: langkah waktu menyisipkan clock & combinational antar #delay ---
@@ -752,6 +759,60 @@ fn dua_delay_membuat_tiga_langkah() {
     assert!(
         code.contains("pub const INITIAL_STEPS: usize = 3;"),
         "code:\n{code}"
+    );
+}
+
+/// BUG: dua blok `initial` yang sama-sama `#5` dijadwalkan serial — delay
+/// proses kedua ditambahkan ke waktu yang sudah majukan proses pertama, jadi
+/// ia berakhir pada t=10, bukan t=5. LRM §4.4/§11.2: keduanya resume dari
+/// waktu yang sama.
+///
+/// Perbaikannya: setiap proses dikembalikan ke `__dasar` (waktu awal langkah)
+/// sebelum dijalankan, dan waktu diambil dari nilai terbesar yang dicapai.
+#[test]
+fn bug_delay_paralel_antar_proses_tidak_menumpuk_waktu() {
+    let code = generate(
+        "module tb; logic a; logic b; \
+         initial begin #5 a = 1'b1; end \
+         initial begin #5 b = 1'b1; end \
+         endmodule",
+    );
+    assert!(
+        code.contains("initial_time: Vec<SimTime>"),
+        "waktu bangun per proses tidak dibangkitkan:\n{code}"
+    );
+    assert!(
+        code.contains("self.time_now = self.initial_time["),
+        "proses tidak dikembalikan ke waktu bangun sendiri:\n{code}"
+    );
+    assert!(
+        code.contains("self.time_now = __maks;"),
+        "waktu langkah tidak diambil dari proses yang paling maju:\n{code}"
+    );
+    // Rantai yang lebih pendek tidak boleh ikut bergeser bersama rantai
+    // panjang: proses `#1 #1 #1` harus berakhir di t=3 walau proses lain
+    // sudah di t=101.
+    assert!(
+        code.contains("self.initial_time["),
+        "waktu bangun proses tidak disimpan untuk langkah berikutnya:\n{code}"
+    );
+}
+
+/// BUG: `eval_initial` memakai `time_now`, tapi field itu hanya dibangkitkan
+/// bila desain memakai `#delay`/`$time`. Blok `initial` tanpa delay tapi
+/// dengan `$display($time)` sudah aman, sedangkan `initial` biasa TANPA delay
+/// apa pun membuat kode hasil generate gagal compile dengan
+/// `no field time_now`.
+#[test]
+fn bug_field_waktu_hadir_untuk_setiap_blok_initial() {
+    let code = generate("module tb; logic [7:0] a; initial begin a = 8'd1; end endmodule");
+    assert!(
+        code.contains("time_now: SimTime"),
+        "field time_now tidak ada padahal ada eval_initial:\n{code}"
+    );
+    assert!(
+        code.contains("initial_time: Vec<SimTime>"),
+        "field initial_time tidak ada padahal ada eval_initial:\n{code}"
     );
 }
 

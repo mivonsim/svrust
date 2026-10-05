@@ -34,8 +34,14 @@ pub fn write_system_task(
         // dicetak di akhir timestep. Jadi nilai ikut disimpan saat ini.
         SystemTaskKind::Strobe => write_strobe(args, scale, out, indent),
         // LRM §20.3: `$finish` menghentikan simulasi. Selain menandai flag,
-        // statement setelahnya pada proses yang sama tidak boleh jalan lagi,
-        // jadi proses langsung keluar lewat `return`.
+        // statement setelahnya pada proses yang sama tidak boleh jalan lagi.
+        //
+        // LRM §20.3: statement setelah `$finish` pada proses yang sama tidak
+        // jalan lagi.
+        //
+        // `return` aman HANYA kalau badan proses dibungkus closure
+        // (`(|| { ... })()`): tanpa itu `return` keluar dari seluruh
+        // `eval_initial` sehingga statement proses `initial` lain ikut hilang.
         SystemTaskKind::Finish => {
             indent.push(out);
             out.push_str("self.finished = true;\n");
@@ -339,6 +345,10 @@ mod tests {
     #[test]
     fn finish_mengeset_flag_dan_keluar_dari_proses() {
         // LRM §20.3: statement setelah `$finish` tidak dijalankan lagi.
+        //
+        // `return` aman karena badan setiap proses `initial` dibungkus closure
+        // di codegen (`(|| { ... })()`); tanpa closure, `return` keluar dari
+        // SELURUH `eval_initial` dan ikut mematikan proses lain.
         let kode = render(SystemTaskKind::Finish, &[]);
         assert_eq!(kode, "self.finished = true;\nreturn;\n");
     }

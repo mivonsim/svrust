@@ -48,6 +48,10 @@ pub fn generate_module(design: &Design) -> String {
         // menunggu `@(posedge clk)` boleh dicoba lagi pada langkah berikutnya.
         field_indent.push(&mut out);
         out.push_str("initial_pc: Vec<usize>,\n");
+        // LRM §4.4: tiap proses punya waktu bangun sendiri. Satu jam global
+        // membuat proses yang tertinggal ikut bergeser mengikuti proses lain.
+        field_indent.push(&mut out);
+        out.push_str("initial_time: Vec<SimTime>,\n");
     }
     // Nilai sinyal yang diawasi event control pada langkah sebelumnya,
     // dipakai untuk mengenali posedge/negedge (LRM §9.7).
@@ -55,8 +59,12 @@ pub fn generate_module(design: &Design) -> String {
         field_indent.push(&mut out);
         out.push_str("edge_prev: Vec<u64>,\n");
     }
-    // Waktu simulasi hanya perlu ada bila ada `#delay` atau `$time`.
-    if crate::time_scan::has_time(design) {
+    // Waktu simulasi dibutuhkan oleh `#delay`, `$time`, DAN `eval_initial` —
+    // driver membandingkan titik waktu antar proses pada setiap langkah, jadi
+    // field ini wajib ada begitu ada blok `initial` meski desainnya tanpa
+    // delay sama sekali. Versi lama hanya memunculkannya bila `has_time`, dan
+    // kode hasil generate gagal dengan `no field time_now`.
+    if crate::time_scan::has_time(design) || has_initial(design) {
         field_indent.push(&mut out);
         out.push_str("time_now: SimTime,\n");
     }
@@ -133,7 +141,7 @@ fn imports() -> &'static str {
 fn write_new(design: &Design, struct_name: &str, inner: &Indent, out: &mut String) {
     let ada_initial = has_initial(design);
     let perlu_finish = ada_initial || crate::system_task_gen::has_finish(design);
-    let ada_waktu = crate::time_scan::has_time(design);
+    let ada_waktu = crate::time_scan::has_time(design) || ada_initial;
     inner.push(out);
     out.push_str("pub fn new() -> Self {\n");
     let body = inner.child();
@@ -179,6 +187,11 @@ fn write_new(design: &Design, struct_name: &str, inner: &Indent, out: &mut Strin
         fields.push(out);
         out.push_str(&format!(
             "initial_pc: vec![0; {}],\n",
+            crate::initial_step::segmen_design(design).len()
+        ));
+        fields.push(out);
+        out.push_str(&format!(
+            "initial_time: vec![SimTime::ZERO; {}],\n",
             crate::initial_step::segmen_design(design).len()
         ));
     }
@@ -292,6 +305,9 @@ fn write_eval_comb(design: &Design, inner: &Indent, out: &mut String) {
     for process in &combinational {
         body.push(out);
         out.push_str(&format!("// {}\n", process.name));
+        // LRM §20.3: setelah `$finish`, statement berikutnya tidak jalan lagi.
+        // Penjaga hanya 필요 kalau design memang punya `$finish`; tanpa itu
+        // field `finished` tidak dibangkitkan dan rujukan akan gagal compile.
         write_statements(&process.body, out, &body);
     }
     inner.push(out);
@@ -340,6 +356,7 @@ fn write_eval_seq(design: &Design, inner: &Indent, out: &mut String) {
             format!("clock == {}", clock_id)
         };
         out.push_str(&format!("if {} {{\n", syarat));
+        body.push(out);
         write_statements(&process.body, out, &body.child());
         body.push(out);
         out.push_str("}\n");
@@ -533,6 +550,19 @@ fn write_eval_initial(design: &Design, inner: &Indent, out: &mut String) {
     out.push_str("pub fn eval_initial(&mut self, step: usize) {\n");
     let body = inner.child();
     body.push(out);
+    // LRM §4.4 stratified event queue + §11.2: setiap blok `initial` punya
+    // waktu bangun sendiri. Dua proses yang menunda diri `#5` resumed pada
+    // waktu yang SAMA, dan proses yang tertinggal (`#1` lalu `#1` lagi) tidak
+    // boleh terseret ke waktu paling maju milik proses lain.
+    //
+    // Karena itu `initial_time[i]` menyimpan waktu bangun proses `i`: setiap
+    // delay menambah relatif terhadap waktu ITU. Versi lama memakai satu jam
+    // global sehingga dua `#5` berakhir di t=5 lalu t=10; memakai jam
+    // maksimum per langkah saja memperbaiki kasus dua rantai sama, tetapi
+    // membuat rantai pendek meleset — proses `#1 #1 #1` ikut bergeser dari
+    // t=101 milik proses lain dan berakhir di t=102.
+    body.push(out);
+    out.push_str("    let mut __maks = self.time_now;\n");
     if ada_tunggu {
         // Segmen dijalankan menurut penunjuk tiap proses, bukan menurut
         // indeks langkah, supaya segmen yang menunggu edge bisa dicoba lagi.
@@ -554,6 +584,12 @@ fn write_eval_initial(design: &Design, inner: &Indent, out: &mut String) {
                 body.push(out);
                 out.push_str(&format!("    {} {{\n", header));
                 let arm = body.child();
+                // Proses ini berangkat dari waktu bangun sendiri, bukan dari
+                // jam desain (lihat catatan di atas).
+                arm.push(out);
+                out.push_str(&format!(
+                    "        self.time_now = self.initial_time[{index}];\n"
+                ));
                 // Bodynya ditulis sebagai daftar statement; untuk segmen event
                 // control statement `@(...)`-nya sendiri tidak diulang.
                 let statements: &[sv_ir::process::Statement] = if events.is_some() {
@@ -562,7 +598,14 @@ fn write_eval_initial(design: &Design, inner: &Indent, out: &mut String) {
                     segment.as_slice()
                 };
                 if !statements.is_empty() {
-                    write_statements(statements, out, &arm);
+                    // LRM §20.3: `$finish` menghentikan sisa segmen INI saja.
+                    // Closure memastikan `return` dari `$finish` tidak keluar
+                    // dari seluruh `eval_initial` dan mematikan proses lain.
+                    arm.push(out);
+                    out.push_str("(|| {\n");
+                    write_statements(statements, out, &arm.child());
+                    arm.push(out);
+                    out.push_str("})();\n");
                 }
                 arm.push(out);
                 out.push_str(&format!(
@@ -570,12 +613,22 @@ fn write_eval_initial(design: &Design, inner: &Indent, out: &mut String) {
                     index,
                     urut + 1
                 ));
+                // Simpan waktu bangun proses ini untuk langkah berikutnya, dan
+                // catat waktu paling jauh sebagai waktu desain.
+                arm.push(out);
+                out.push_str(&format!(
+                    "        self.initial_time[{index}] = self.time_now;\n"
+                ));
+                arm.push(out);
+                out.push_str("        if self.time_now > __maks { __maks = self.time_now; }\n");
                 body.push(out);
                 if urut + 1 == segments.len() {
                     out.push_str("    }\n");
                 }
             }
         }
+        body.push(out);
+        out.push_str("    self.time_now = __maks.max(self.time_now);\n");
         inner.push(out);
         out.push_str("}\n\n");
         // `is_finished` ditulis terpisah oleh `write_is_finished`, supaya
@@ -586,14 +639,14 @@ fn write_eval_initial(design: &Design, inner: &Indent, out: &mut String) {
     body.push(out);
     out.push_str("    match step {\n");
     for step in 0..crate::initial_step::jumlah_langkah(design) {
-        let lanjutan: Vec<(String, &[sv_ir::process::Statement])> = segmen
+        let lanjutan: Vec<(usize, String, &[sv_ir::process::Statement])> = segmen
             .iter()
             .enumerate()
             .filter_map(|(index, segments)| {
                 segments
                     .get(step)
                     .filter(|segmen| !segmen.is_empty())
-                    .map(|segmen| (nama_proses(index), segmen.as_slice()))
+                    .map(|segmen| (index, nama_proses(index), segmen.as_slice()))
             })
             .collect();
         if lanjutan.is_empty() {
@@ -602,20 +655,33 @@ fn write_eval_initial(design: &Design, inner: &Indent, out: &mut String) {
         body.push(out);
         out.push_str(&format!("        {} => {{\n", step));
         let arm = body.child();
-        for (nama, statements) in lanjutan {
+        for (index, nama, statements) in lanjutan {
             arm.push(out);
             out.push_str(&format!("// {}\n", nama));
-            write_statements(statements, out, &arm);
+            // Setiap proses berangkat dari waktu bangun sendiri.
+            arm.push(out);
+            out.push_str(&format!("self.time_now = self.initial_time[{index}];\n"));
+            // LRM §20.3: `$finish` menghentikan sisa segmen INI saja; closure
+            // menjaga proses lain tetap jalan.
+            arm.push(out);
+            out.push_str("(|| {\n");
+            write_statements(statements, out, &arm.child());
+            arm.push(out);
+            out.push_str("})();\n");
+            arm.push(out);
+            out.push_str(&format!("self.initial_time[{index}] = self.time_now;\n"));
+            arm.push(out);
+            out.push_str("if self.time_now > __maks { __maks = self.time_now; }\n");
         }
         body.push(out);
         out.push_str("        }\n");
     }
     body.push(out);
     out.push_str("        _ => {}\n");
-    // Tutup `match` lalu fungsi; dua kurung wajib agar Rust yang dihasilkan
-    // bisa dikompilasi.
     body.push(out);
     out.push_str("    }\n");
+    body.push(out);
+    out.push_str("    self.time_now = __maks;\n");
     inner.push(out);
     out.push_str("}\n\n");
 
