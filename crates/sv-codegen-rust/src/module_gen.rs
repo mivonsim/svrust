@@ -104,6 +104,7 @@ pub fn generate_module(design: &Design) -> String {
     write_sample_edge(design, &inner, &mut out);
     write_eval_initial(design, &inner, &mut out);
     write_is_finished(design, &inner, &mut out);
+    write_time_now(design, &inner, &mut out);
     write_snapshot(&inner, &mut out);
     write_run_monitor(design, &inner, &mut out);
     write_run_strobe(design, &inner, &mut out);
@@ -115,12 +116,18 @@ pub fn generate_module(design: &Design) -> String {
     out
 }
 
+/// Import runtime untuk satu design.
+///
+/// Path ditulis absolut (`::sv_runtime`) karena design dibungkus `mod <nama>`
+/// dan modul SV boleh bernama apa saja — termasuk `sv_runtime`, yang kalau
+/// tidak akan memblokir crate aslinya dan membuat `use` berubah jadi
+/// `struct import is private`.
 fn imports() -> &'static str {
-    "use sv_runtime::Bits;\n\
-     use sv_runtime::Logic;\n\
-     use sv_runtime::PendingWrite;\n\
-     use sv_runtime::SignalCell;\n\
-     use sv_runtime::SimTime;\n\n"
+    "use ::sv_runtime::Bits;\n\
+     use ::sv_runtime::Logic;\n\
+     use ::sv_runtime::PendingWrite;\n\
+     use ::sv_runtime::SignalCell;\n\
+     use ::sv_runtime::SimTime;\n\n"
 }
 
 fn write_new(design: &Design, struct_name: &str, inner: &Indent, out: &mut String) {
@@ -629,6 +636,23 @@ fn write_is_finished(design: &Design, inner: &Indent, out: &mut String) {
     out.push_str("}\n\n");
 }
 
+/// Waktu simulasi sekarang; dipakai driver untuk timestamp VCD.
+///
+/// Field `time_now` hanya dibangkitkan bila design memakai waktu, jadi method
+/// ini ikut hanya dibuat pada design itu — memanggilnya pada design tanpa
+/// delay akan jadi error kompilasi, bukan diam-diam mengembalikan nol.
+fn write_time_now(design: &Design, inner: &Indent, out: &mut String) {
+    if !crate::time_scan::has_time(design) {
+        return;
+    }
+    inner.push(out);
+    out.push_str("pub fn time_now(&self) -> SimTime {\n");
+    inner.child().push(out);
+    out.push_str("self.time_now\n");
+    inner.push(out);
+    out.push_str("}\n\n");
+}
+
 /// Sinyal yang diawasi `@(...)` pada blok `initial`, urut dan tanpa duplikat.
 fn sinyal_terawasi(design: &Design) -> Vec<u32> {
     let mut out: Vec<u32> = Vec::new();
@@ -1026,12 +1050,11 @@ pub fn to_struct_name(name: &str) -> String {
     out
 }
 
+/// Nama file modul Rust untuk satu design.
+///
+/// Nama file tidak boleh bentrok dengan kata kunci Rust dan tetap dipakai
+/// sebagai identifier modul di program hasil generate — lihat
+/// [`crate::module_name`] untuk versi yang aman dipakai sebagai `mod`.
 pub fn to_module_name(name: &str) -> String {
-    let mut out = String::new();
-    for ch in name.chars() {
-        if ch.is_alphanumeric() || ch == '_' {
-            out.push(ch.to_ascii_lowercase());
-        }
-    }
-    out
+    crate::module_name::module_name(name)
 }

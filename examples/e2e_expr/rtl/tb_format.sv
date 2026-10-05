@@ -19,6 +19,8 @@ module tb_format(
     #900 $display("b=%0t", $time);
     #1500 $display("c=%0t", $time);
     #1000 $display("d=%t", $time);
+    // LRM §20.4: `-` sebagai flag berarti rata kiri.
+    $display("e=[%-5d][%-5t][%5d]", 7, $time, 7);
     $finish;
   end
 endmodule

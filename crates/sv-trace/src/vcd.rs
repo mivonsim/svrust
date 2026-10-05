@@ -70,9 +70,14 @@ impl VcdWriter {
         self.emitted_header = true;
     }
 
-    /// Tulis blok `$dumpvars` berisi nilai awal seluruh sinyal.
-    pub fn initial(&mut self, values: &[(SignalId, &str)]) {
+    /// Tulis blok `$dumpvars` berisi nilai awal pada waktu `time`.
+    ///
+    /// Waktu tidak selalu nol: LRM §23.2 mengizinkan `$dumpvars` dipanggil
+    /// setelah `#delay`, dan `iverilog` menulis marker waktu saat itu — blok
+    /// yang hardcode `#0` menyatakan nilai awal terjadi sebelum stimulus apa pun.
+    pub fn initial(&mut self, time: u64, values: &[(SignalId, &str)]) {
         self.begin();
+        let _ = writeln!(self.buf, "#{}", time);
         let _ = writeln!(self.buf, "$dumpvars");
         for &(id, value) in values {
             self.write_change(id, value);
@@ -94,7 +99,9 @@ impl VcdWriter {
                 changed.push((id, value));
             }
         }
-        if changed.is_empty() {
+        // Daftar kosong tetap menulis marker waktu: itu yang menutup trace pada
+        // waktu `$finish` dipanggil.
+        if changed.is_empty() && !values.is_empty() {
             return;
         }
         let _ = writeln!(self.buf, "#{}", time);
@@ -171,10 +178,34 @@ mod tests {
     fn initial_writes_dumpvars_vector_value() {
         let mut w = VcdWriter::new("1ps");
         let a = w.add_signal("a", 4);
-        w.initial(&[(a, "0101")]);
+        w.initial(0, &[(a, "0101")]);
         let txt = w.vcd_text();
         assert!(txt.contains("$dumpvars"));
         assert!(txt.contains("b0101!"));
+    }
+
+    /// BUG: nilai awal ditulis tanpa marker waktu, jadi pembaca VCD tidak
+    /// tahu kapan nilai itu berlaku. `iverilog` dan `verilator` menulis marker
+    /// waktu tepat sebelum blok `$dumpvars`.
+    #[test]
+    fn bug_nilai_awal_vcd_ditandai_waktu_nol() {
+        let mut w = VcdWriter::new("1ns");
+        let a = w.add_signal("a", 4);
+        w.initial(0, &[(a, "0000")]);
+        let txt = w.vcd_text();
+        assert!(txt.contains("#0\n$dumpvars"), "dapat:\n{txt}");
+    }
+
+    /// BUG: `advance` dengan daftar sinyal kosong tidak menulis marker waktu
+    /// sama sekali, jadi waktu `$finish` tidak pernah muncul di VCD dan trace
+    /// tidak punya ujung waktu.
+    #[test]
+    fn bug_marker_waktu_akhir_tetap_ditulis_tanpa_perubahan_nilai() {
+        let mut w = VcdWriter::new("1ns");
+        let a = w.add_signal("a", 4);
+        w.initial(0, &[(a, "0000")]);
+        w.advance(30, &[]);
+        assert!(w.vcd_text().contains("#30"), "dapat:\n{}", w.vcd_text());
     }
 
     #[test]
@@ -182,7 +213,7 @@ mod tests {
         let mut w = VcdWriter::new("1ns");
         let a = w.add_signal("a", 4);
         let b = w.add_signal("b", 1);
-        w.initial(&[(a, "0000"), (b, "0")]);
+        w.initial(0, &[(a, "0000"), (b, "0")]);
         w.advance(10, &[(a, "0001"), (b, "0")]);
         let txt = w.vcd_text();
         assert!(txt.contains("#10\nb0001!\n"));
@@ -193,7 +224,7 @@ mod tests {
     fn scalar_uses_direct_value() {
         let mut w = VcdWriter::new("1ns");
         let c = w.add_signal("c", 1);
-        w.initial(&[(c, "1")]);
+        w.initial(0, &[(c, "1")]);
         assert!(w.vcd_text().contains("1!"));
     }
 

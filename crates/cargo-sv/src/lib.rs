@@ -3,6 +3,7 @@ pub mod cli;
 pub mod commands;
 pub mod driver_gen;
 pub mod pipeline;
+pub mod vcd_path;
 pub mod vcd_timescale;
 pub mod workspace;
 

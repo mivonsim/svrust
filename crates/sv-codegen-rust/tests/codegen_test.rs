@@ -115,9 +115,11 @@ fn max_width_is_largest_signal() {
 #[test]
 fn imports_runtime_types() {
     let code = generate("module m(output y); assign y = 1; endmodule");
-    assert!(code.contains("use sv_runtime::Bits;"));
-    assert!(code.contains("use sv_runtime::PendingWrite;"));
-    assert!(code.contains("use sv_runtime::SignalCell;"));
+    // Path absolut: design dibungkus `mod <nama>` dan modul SV boleh bernama
+    // `sv_runtime`, yang tanpa `::` akan memblokir crate aslinya.
+    assert!(code.contains("use ::sv_runtime::Bits;"));
+    assert!(code.contains("use ::sv_runtime::PendingWrite;"));
+    assert!(code.contains("use ::sv_runtime::SignalCell;"));
 }
 
 #[test]

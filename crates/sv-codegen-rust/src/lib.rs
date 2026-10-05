@@ -3,6 +3,7 @@ pub mod expr_gen;
 pub mod indent;
 pub mod initial_step;
 pub mod module_gen;
+pub mod module_name;
 pub mod stmt_gen;
 pub mod system_task_gen;
 pub mod time_gen;

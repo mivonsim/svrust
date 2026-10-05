@@ -3,19 +3,17 @@ use std::path::{Path, PathBuf};
 use sv_ast::module::Module;
 use sv_ir::Design;
 
-/// Compile satu berkas; top default = module terakhir seberkas.
+/// Compile satu berkas; tanpa top, modul root tunggal yang dipakai.
 pub fn compile(source: &str) -> Result<Design, String> {
     compile_with_top(source, None)
 }
 
-/// Compile dengan pilihan top; tanpa top pakai module terakhir.
+/// Compile dengan pilihan top; tanpa top pakai modul root tunggal.
 pub fn compile_with_top(source: &str, top: Option<&str>) -> Result<Design, String> {
     let pp = sv_preprocessor::preprocess(source, None).map_err(|e| e.to_string())?;
     let tokens = sv_lexer::lex(&pp.source).map_err(|e| e.to_string())?;
     let modules = sv_parser::parse_file(&tokens)?;
-    let nama_top = top
-        .map(|nama| nama.to_string())
-        .unwrap_or_else(|| last_module_name(&modules));
+    let nama_top = pilih_top(&modules, top)?;
     let mut design =
         sv_elaborator::elaborate_top(&modules, &nama_top).map_err(|e| e.to_string())?;
     optimalkan(&mut design);
@@ -61,25 +59,143 @@ pub fn collect_modules(paths: &[PathBuf]) -> Result<Vec<Module>, String> {
     Ok(modules)
 }
 
-/// Compile multi-berkas; top wajib eksplisit bila lebih dari satu module.
+/// Module yang tidak diinstansiasi modul lain, jadi kandidat top.
+///
+/// LRM §23.1: modul yang tidak diinstansiasi modul mana pun menjadi *root
+/// module* dan dielaborasi sebagai top tersendiri. Kalau ada lebih dari satu,
+/// `iverilog` dan `verilator` menjalankan semuanya.
+pub fn root_modules(modules: &[Module]) -> Vec<String> {
+    let mut terinstansi: Vec<String> = Vec::new();
+    for m in modules {
+        for inst in &m.instances {
+            terinstansi.push(inst.module_name.clone());
+        }
+        for region in &m.generates {
+            kumpulkan_instansiasi_generate(region, &mut terinstansi);
+        }
+    }
+    modules
+        .iter()
+        .map(|m| m.name.clone())
+        .filter(|nama| !terinstansi.iter().any(|i| i == nama))
+        .collect()
+}
+
+/// Kumpulkan nama modul yang diinstansiasi di dalam region generate.
+///
+/// Instansiasi di body modul masuk `Module::instances`, sedangkan yang di
+/// dalam `generate ... endgenerate` masuk ke `Module::generates` —oterapia
+/// kalau keduanya tidak dipindai, modul anak_generate ikut dianggap root lalu
+/// dijalankan dua kali (sekali standalone, sekali lewat induknya).
+fn kumpulkan_instansiasi_generate(
+    region: &sv_ast::generate::GenerateRegion,
+    hasil: &mut Vec<String>,
+) {
+    fn item(item: &sv_ast::generate::GenerateItem, hasil: &mut Vec<String>) {
+        use sv_ast::generate::GenerateItem::*;
+        match item {
+            Instance(inst) => hasil.push(inst.module_name.clone()),
+            For(g) => region_items(&g.body, hasil),
+            If(g) => {
+                region_items(&g.then_branch, hasil);
+                if let Some(branch) = &g.else_branch {
+                    region_items(branch, hasil);
+                }
+            }
+            Case(g) => {
+                for arm in &g.arms {
+                    region_items(&arm.body, hasil);
+                }
+            }
+            Decl(_) | Assign { .. } | Process(_) => {}
+        }
+    }
+
+    fn region_items(items: &[sv_ast::generate::GenerateItem], hasil: &mut Vec<String>) {
+        for i in items {
+            item(i, hasil);
+        }
+    }
+
+    region_items(&region.items, hasil);
+}
+
+/// Compile multi-berkas.
+///
+/// Tanpa `--top`, modul yang tidak diinstansiasi modul lain menjadi top. Kalau
+/// ada lebih dari satu, error dengan nama kandidatnya — bukan diam-diam
+/// menjalankan modul terakhir saja, yang membuat output modul lain hilang
+/// tanpa pesan.
 pub fn compile_paths(paths: &[PathBuf], top: Option<&str>) -> Result<Design, String> {
     let modules = collect_modules(paths)?;
-    let nama_top = match top {
-        Some(nama) => nama.to_string(),
-        None if modules.len() == 1 => modules[0].name.clone(),
-        None => modules
-            .last()
-            .map(|m| m.name.clone())
-            .ok_or_else(|| "tidak ada module".to_string())?,
-    };
+    let nama_top = pilih_top(&modules, top)?;
     let mut design =
         sv_elaborator::elaborate_top(&modules, &nama_top).map_err(|e| e.to_string())?;
     optimalkan(&mut design);
     Ok(design)
 }
 
-fn last_module_name(modules: &[sv_ast::module::Module]) -> String {
-    modules.last().map(|m| m.name.clone()).unwrap_or_default()
+/// Daftar modul top yang akan dielaborasi: `--top` kalau ada, else semua
+/// modul root.
+///
+/// `iverilog`/`verilator` menjalankan setiap modul root sebagai top tersendiri,
+/// jadi pemeriksaan dan simulasi harus sama — memeriksa satu modul root
+/// berarti modul lain tidak pernah diuji sama sekali.
+pub fn tops_dipakai(modules: &[Module], top: Option<&str>) -> Result<Vec<String>, String> {
+    match top {
+        Some(nama) => Ok(vec![nama.to_string()]),
+        None => {
+            let roots = root_modules(modules);
+            if roots.is_empty() {
+                Err("tidak ada modul root: setiap modul diinstansiasi modul lain".to_string())
+            } else {
+                Ok(roots)
+            }
+        }
+    }
+}
+
+/// Elaborasi SETIAP modul root sebagai design sendiri.
+///
+/// LRM §23.1: modul yang tidak diinstansiasi modul mana pun adalah modul root,
+/// dan `iverilog`/`verilator` menjalankan semuanya. Versi lama mengambil modul
+/// terakhir saja, jadi `$display` modul root lain tidak pernah tercetak —
+/// testbench yang salah tetap terlihat "lulus".
+pub fn compile_semua_root(
+    paths: &[PathBuf],
+    top: Option<&str>,
+) -> Result<Vec<sv_ir::Design>, String> {
+    let modules = collect_modules(paths)?;
+    let tops = tops_dipakai(&modules, top)?;
+    let mut designs = Vec::new();
+    for nama in tops {
+        let mut design =
+            sv_elaborator::elaborate_top(&modules, &nama).map_err(|e| e.to_string())?;
+        optimalkan(&mut design);
+        designs.push(design);
+    }
+    Ok(designs)
+}
+
+/// Pilih nama modul top dari daftar module.
+///
+/// Satu modul root → dia. Beberapa modul root → error yang menyebut semuanya,
+/// karena menjalankan hanya satu berarti modul lain tidak pernah dielaborasi
+/// dan pengujiannya diam-diam lolos.
+pub fn pilih_top(modules: &[Module], top: Option<&str>) -> Result<String, String> {
+    if let Some(nama) = top {
+        return Ok(nama.to_string());
+    }
+    let roots = root_modules(modules);
+    match roots.len() {
+        0 => Err("tidak ada modul root: setiap modul diinstansiasi modul lain".to_string()),
+        1 => Ok(roots.into_iter().next().expect("panjang sudah dicek")),
+        _ => Err(format!(
+            "ada {} modul root ({}); pilih salah satu dengan --top",
+            roots.len(),
+            roots.join(", ")
+        )),
+    }
 }
 
 pub fn read_source(path: &Path) -> Result<String, String> {
@@ -179,5 +295,77 @@ mod tests {
         let design = design_dari("module m(output y); initial $dumpvars; endmodule");
         let hasil = resolve_vcd(&design, None).expect("resolve");
         assert_eq!(hasil, Some(absolutize(Path::new(BAWAAN_VCD)).expect("abs")));
+    }
+
+    fn modules_dari(source: &str) -> Vec<Module> {
+        let tokens = sv_lexer::lex(source).expect("lex");
+        sv_parser::parse_file(&tokens).expect("parse")
+    }
+
+    /// BUG: tanpa `--top` SVRust memakai modul TERAKHIR di berkas. Dua modul
+    /// root (`a` dan `b`) karena keduanya tidak diinstansiasi, jadi hanya `b`
+    /// yang dijalankan dan seluruh output `a` hilang tanpa pesan — testbench
+    /// yang salah bisa tetap "lulus". Sekarang keduanya dielaborasi sebagai
+    /// top tersendiri (LRM §23.1).
+    #[test]
+    fn bug_semua_modul_root_dielaborasi_bukan_satu() {
+        let modules = modules_dari(
+            "module a; initial $display(\"from a\"); endmodule \
+             module b; initial $display(\"from b\"); endmodule",
+        );
+        assert_eq!(
+            tops_dipakai(&modules, None).expect("tops"),
+            vec!["a".to_string(), "b".to_string()]
+        );
+        // `pilih_top` masih dipakai jalur single-design (inspect/codegen),
+        // jadi di sana ambiguitas harus disadari, bukan dijalankan diam-diam.
+        let galat = pilih_top(&modules, None).expect_err("dua modul root harus error");
+        assert!(galat.contains("--top"), "pesan: {galat}");
+        assert!(galat.contains('a') && galat.contains('b'), "pesan: {galat}");
+    }
+
+    /// Modul yang diinstansiasi modul lain bukan root, jadi top tunggalnya
+    /// modul yang menginstansiasi.
+    #[test]
+    fn top_tunggal_dipilih_dari_modul_bukan_instansi() {
+        let modules = modules_dari(
+            "module anak; endmodule \
+             module induk; anak u(); initial $display(\"hi\"); endmodule",
+        );
+        assert_eq!(root_modules(&modules), vec!["induk".to_string()]);
+        assert_eq!(pilih_top(&modules, None).expect("top"), "induk");
+    }
+
+    /// BUG: `root_modules` hanya membaca `Module::instances`, sedangkan
+    /// instansiasi di dalam `generate ... endgenerate` masuk ke
+    /// `Module::generates`. Akibatnya modul anak_generate ikut dianggap root
+    /// lalu dijalankan DUA kali: sekali standalone, sekali lewat induknya —
+    ///menghasilkan keluaran 3x untuk 2 instansi.
+    #[test]
+    fn bug_instansiasi_di_generate_bukan_modul_root() {
+        let modules = modules_dari(
+            "module anak; initial $display(\"ANAK\"); endmodule \
+             module induk; \
+               genvar i; \
+               generate for (i = 0; i < 2; i = i + 1) begin : g anak u(); end endgenerate \
+               initial $display(\"INDUK\"); \
+             endmodule",
+        );
+        assert_eq!(root_modules(&modules), vec!["induk".to_string()]);
+    }
+
+    /// Instansiasi di lengan `if`/`case` generate juga harus dihitung.
+    #[test]
+    fn bug_instansiasi_di_lengan_generate_bukan_modul_root() {
+        let modules = modules_dari(
+            "module a; endmodule \
+             module b; endmodule \
+             module induk; \
+               generate \
+                 if (1) begin : x a u(); end else begin : y b u(); end \
+               endgenerate \
+             endmodule",
+        );
+        assert_eq!(root_modules(&modules), vec!["induk".to_string()]);
     }
 }

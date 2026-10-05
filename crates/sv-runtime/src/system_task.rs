@@ -205,6 +205,13 @@ pub fn format_args<const M: usize>(
         // `%0Nd` — nol di depan berarti rata kanan dengan lebar N.
         let mut nol = false;
         let mut lebar: Option<usize> = None;
+        // LRM §20.4: `-` setelah `%` berarti rata KIRI. Versi lama berhenti
+        // sebelum `-`, jadi `%-5d` dicetak apa adanya sebagai literal.
+        let mut kiri = false;
+        if i < chars.len() && chars[i] == '-' {
+            kiri = true;
+            i += 1;
+        }
         while i < chars.len() && (chars[i] == '0' || chars[i].is_ascii_digit()) {
             // BUG: `%10d` pernah terbaca sebagai lebar 1 + flag nol, karena
             // digit kedua (`0`) hanya menyalakan `nol` dan lebar sudah terkunci
@@ -246,9 +253,9 @@ pub fn format_args<const M: usize>(
                 // sebagai angka pasti `0` — persis kebalikan dari `%h`/`%b`
                 // yang sudah menjaganya. iverilog mencetak `x`.
                 if let Some(teks) = arg.teks_known_desimal() {
-                    pad(&teks, nol, lebar)
+                    pad_arah(&teks, nol, lebar, kiri)
                 } else {
-                    arg.teks_unknown_desimal()
+                    pad_arah(&arg.teks_unknown_desimal(), nol, lebar, kiri)
                 }
             }
             'h' | 'H' | 'x' | 'X' => arg.to_hex_str(),
@@ -282,14 +289,19 @@ pub fn format_args<const M: usize>(
                 // sebagai angka pasti `0`. `iverilog` dan `verilator`
                 // mencetak `x`.
                 if !arg.is_fully_known() {
-                    pad("x", dengan_nol, lebar_default)
+                    pad_arah("x", dengan_nol, lebar_default, kiri)
                 } else {
                     let femtos = arg
                         .value
                         .to_u64()
                         .saturating_mul(time_scale.unit_femtos.max(1));
                     let presisi = time_scale.precision_femtos.max(1);
-                    pad(&(femtos / presisi).to_string(), dengan_nol, lebar_default)
+                    pad_arah(
+                        &(femtos / presisi).to_string(),
+                        dengan_nol,
+                        lebar_default,
+                        kiri,
+                    )
                 }
             }
             // `%s` dan `%m` tidak punya sumber nilai di engine ini.
@@ -311,6 +323,30 @@ pub fn format_args<const M: usize>(
     }
 
     out.push('\n');
+    out
+}
+
+/// Rata-kan teks ke lebar tertentu; `nol` berarti pad dengan karakter nol.
+fn pad_arah(teks: &str, nol: bool, lebar: Option<usize>, kiri: bool) -> String {
+    if !kiri {
+        return pad(teks, nol, lebar);
+    }
+    // Rata kiri: filler menempel di KANAN teks. `pad` mengisi di kiri, jadi
+    // teks sumber dipadatkan sendiri, bukan hasil `pad`.
+    let Some(target) = lebar else {
+        return teks.to_string();
+    };
+    let panjang = teks.chars().count();
+    if panjang >= target {
+        return teks.to_string();
+    }
+    // LRM §20.4: `-` dan `0` adalah flag yang saling meniadakan; `iverilog`
+    // memakai spasi untuk `%-05d`, bukan nol di kanan.
+    let filler = if nol && !kiri { '0' } else { ' ' };
+    let mut out = String::from(teks);
+    for _ in panjang..target {
+        out.push(filler);
+    }
     out
 }
 
@@ -577,6 +613,53 @@ mod tests {
         // `%03d` tetap nol-depan dengan lebar 3.
         let nol = format_args::<8>("[%03d]", &[arg(7, 8, false)], TimeScale::NANOSECOND);
         assert_eq!(nol, "[007]\n");
+    }
+
+    /// BUG: penanda rata kiri `-` pada spesifikasi format tidak dikenali, jadi
+    /// `%-5d` dicetak apa adanya sebagai literal `%-5d`. LRM §20.4 menyatakan `-`
+    /// sebagai flag opsional sebelum lebar.
+    #[test]
+    fn bug_penanda_rata_kiri_dikenali() {
+        let desimal = format_args::<8>("[%-5d]", &[arg(7, 8, false)], TimeScale::NANOSECOND);
+        assert_eq!(desimal, "[7    ]\n");
+        let waktu = format_args::<64>("[%-5t]", &[waktu(7)], TimeScale::NANOSECOND);
+        assert_eq!(waktu, "[7    ]\n");
+        // Rata kanan tetap seperti sebelumnya.
+        let kanan = format_args::<8>("[%5d]", &[arg(7, 8, false)], TimeScale::NANOSECOND);
+        assert_eq!(kanan, "[    7]\n");
+    }
+
+    /// BUG: flag nol tidak diabaikan saat rata kiri, jadi `%-05d` tercetak
+    /// `70000`. LRM §20.4 menyebut `0` dan `-` sebagai flag yang saling
+    /// meniadakan; `iverilog` dan `verilator` memakai spasi.
+    #[test]
+    fn bug_nol_diabaikan_saat_rata_kiri() {
+        let hasil = format_args::<8>(
+            "[%-05d][%-08d]",
+            &[arg(7, 8, false), arg(42, 8, false)],
+            TimeScale::NANOSECOND,
+        );
+        assert_eq!(hasil, "[7    ][42      ]\n");
+    }
+
+    /// BUG: nilai `x`/`z` pada `%d` melewati padding, jadi `%-5d` tercetak `x`
+    /// tanpa rata kiri. Variabel yang belum diinisialisasi adalah kasus paling
+    /// umum di testbench, jadi paddingnya justru yang paling sering terlihat.
+    #[test]
+    fn bug_nilai_x_dipad_rata_kiri() {
+        let tak_diketahui = FormatArg {
+            value: Bits::<8>::from_unknown(0, 0xFF, 0, 8),
+            width: 8,
+            signed: false,
+        };
+        let kiri = format_args::<8>(
+            "[%-5d]",
+            std::slice::from_ref(&tak_diketahui),
+            TimeScale::NANOSECOND,
+        );
+        assert_eq!(kiri, "[x    ]\n");
+        let kanan = format_args::<8>("[%5d]", &[tak_diketahui], TimeScale::NANOSECOND);
+        assert_eq!(kanan, "[    x]\n");
     }
 
     /// BUG: nilai `x`/`z` pada argumen `%t` dihitung sebagai 0 oleh

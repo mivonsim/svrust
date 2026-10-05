@@ -259,6 +259,8 @@ cek "fmt_a" "a=                 100"  "$(echo "$fmt" | grep '^a=')"
 cek "fmt_b" "b=1000"    "$(echo "$fmt" | grep '^b=')"
 cek "fmt_c" "c=2500" "$(echo "$fmt" | grep '^c=')"
 cek "fmt_d" "d=                3500" "$(echo "$fmt" | grep '^d=')"
+# LRM §20.4: `-` membuat rata kiri. Dulu `%-5d` dicetak apa adanya.
+cek "fmt_kiri" "e=[7    ][3500 ][    7]" "$(echo "$fmt" | grep '^e=')"
 # `always_ff @(posedge clk);` body kosong tetap bisa dielaborasi.
 cek "ff_kosong" "gak_nulis = 00" "$(echo "$fmt" | grep '^gak_nulis =')"
 cek "ff_konstan" "konstan = 1"   "$(echo "$fmt" | grep '^konstan =')"

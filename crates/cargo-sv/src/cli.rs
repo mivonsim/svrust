@@ -143,7 +143,7 @@ Commands:
 
 Options:
   --rtl, -r <FILE>     File RTL SystemVerilog (bisa berulang)
-  --top, -t <NAME>     Nama module top (default: module pertama)
+  --top, -t <NAME>     Batasi modul top (default: semua modul root)
   --release            Build mode release
   --steps <N>          Maksimum langkah simulasi (default: 64)
   --vcd <FILE>         Output VCD waveform
