@@ -43,6 +43,7 @@ dependencies = [
  "sv-lexer",
  "sv-opt",
  "sv-parser",
+ "sv-preprocessor",
  "sv-runtime",
 ]
 

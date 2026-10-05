@@ -74,6 +74,14 @@ pub enum Expr {
     },
     /// System function `$time` — waktu simulasi berjalan (LRM §20).
     SystemTime {
+        /// Satuan `timeunit` modul tempat `$time` ditulis (LRM §21.8).
+        ///
+        /// Nilai `$time` selalu dalam satuan `timeunit` modul yang memuatnya,
+        /// bukan modul top. Parser menandai `Bawaan` karena `timescale` baru
+        /// diketahui setelah modul diparse;
+        /// [`crate::delay_unit::terapkan_module`] yang menyelesaikannya —
+        /// mekanismenya sama dengan `#delay` tanpa satuan.
+        unit: crate::time_unit::TimeUnit,
         span: Span,
     },
     /// Panggilan function `f(a, b)` (LRM §13.4).

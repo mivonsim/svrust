@@ -14,6 +14,18 @@ pub fn build(source: &str) -> sv_ir::Design {
     sv_elaborator::elaborate(&ast).expect("elaborate")
 }
 
+/// Build lewat jalur preprocessing penuh, jadi `timescale` ikut terbawa.
+///
+/// `build` melewati preprocessor, sehingga `` `timescale `` yang ada di
+/// sumber hilang dan modul memakai `TimeScale` bawaan. Test `timescale` harus lewat
+/// helper ini supaya menguji jalur yang sama dengan pipeline CLI.
+pub fn build_timescale(source: &str, top: &str) -> sv_ir::Design {
+    let pp = sv_preprocessor::preprocess(source, None).expect("preprocess");
+    let tokens = sv_lexer::lex(&pp.source).expect("lex");
+    let modules = sv_parser::parse_file(&tokens).expect("parse");
+    sv_elaborator::elaborate_top(&modules, top).expect("elaborate")
+}
+
 /// Error dari build top untuk beberapa module.
 pub fn err_top(source: &str, top: &str) -> String {
     let tokens = sv_lexer::lex(source).expect("lex");

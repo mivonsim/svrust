@@ -397,6 +397,7 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
         generates,
         localparams,
         genvars,
+        time_scale: sv_ast::time_scale::TimeScale::default(),
     })
 }
 

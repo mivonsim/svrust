@@ -39,6 +39,9 @@ pub struct SystemTask {
     pub args: Vec<SystemArg>,
     /// Syarat pada `$monitor if (kondisi)`; `None` berarti tanpa syarat.
     pub condition: Option<Expr>,
+    /// `timescale` modul pemanggil; `%t` menampilkannya dalam satuan
+    /// `timeprecision` modul itu (LRM §20.4 + §21.8), bukan modul top.
+    pub time_scale: crate::time_scale::TimeScale,
     pub span: Span,
 }
 

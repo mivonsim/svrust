@@ -252,7 +252,12 @@ fn write_statement(statement: &Statement, out: &mut String, indent: &Indent) {
             indent.push(out);
             out.push_str("}\n");
         }
-        Statement::SystemTask { kind, args, .. } => write_system_task(*kind, args, out, indent),
+        Statement::SystemTask {
+            kind,
+            args,
+            time_scale,
+            ..
+        } => write_system_task(*kind, args, *time_scale, out, indent),
         // LRM §11.2: `#n` menggeser waktu simulasi sebelum body dijalankan.
         // Penundaan di sini bersifat sinkron pada tahap codegen: proses lain
         // belum sempat dievaluasi pada waktu yang sama, jadi urutan

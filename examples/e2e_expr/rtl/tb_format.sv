@@ -12,11 +12,12 @@ module tb_format(
     gak_nulis = 8'd0;
   end
 
-  // LRM §20.4: `%t` merender waktu lengkap dengan satuannya.
+  // LRM §20.4 + §21.8: `%t` menampilkan waktu sebagai bilangan bulat dalam
+  // satuan `timeprecision` modul, bukan teks bersufiks satuan.
   initial begin
     #100 $display("a=%t", $time);
-    #900 $display("b=%t", $time);
-    #1500 $display("c=%t", $time);
+    #900 $display("b=%0t", $time);
+    #1500 $display("c=%0t", $time);
     #1000 $display("d=%t", $time);
     $finish;
   end

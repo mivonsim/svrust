@@ -194,7 +194,13 @@ fn generate_vcd_driver(design: &Design, steps: usize, vcd_path: &Path) -> String
     let struct_name = sv_codegen_rust::to_struct_name(&design.name);
     let mut out = header(steps, &struct_name);
 
-    out.push_str("    let mut trace = sv_trace::VcdWriter::new(\"1ns\");\n");
+    // LRM §21.8: header VCD memakai `timeprecision` modul top, bukan
+    // nanosecond tetap — kalau tidak, pembaca VCD akan salah menafsirkan
+    // nilai waktu.
+    out.push_str(&format!(
+        "    let mut trace = sv_trace::VcdWriter::new({:?});\n",
+        crate::vcd_timescale::vcd_timescale(design)
+    ));
     for var in &design.variables {
         let field = var.name.to_lowercase();
         out.push_str(&format!(

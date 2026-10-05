@@ -831,11 +831,14 @@ mod tests {
     }
 
     #[test]
-    fn satuan_tanpa_nama_menggunakan_nanosecond() {
+    fn satuan_tanpa_nama_ditandai_bawaan_untuk_timescale() {
+        // LRM §21.8: `#5` tanpa satuan mengikuti `timeunit` modul, jadi parser
+        // menandai `Bawaan`; `sv_ast::delay_unit::terapkan_module` yang
+        // menyelesaikannya setelah `timescale` diketahui.
         let stmt = parse("#5 a = 8'd1;");
         match &stmt {
             CombinationalStatement::Delay { unit, .. } => {
-                assert_eq!(*unit, sv_ast::time_unit::TimeUnit::NanoSeconds);
+                assert_eq!(*unit, sv_ast::time_unit::TimeUnit::Bawaan);
             }
             other => panic!("bukan delay: {:?}", other),
         }
@@ -864,12 +867,12 @@ mod tests {
     #[test]
     fn identifier_bukan_satuan_tidak_dikonsumsi_sebagai_satuan() {
         // `#5 step = ...` — `step` identifier biasa, bukan satuan waktu,
-        // jadi harus jadi target statement biasa dan satuan tetap nanosecond.
+        // jadi harus jadi target statement biasa dan satuan tetap `Bawaan`.
         let tokens = sv_lexer::lex("#5 step = 8'd1;").unwrap();
         let (stmt, _) = parse_combinational_statement(&tokens).expect("parse");
         match &stmt {
             CombinationalStatement::Delay { unit, body, .. } => {
-                assert_eq!(*unit, sv_ast::time_unit::TimeUnit::NanoSeconds);
+                assert_eq!(*unit, sv_ast::time_unit::TimeUnit::Bawaan);
                 match body.as_ref() {
                     CombinationalStatement::BlockingAssign { lhs, .. } => {
                         assert_eq!(lhs.name, "step");

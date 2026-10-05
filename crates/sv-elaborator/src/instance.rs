@@ -645,7 +645,10 @@ fn lingkup_expr(e: &AstExpr, prefix: &str, koneksi: &KoneksiMap, _asal: Span) ->
             span: *span,
         },
         // `$time` tidak merujuk sinyal, jadi tidak perlu di-prefix.
-        AstExpr::SystemTime { span } => AstExpr::SystemTime { span: *span },
+        AstExpr::SystemTime { unit, span } => AstExpr::SystemTime {
+            unit: *unit,
+            span: *span,
+        },
         // LRM §6.14 + §8.20: nama tipe bukan sinyal, jadi tidak dipetakan ke
         // koneksi port — tapi typedef module-scoped, jadi tetap perlu prefix
         // instans agar `w_t` di anak tidak tertukar dengan milik induk atau
@@ -817,6 +820,7 @@ fn lingkup_comb(
                         .condition
                         .as_ref()
                         .map(|c| lingkup_expr(c, prefix, koneksi, task.span)),
+                    time_scale: task.time_scale,
                     span: task.span,
                 })
             }
@@ -988,6 +992,7 @@ fn lingkup_task(
             .condition
             .as_ref()
             .map(|c| lingkup_expr(c, prefix, koneksi, asal)),
+        time_scale: task.time_scale,
         span: task.span,
     }
 }

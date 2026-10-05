@@ -276,6 +276,7 @@ fn task_literal(
             })
             .collect(),
         condition: task.condition.as_ref().map(|c| table.ganti_literal(c)),
+        time_scale: task.time_scale,
         span: task.span,
     }
 }

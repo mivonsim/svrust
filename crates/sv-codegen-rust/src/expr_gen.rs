@@ -175,9 +175,16 @@ fn write_bits_expr(expr: &Expr, out: &mut String, indent: &Indent) {
             out.push(']');
             out.push(')');
         }
-        // LRM §20: `$time` membaca waktu simulasi yang berjalan di design.
-        Expr::SimTime { .. } => {
-            out.push_str("Bits::<MAX_WIDTH>::from_u64(self.time_now.nanos())");
+        // LRM §20 dan §21.8: `$time` mengembalikan waktu simulasi yang sudah
+        // dibulatkan ke presisi modul dan diskalakan ke satuan `timeunit` modul
+        // **yang memuatnya**. Skala dibawa node, bukan design, supaya codegen
+        // tidak perlu konteks design di setiap ekspresi — dan supaya modul anak
+        // dengan `timescale` sendiri tidak ikut satuan top.
+        Expr::SimTime { unit, .. } => {
+            let per = unit.femtos().max(1);
+            out.push_str(&format!(
+                "Bits::<MAX_WIDTH>::from_u64(self.time_now.in_units({per}))"
+            ));
         }
         // LRM §7.8: indeks dinamis lewat helper runtime; hasilnya `Bits` dengan
         // lebar elemen di bit rendah. Dua semantik berbeda memilih helper berbeda:

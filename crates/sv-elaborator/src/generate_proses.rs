@@ -280,7 +280,10 @@ pub(crate) fn subst_expr(expr: &AstExpr, env: &GenvarEnv, scope: &ScopeBlok) -> 
             zmask: *zmask,
         },
         AstExpr::Number(v) => AstExpr::Number(*v),
-        AstExpr::SystemTime { span } => AstExpr::SystemTime { span: *span },
+        AstExpr::SystemTime { unit, span } => AstExpr::SystemTime {
+            unit: *unit,
+            span: *span,
+        },
         // LRM §6.14 + §8.20: nama tipe bukan sinyal lokal scope ini, jadi tidak
         // ikut prefix iterasi — tapi typedef module-scoped, jadi tetap perlu
         // prefix instans supaya tidak tertukar dengan typedef modul lain.
@@ -577,6 +580,7 @@ fn subst_task(
             })
             .collect(),
         condition: task.condition.as_ref().map(|c| subst_expr(c, env, scope)),
+        time_scale: task.time_scale,
         span: task.span,
     }
 }

@@ -542,7 +542,10 @@ fn subst_expr(expr: &AstExpr, env: &GenvarEnv, scope: &ScopeBlok) -> AstExpr {
             zmask: *zmask,
         },
         AstExpr::Number(v) => AstExpr::Number(*v),
-        AstExpr::SystemTime { span } => AstExpr::SystemTime { span: *span },
+        AstExpr::SystemTime { unit, span } => AstExpr::SystemTime {
+            unit: *unit,
+            span: *span,
+        },
         // LRM §6.14 + §8.20: nama tipe bukan sinyal lokal scope ini, jadi tidak
         // ikut prefix iterasi — tapi typedef module-scoped, jadi tetap perlu
         // prefix instans supaya tidak tertukar dengan typedef modul lain.

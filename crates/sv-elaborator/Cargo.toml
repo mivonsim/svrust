@@ -17,3 +17,6 @@ sv-parser = { path = "../sv-parser" }
 # menyimpang diam-diam (AGENTS.md: 1 bug = 1 new test).
 sv-runtime = { path = "../sv-runtime" }
 sv-opt = { path = "../sv-opt" }
+# `timescale` hanya bertahan setelah preprocessor meneruskan direktifnya ke
+# lexer, jadi test skala waktu harus memakai jalur preprocessing penuh.
+sv-preprocessor = { path = "../sv-preprocessor" }

@@ -253,12 +253,12 @@ cek "step_bayangan" "bayangan = 15" "$(echo "$langkah" | grep '^bayangan =')"
 
 echo "=== 15. format %t dan always_ff body kosong ==="
 fmt=$($SV run --rtl $RTL_DIR/tb_format.sv --steps 4)
-cek "fmt_a" "a=100ns"  "$(echo "$fmt" | grep '^a=')"
-# 100 + 900 = 1000 ns, habis dibagi us => ditulis "1us".
-cek "fmt_b" "b=1us"    "$(echo "$fmt" | grep '^b=')"
-# 2500 ns tidak habis dibagi us, jadi tetap "2500ns".
-cek "fmt_c" "c=2500ns" "$(echo "$fmt" | grep '^c=')"
-cek "fmt_d" "d=3500ns" "$(echo "$fmt" | grep '^d=')"
+cek "fmt_a" "a=                 100"  "$(echo "$fmt" | grep '^a=')"
+# LRM §20.4: `%t` polos memakai lebar 20 rata kanan dalam satuan presisi;
+# `%0t` tanpa padding. Dulu keduanya dicetak sebagai teks bersufiks satuan.
+cek "fmt_b" "b=1000"    "$(echo "$fmt" | grep '^b=')"
+cek "fmt_c" "c=2500" "$(echo "$fmt" | grep '^c=')"
+cek "fmt_d" "d=                3500" "$(echo "$fmt" | grep '^d=')"
 # `always_ff @(posedge clk);` body kosong tetap bisa dielaborasi.
 cek "ff_kosong" "gak_nulis = 00" "$(echo "$fmt" | grep '^gak_nulis =')"
 cek "ff_konstan" "konstan = 1"   "$(echo "$fmt" | grep '^konstan =')"
@@ -268,8 +268,8 @@ mon=$($SV run --rtl $RTL_DIR/tb_monitor.sv --steps 8)
 # Pendaftaran: cetak sekali pada t=0 dengan nilai saat itu.
 cek "mon_awal" "t=0 h=0 b=1"   "$(echo "$mon" | grep '^t=0 ')"
 # Setelah #4 dan satu edge clock, nilai terbaru ikut tercetak.
-cek "mon_4ns"  "t=4ns h=6 b=6" "$(echo "$mon" | grep '^t=4ns ')"
-cek "mon_8ns"  "t=8ns h=10 b=10" "$(echo "$mon" | grep '^t=8ns ')"
+cek "mon_4ns"  "t=4 h=6 b=6" "$(echo "$mon" | grep '^t=4 ')"
+cek "mon_8ns"  "t=8 h=10 b=10" "$(echo "$mon" | grep '^t=8 ')"
 #_baris monitor tidak boleh lebih dari tiga: hanya saat nilai berubah.
 jumlah_monitor=$(echo "$mon" | grep -c '^t=')
 if [ "$jumlah_monitor" != "3" ]; then
@@ -282,10 +282,10 @@ echo "=== 17. \$monitoron/\$monitoroff dan \$strobe ==="
 sb=$($SV run --rtl $RTL_DIR/tb_strobe.sv --steps 8)
 cek "sb_mon_awal" "mon t=0 h=0"       "$(echo "$sb" | grep '^mon t=0 ')"
 # Argumen $strobe dievaluasi saat dipanggil: h masih 0 pada t=2ns.
-cek "sb_strobe"   "strobe t=2ns h=0" "$(echo "$sb" | grep '^strobe ')"
+cek "sb_strobe"   "strobe t=2 h=0" "$(echo "$sb" | grep '^strobe ')"
 # $monitor dilewati saat $monitoroff aktif; nyalakan lagi di t=4ns.
-cek "sb_mon_lama" "mon t=4ns h=2"     "$(echo "$sb" | grep '^mon t=4ns ')"
-cek "sb_strobe_off" "off t=4ns h=1"   "$(echo "$sb" | grep '^off ')"
+cek "sb_mon_lama" "mon t=4 h=2"     "$(echo "$sb" | grep '^mon t=4 ')"
+cek "sb_strobe_off" "off t=4 h=1"   "$(echo "$sb" | grep '^off ')"
 #monitor hanya boleh tercetak dua kali: saat daftar dan setelah dinyalakan.
 jumlah_mon=$(echo "$sb" | grep -c '^mon ')
 if [ "$jumlah_mon" != "2" ]; then
@@ -297,7 +297,7 @@ printf '  %-10s %s\n' "sb_count" "$jumlah_mon baris monitor"
 echo "=== 18. \$monitor if (kondisi) ==="
 kond=$($SV run --rtl $RTL_DIR/tb_monitor_cond.sv --steps 8)
 # Syarat `hitung >= 3` masih salah pada t=0 (h=0), jadi tidak ada cetakan.
-cek "mc_awal" "t=4ns h=10" "$(echo "$kond" | grep '^t=')"
+cek "mc_awal" "t=4 h=10" "$(echo "$kond" | grep '^t=')"
 jumlah_kond=$(echo "$kond" | grep -c '^t=')
 if [ "$jumlah_kond" != "1" ]; then
   echo "GAGAL: \$monitor if tercetak $jumlah_kond kali, harus 1"
@@ -311,7 +311,7 @@ cek "ev_mulai" "t=0 mulai"            "$(echo "$ev" | grep '^t=0 mulai$')"
 # Proses menangguhkan diri sampai posedge pertama terjadi, waktunya masih 0.
 cek "ev_edge1" "t=0 setelah-edge-1"   "$(echo "$ev" | grep '^t=0 setelah-edge-1$')"
 # Setelah #4, posedge kedua butuh langkah clock berikutnya.
-cek "ev_edge2" "t=4ns setelah-edge-2" "$(echo "$ev" | grep '^t=4ns setelah-edge-2$')"
+cek "ev_edge2" "t=4 setelah-edge-2" "$(echo "$ev" | grep '^t=4 setelah-edge-2$')"
 # LRM §20.3: `$finish` menghentikan simulasi. Segmen terakhir hanya `#4` lalu
 # `$finish`, jadi tidak ada edge clock lagi sesudah `setelah-edge-2`. Tiga
 # edge terjadi sebelum `$finish` (dua untuk melepas dua tunggu, satu lagi

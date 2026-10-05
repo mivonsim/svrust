@@ -139,6 +139,8 @@ pub enum Statement {
         args: Vec<crate::expr::SystemArg>,
         /// Syarat pada `$monitor if (kondisi)`; `None` berarti tanpa syarat (LRM §20.2).
         condition: Option<Expr>,
+        /// `timescale` modul pemanggil; dipakai `%t` (LRM §20.4 + §21.8).
+        time_scale: crate::time_scale::TimeScale,
         span: Span,
     },
     /// Tunggu edge pada sinyal lalu jalankan body (LRM §9.7).

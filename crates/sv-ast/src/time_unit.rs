@@ -1,10 +1,11 @@
 // Tanggung jawab: satuan waktu penulisan pada AST delay SystemVerilog.
 /// Satuan waktu pada `#n` (LRM §3.3).
-///
-/// `#n` tanpa satuan memakai nanosecond sebagai default, mengikuti
-/// presisi bawaan yang dipakai sebagian besar alat simulasi.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimeUnit {
+    /// `#n` ditulis tanpa satuan: satuan ditentukan `timescale` modul
+    /// (LRM §21.8). Eligator yang menyelesaikannya, karena parser tidak
+    /// tahu `timescale` modul mana yang berlaku.
+    Bawaan,
     Seconds,
     MilliSeconds,
     MicroSeconds,
@@ -27,9 +28,29 @@ impl TimeUnit {
         }
     }
 
-    /// Satuan yang dipakai bila `#n` ditulis tanpa satuan.
+    /// `#n` ditulis tanpa satuan: satuan ditentukan `timeunit` modul
+    /// (LRM §21.8), jadi parser menandai `Bawaan` dan eligator yang
+    /// menyelesaikannya memakai [`crate::time_scale::TimeScale`] modul.
     pub fn default_unit() -> Self {
-        TimeUnit::NanoSeconds
+        TimeUnit::Bawaan
+    }
+
+    /// Jumlah femtosecond dalam satu satuan.
+    ///
+    /// Dipakai [`crate::time_scale::TimeScale::parse`] untuk memeriksa syarat
+    /// LRM §21.8 bahwa `timeunit >= timeprecision`.
+    pub fn femtos(self) -> u64 {
+        match self {
+            TimeUnit::Seconds => 1_000_000_000_000_000,
+            TimeUnit::MilliSeconds => 1_000_000_000_000,
+            TimeUnit::MicroSeconds => 1_000_000_000,
+            TimeUnit::NanoSeconds => 1_000_000,
+            TimeUnit::PicoSeconds => 1_000,
+            TimeUnit::FectoSeconds => 1,
+            // `Bawaan` belum diselesaikan; nol membuat perbandingan selalu
+            // menolak, jadi pesannya tetap pazu.
+            TimeUnit::Bawaan => 0,
+        }
     }
 }
 
@@ -54,7 +75,14 @@ mod tests {
     }
 
     #[test]
-    fn satuan_bawaan_adalah_nanosecond() {
-        assert_eq!(TimeUnit::default_unit(), TimeUnit::NanoSeconds);
+    fn satuan_bawaan_ditandai_bawaan() {
+        // LRM §21.8: `#n` tanpa satuan mengikuti `timeunit` modul, jadi
+        // parser tidak boleh langsung memakai nanosecond.
+        assert_eq!(TimeUnit::default_unit(), TimeUnit::Bawaan);
+    }
+
+    #[test]
+    fn satuan_bawaan_bukan_satuan_waktu() {
+        assert_eq!(TimeUnit::from_name("bawaan"), None);
     }
 }

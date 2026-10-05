@@ -466,8 +466,9 @@ pub fn lower_expression_dengan_konteks(
         }
         // LRM §20: `$time` bertipe 64-bit karena waktu simulasi tidak
         // dibatasi lebar sinyal.
-        AstExpr::SystemTime { .. } => Ok(Expr::SimTime {
+        AstExpr::SystemTime { unit, .. } => Ok(Expr::SimTime {
             data_type: DataType::signed(64),
+            unit: crate::lower_stmt::map_time_unit(*unit),
         }),
         // `expand_module` sudah mengembangkan setiap panggilan function sebelum
         // lowering. Node yang sampai ke sini berarti ada jalur yang melewatkan

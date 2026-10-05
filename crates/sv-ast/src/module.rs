@@ -33,6 +33,11 @@ pub struct Module {
     /// `#(.NAMA(...))` diam-diam diterima untuk konstanta yang memang harus
     /// terkunci.
     pub localparams: Vec<crate::width::LocalParamDecl>,
+    /// `timescale` yang berlaku bagi modul ini (LRM §21.8).
+    ///
+    /// Direktif berlaku untuk modul-modul yang menyusulnya sampai ada
+    /// `timescale` berikutnya, jadi nilainya per modul, bukan global.
+    pub time_scale: crate::time_scale::TimeScale,
 }
 
 #[cfg(test)]
@@ -54,6 +59,7 @@ mod tests {
             generates: Vec::new(),
             genvars: Vec::new(),
             localparams: Vec::new(),
+            time_scale: crate::time_scale::TimeScale::default(),
         };
         assert!(m.generates.is_empty());
         assert!(m.genvars.is_empty());

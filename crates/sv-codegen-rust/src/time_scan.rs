@@ -3,15 +3,24 @@ use sv_ir::expr::Expr;
 use sv_ir::process::Statement;
 use sv_ir::Design;
 
-/// True bila ada `#delay` atau `$time` di seluruh statement design.
+/// True bila ada `#delay` atau `$time` di seluruh design.
 ///
 /// Field waktu pada struct generated hanya dibuat bila perlu, supaya design
 /// tanpa testbench tetap ramping.
+///
+/// Nilai awal variabel juga ikut diperiksa: `logic [63:0] stamp = $time;`
+/// menghasilkan kode yang membaca `self.time_now`, jadi field itu wajib ada.
+/// Kalau hanya statement proses yang dipindai, kode hasil generate gagal
+/// dikompilasi dengan `no field 'time_now'`.
 pub fn has_time(design: &Design) -> bool {
     design
-        .processes
+        .variables
         .iter()
-        .any(|process| process.body.iter().any(statement_uses_time))
+        .any(|var| var.initial.as_ref().is_some_and(expr_uses_time))
+        || design
+            .processes
+            .iter()
+            .any(|process| process.body.iter().any(statement_uses_time))
 }
 
 /// Kumpulkan task `$monitor` terakhir dari sebuah daftar statement.
@@ -44,6 +53,7 @@ pub fn kumpulkan_monitor_stmt(
             kind,
             args,
             condition,
+            time_scale,
             ..
         } => {
             if *kind == jenis {
@@ -51,6 +61,7 @@ pub fn kumpulkan_monitor_stmt(
                     kind: *kind,
                     args: args.clone(),
                     condition: condition.clone(),
+                    time_scale: *time_scale,
                     span: sv_ir::process::Span::default(),
                 });
             }
@@ -161,6 +172,7 @@ mod tests {
     use super::*;
     use sv_ir::datatype::DataType;
     use sv_ir::process::Span;
+    use sv_ir::process::{Process, ProcessKind};
 
     fn konstanta() -> Expr {
         Expr::constant(5, DataType::logic(8))
@@ -204,6 +216,7 @@ mod tests {
             lhs: Box::new(kosong()),
             rhs: Box::new(Expr::SimTime {
                 data_type: DataType::signed(64),
+                unit: sv_ir::TimeUnit::NanoSeconds,
             }),
             data_type: DataType::logic(64),
         };
@@ -220,6 +233,7 @@ mod tests {
         let expr = Expr::Cast {
             operand: Box::new(Expr::SimTime {
                 data_type: DataType::signed(64),
+                unit: sv_ir::TimeUnit::NanoSeconds,
             }),
             data_type: DataType::logic(16),
             operand_signed: false,
@@ -235,6 +249,42 @@ mod tests {
             operand_signed: false,
         };
         assert!(!expr_uses_time(&expr));
+    }
+
+    /// BUG: `has_time` hanya memindai body proses, sedangkan nilai awal
+    /// variabel (`logic [63:0] stamp = $time;`) juga menghasilkan kode yang
+    /// membaca `self.time_now`. Field `time_now` tidak pernah dibangkitkan,
+    /// jadi kode hasil generate gagal dikompilasi dengan
+    /// `no field 'time_now' on type ...`.
+    #[test]
+    fn bug_sim_time_di_nilai_awal_variabel_membutuhkan_field_waktu() {
+        let var = sv_ir::variable::VarDecl::new(
+            "stamp",
+            sv_ir::scope::ScopePath::root(),
+            DataType::signed(64),
+            sv_ir::variable::VarKind::Variable,
+            0,
+        );
+        let mut design = Design::new("tb");
+        design.processes.push(Process {
+            name: "kosong".to_string(),
+            kind: ProcessKind::Combinational,
+            sensitivity: Vec::new(),
+            body: vec![Statement::Noop {
+                span: Span::default(),
+            }],
+            span: Span::default(),
+        });
+        assert!(!has_time(&design), "tanpa nilai awal tidak perlu waktu");
+
+        let mut dengan = var.clone();
+        dengan.initial = Some(Expr::SimTime {
+            data_type: DataType::signed(64),
+            unit: sv_ir::TimeUnit::NanoSeconds,
+        });
+        let mut design = Design::new("tb");
+        design.add_variable(dengan);
+        assert!(has_time(&design));
     }
 
     #[test]

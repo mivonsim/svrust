@@ -78,7 +78,9 @@ pub fn generate_module(design: &Design) -> String {
     if crate::system_task_gen::has_strobe(design) {
         field_indent.push(&mut out);
         out.push_str(
-            "strobe_pending: Vec<(&'static str, Vec<sv_runtime::FormatArg<MAX_WIDTH>>)>,\n",
+            "// Skala `%t` ikut dibawa: milik modul pemanggil, bukan modul top (LRM §21.8).\n\
+             strobe_pending: Vec<(&'static str, sv_runtime::TimeScale, \
+             Vec<sv_runtime::FormatArg<MAX_WIDTH>>)>,\n",
         );
     }
     // LRM §23.2: driver membaca dua field ini setelah `initial` t=0 jalan
@@ -445,9 +447,11 @@ fn write_run_monitor(design: &Design, inner: &Indent, out: &mut String) {
     }
     let cetak = dalam.child();
     cetak.push(out);
+    // Skala `%t` milik modul yang memuat `$monitor` (LRM §20.4 + §21.8).
     out.push_str(&format!(
-        "print!(\"{{}}\", sv_runtime::sv_format_args({:?}, &self.monitor_args));\n",
-        crate::system_task_gen::format_monitor(&task.args)
+        "print!(\"{{}}\", sv_runtime::sv_format_args({:?}, &self.monitor_args, {}));\n",
+        crate::system_task_gen::format_monitor(&task.args),
+        crate::time_gen::literal_time_scale_dari(task.time_scale)
     ));
     if ada_syarat {
         dalam.push(out);
@@ -468,10 +472,10 @@ fn write_run_strobe(design: &Design, inner: &Indent, out: &mut String) {
     out.push_str("pub fn run_strobe(&mut self) {\n");
     let body = inner.child();
     body.push(out);
-    out.push_str("for (__fmt, __args) in std::mem::take(&mut self.strobe_pending) {\n");
+    out.push_str("for (__fmt, __skala, __args) in std::mem::take(&mut self.strobe_pending) {\n");
     let dalam = body.child();
     dalam.push(out);
-    out.push_str("print!(\"{}\", sv_runtime::sv_format_args(__fmt, &__args));\n");
+    out.push_str("print!(\"{}\", sv_runtime::sv_format_args(__fmt, &__args, __skala));\n");
     body.push(out);
     out.push_str("}\n");
     inner.push(out);

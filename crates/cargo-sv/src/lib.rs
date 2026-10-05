@@ -3,6 +3,7 @@ pub mod cli;
 pub mod commands;
 pub mod driver_gen;
 pub mod pipeline;
+pub mod vcd_timescale;
 pub mod workspace;
 
 pub fn run(args: Vec<String>) {

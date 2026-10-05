@@ -54,6 +54,26 @@ impl SimTime {
         self.femtos / FS_PER_NS
     }
 
+    /// Nilai dalam satuan tertentu (jumlah femtosecond per unit).
+    ///
+    /// LRM §21.8: `$time` mengembalikan waktu dalam satuan `timeunit` modul,
+    /// dan nilainya sudah dibulatkan ke `timeprecision` sebelum pemanggilan ini
+    /// karena pembulatan tidak dapat dilakukan pada satuan yang lebih kecil.
+    pub fn in_units(self, femtos_per_unit: u64) -> u64 {
+        let per = femtos_per_unit.max(1);
+        // LRM §21.8: nilai `$time` dibulatkan ke `timeunit`, bukan dipotong.
+        // Pemotongan membuat `#500ns` setelah `#1us` pada modul `1us/1ns`
+        // melaporkan t=1 sementara iverilog (dan LRM) memberi t=2.
+        //
+        // BUG: `self.femtos + per / 2` meluap pada `timescale 1s/1s` dengan
+        // `#1000000000`: `SimTime` sudah jenuh di `u64::MAX` femtosecond, jadi
+        // penjumlahannya panic di build debug dan membungkus diam-diam di build
+        // release — keduanya membuat `$time` salah. Pembulatan ke atas dibatasi
+        // `saturating_add` supaya batas waktu yang jenuh tetap melaporkan nilai
+        // terbesar yang bisa diekspresikan.
+        self.femtos.saturating_add(per / 2) / per
+    }
+
     pub fn checked_add(self, other: SimTime) -> Option<SimTime> {
         Some(SimTime {
             femtos: self.femtos.checked_add(other.femtos)?,
@@ -156,5 +176,31 @@ mod tests {
     #[test]
     fn format_nanosecond_tidak_naik_ke_mikrosecond() {
         assert_eq!(SimTime::from_nanos(1500).format(), "1500ns");
+    }
+
+    /// BUG: `timescale 1s/1s` dengan `#1000000000` membuat `SimTime` jenuh di
+    /// `u64::MAX` femtosecond. `in_units` lama menulis
+    /// `self.femtos + per / 2`, yang meluap: panic di build debug dan membungkus
+    /// diam-diam di build release. Kedua hasil membuat `$time` salah, dan
+    /// reference tool (`iverilog`) masih melaporkan `1000000000`.
+    #[test]
+    fn bug_in_units_tidak_meluap_saat_waktu_jenuh() {
+        let jenuh = SimTime::from_femtos(u64::MAX);
+        // `1s/1s`: satu unit = 1e15 femtosecond.
+        let hasil = jenuh.in_units(FS_PER_SEC);
+        // Nilai terbesar yang masih terekspresikan, bukan hasil pembungkusan.
+        assert_eq!(hasil, (u64::MAX - FS_PER_SEC / 2) / FS_PER_SEC);
+        // Nilai paranoidanya 18446, bukan hasil `u64::MAX + per/2` yang
+        // membungkus dan menghasilkan 0.
+        assert_eq!(hasil, 18_446);
+    }
+
+    /// BUG: `per = 1` (satuan `1fs`) membuat `per / 2 == 0`, jadi pembulatan
+    /// tidak boleh mengubah apa pun — `in_units(1)` harus identitas.
+    #[test]
+    fn bug_in_units_satuan_femtos_kecil_adalah_identitas() {
+        for f in [0u64, 1, 499, 500, 1_500, u64::MAX] {
+            assert_eq!(SimTime::from_femtos(f).in_units(1), f, "femtos={f}");
+        }
     }
 }

@@ -193,6 +193,7 @@ fn lower_comb_statement(
                 kind: map_system_task_kind(task.kind.clone()),
                 args,
                 condition,
+                time_scale: map_time_scale(task.time_scale),
                 span: to_ir_span(task.span),
             })
         }
@@ -518,6 +519,7 @@ fn lower_seq_statement(
                     Some(expr) => Some(lower_expression(expr, symbols)?),
                     None => None,
                 },
+                time_scale: map_time_scale(task.time_scale),
                 span: to_ir_span(task.span),
             })
         }
@@ -763,11 +765,21 @@ fn to_ir_span(span: sv_lexer::span::Span) -> sv_ir::process::Span {
 }
 
 /// Petakan jenis case AST ke IR.
+/// Petakan `timescale` AST ke bentuk IR.
+pub(crate) fn map_time_scale(scale: sv_ast::time_scale::TimeScale) -> sv_ir::time_scale::TimeScale {
+    sv_ir::time_scale::TimeScale::new(map_time_unit(scale.unit), map_time_unit(scale.precision))
+}
+
 /// Petakan satuan waktu AST ke enum IR.
-fn map_time_unit(unit: sv_ast::time_unit::TimeUnit) -> sv_ir::time_unit::TimeUnit {
+pub(crate) fn map_time_unit(unit: sv_ast::time_unit::TimeUnit) -> sv_ir::time_unit::TimeUnit {
     use sv_ast::time_unit::TimeUnit as Ast;
     use sv_ir::time_unit::TimeUnit as Ir;
     match unit {
+        // `Bawaan` sudah diselesaikan parser lewat
+        // `sv_ast::delay_unit::terapkan_module`. Kalau sampai ke sini, modul
+        // dibangun tanpa `parse_file`, jadi tidak ada `timescale` — nanosecond
+        // dipakai agar delay tetap punya satuan yang pasti.
+        Ast::Bawaan => Ir::NanoSeconds,
         Ast::Seconds => Ir::Seconds,
         Ast::MilliSeconds => Ir::MilliSeconds,
         Ast::MicroSeconds => Ir::MicroSeconds,

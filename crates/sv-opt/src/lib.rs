@@ -109,6 +109,7 @@ mod tests {
                 SystemArg::Value(bin(BinOp::Mul, kon(3, 8), kon(4, 8), 8)),
             ],
             condition: None,
+            time_scale: Default::default(),
             span: Default::default(),
         }]);
         assert_eq!(optimize(&mut d).folded, 1);

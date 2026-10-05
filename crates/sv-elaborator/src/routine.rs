@@ -198,6 +198,7 @@ impl<'a> Inliner<'a> {
                         Some(cond) => Some(self.expr(cond)?),
                         None => None,
                     },
+                    time_scale: task.time_scale,
                     span: task.span,
                 })
             }
@@ -398,6 +399,7 @@ impl<'a> Inliner<'a> {
                         Some(cond) => Some(self.expr(cond)?),
                         None => None,
                     },
+                    time_scale: task.time_scale,
                     span: task.span,
                 })
             }
@@ -582,7 +584,10 @@ impl<'a> Inliner<'a> {
                 value: Box::new(self.expr(value)?),
                 span: *span,
             },
-            Expr::SystemTime { span } => Expr::SystemTime { span: *span },
+            Expr::SystemTime { unit, span } => Expr::SystemTime {
+                unit: *unit,
+                span: *span,
+            },
             // LRM §6.14: cast ke tipe bawaan dan size cast tidak punya nama
             // tipe yang jadi argumen pemanggil; hanya operandnya yang perlu
             // dikembangkan dengan argumen nyata.

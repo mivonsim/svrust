@@ -1,6 +1,7 @@
 // Tanggung jawab: node design/elaboration dalam IR.
 use crate::datatype::DataType;
 use crate::scope::ScopePath;
+use crate::time_scale::TimeScale;
 use crate::variable::VarDecl;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -33,6 +34,12 @@ pub struct Design {
     pub variables: Vec<Rc<VarDecl>>,
     pub processes: Vec<crate::process::Process>,
     pub instances: Vec<InstanceInfo>,
+    /// `timescale` modul top (LRM §21.8).
+    ///
+    /// Dipakai untuk membulatkan `$time` ke presisi modul dan untuk header
+    /// `$timescale` di VCD. `Option` karena `Design::new` tidak tahu apa pun
+    /// tentang SV; elaborator yang mengisinya.
+    pub time_scale: Option<TimeScale>,
 }
 
 impl Design {

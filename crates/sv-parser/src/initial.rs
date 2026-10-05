@@ -144,6 +144,9 @@ pub(crate) fn parse_system_task_mentah(
             kind,
             args,
             condition,
+            // `timescale` modul belum diketahui saat parsing;
+            // `sv_ast::delay_unit::terapkan_module` yang mengisinya.
+            time_scale: sv_ast::time_scale::TimeScale::default(),
             span,
         },
         idx,

@@ -160,7 +160,15 @@ pub enum Expr {
     /// Waktu simulasi saat ini dari `$time` (LRM §20).
     ///
     /// Lebarnya 64 bit karena waktu simulasi tidak dibatasi lebar sinyal.
-    SimTime { data_type: DataType },
+    ///
+    /// `unit` adalah `timeunit` modul **yang memuat `$time`**, bukan modul top
+    /// (LRM §21.8). Design yang sudah di-flatten hanya menyimpan skala top, jadi
+    /// node ini wajib membawa skalanya sendiri — kalau tidak, `$time` di modul
+    /// anak diam-diam memakai satuan top.
+    SimTime {
+        data_type: DataType,
+        unit: crate::time_unit::TimeUnit,
+    },
     /// Indeks dinamis `a[i]` (LRM §7.8).
     ///
     /// Berbeda dari `Select` yang msb/lsb-nya konstan, posisi elemen di sini
@@ -216,7 +224,7 @@ impl Expr {
             | Expr::Replicate { data_type, .. }
             | Expr::Cast { data_type, .. }
             | Expr::Index { data_type, .. }
-            | Expr::SimTime { data_type } => *data_type,
+            | Expr::SimTime { data_type, .. } => *data_type,
         }
     }
 

@@ -5,6 +5,7 @@ pub mod expr;
 pub mod process;
 pub mod scope;
 pub mod system_task;
+pub mod time_scale;
 pub mod time_unit;
 pub mod variable;
 
@@ -16,5 +17,6 @@ pub use process::{
     SensitivityItem, Slice, Statement,
 };
 pub use scope::ScopePath;
+pub use time_scale::TimeScale;
 pub use time_unit::TimeUnit;
 pub use variable::{SignalTable, VarDecl, VarKind};

@@ -84,6 +84,11 @@ impl Engine {
             }
             "timescale" => {
                 self.timescale = rest[word.len()..].trim().to_string();
+                // Direktif diteruskan ke output (dengan baris baru) supaya
+                // lexer/parser bisa mengaitkannya dengan modul yang menyusul:
+                // LRM §21.8 menyatakan `timescale` berlaku per modul, bukan
+                // satu nilai global untuk seluruh berkas.
+                out.push_str(&format!("`timescale {}\n", self.timescale));
             }
             // Direktif yang diterima namun tidak mengubah semantik di level ini.
             "default_nettype"

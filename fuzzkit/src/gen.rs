@@ -881,8 +881,21 @@ fn render_directive(out: &mut String, d: Directive, depth: &mut usize) {
             // (LRM §22). Memakai byte apa langsung menghasilkan `timescale
             // 1115s` yang selalu ditolak lexer, jadi iterasi terbuang.
             const SATUAN: [&str; 6] = ["s", "ms", "us", "ns", "ps", "fs"];
-            let u = SATUAN[usize::from(unit) % SATUAN.len()];
-            out.push_str(&format!("`timescale 1{u}/1{u}s\n"));
+            // BUG: `{u}s` menambahkan sufiks kedua, jadi satuan `s` jadi
+            // "1ss" dan `ms` jadi "1mss" — keduanya ditolak parser DAN
+            // iverilog, sehingga seed `Timescale` hilang tanpa menghasilkan
+            // iterasi apa pun. Dua dipilih terpisah supaya setiap pasangan
+            // tetap sah (`timeunit` >= `timeprecision`).
+            let indeks = usize::from(unit) % (SATUAN.len() * SATUAN.len());
+            // LRM §21.8 mensyaratkan `timeunit` >= `timeprecision`; daftar
+            // satuan urut dari paling kasar, jadi indeks presisi harus
+            // >= indeks unit.
+            let i = indeks % SATUAN.len();
+            let p = i + (indeks / SATUAN.len()).min(SATUAN.len() - 1 - i);
+            out.push_str(&format!(
+                "`timescale 1{}/1{}\n",
+                SATUAN[i], SATUAN[p]
+            ));
         }
         Directive::Line { nomor } => out.push_str(&format!("`line {nomor} \"fz.sv\" 0\n")),
         Directive::DefaultNettype { nilai } => {
@@ -1073,6 +1086,42 @@ mod tests {
     #[test]
     fn acak_deterministik() {
         assert_eq!(acak(42).render(), acak(42).render());
+    }
+
+    /// BUG: `Timescale` merender `` `timescale 1{u}/1{u}s `` sehingga satuan
+    /// `s` menjadi `1ss` dan `ms` menjadi `1mss`. Bentuk itu ditolak parser
+    /// maupun iverilog, jadi setiap seed `Timescale` hilang tanpa menghasilkan
+    /// iterasi apa pun — liputan timezone dari target justru hilang.
+    #[test]
+    fn bug_directive_timescale_selalu_sah() {
+        for seed in 0..80u8 {
+            let mut teks = String::new();
+            let mut depth = 0usize;
+            render_directive(&mut teks, Directive::Timescale { unit: seed }, &mut depth);
+            let isi = teks
+                .trim()
+                .trim_start_matches("`timescale ")
+                .trim_end();
+            let (unit, presisi) = isi.split_once('/').unwrap_or_else(|| panic!("{teks}"));
+            for bagian in [unit, presisi] {
+                let satuan = bagian.trim_start_matches('1');
+                assert!(
+                    ["s", "ms", "us", "ns", "ps", "fs"].contains(&satuan),
+                    "seed {seed}: satuan '{satuan}' tak dikenal pada {teks}"
+                );
+            }
+            // LRM §21.8: `timeunit` >= `timeprecision`.
+            let urut = |b: &str| {
+                ["s", "ms", "us", "ns", "ps", "fs"]
+                    .iter()
+                    .position(|s| *s == b.trim_start_matches('1'))
+                    .unwrap()
+            };
+            assert!(
+                urut(unit) <= urut(presisi),
+                "seed {seed}: presisi lebih kasar dari unit pada {teks}"
+            );
+        }
     }
 
     #[test]

@@ -319,6 +319,7 @@ impl Substitution {
                 })
                 .collect(),
             condition: task.condition.as_ref().map(|c| self.ganti(c)),
+            time_scale: task.time_scale,
             span: task.span,
         }
     }
@@ -555,6 +556,7 @@ fn rename_task(task: &SystemTask, peta: &HashMap<String, String>) -> SystemTask 
             })
             .collect(),
         condition: task.condition.as_ref().map(|c| rename_expr(c, peta)),
+        time_scale: task.time_scale,
         span: task.span,
     }
 }
@@ -625,7 +627,10 @@ fn rename_expr(expr: &Expr, peta: &HashMap<String, String>) -> Expr {
             value: Box::new(rename_expr(value, peta)),
             span: *span,
         },
-        Expr::SystemTime { span } => Expr::SystemTime { span: *span },
+        Expr::SystemTime { unit, span } => Expr::SystemTime {
+            unit: *unit,
+            span: *span,
+        },
         Expr::FunctionCall { name, args, span } => Expr::FunctionCall {
             name: name.clone(),
             args: args.iter().map(|a| rename_expr(a, peta)).collect(),

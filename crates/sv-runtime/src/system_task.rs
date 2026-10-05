@@ -1,7 +1,6 @@
 // Tanggung jawab: implementasi runtime system task testbench ($display, $finish).
 use crate::bits::Bits;
 use crate::logic::Logic;
-use crate::time::SimTime;
 use std::fmt::Write as _;
 
 /// Satu argumen nilai yang menunggu diformat.
@@ -58,6 +57,11 @@ impl<const M: usize> FormatArg<M> {
             true => self.to_i64().to_string(),
             false => self.value.to_u64().to_string(),
         })
+    }
+
+    /// True bila seluruh digit pada lebar logis ini pasti 0/1.
+    fn is_fully_known(&self) -> bool {
+        self.teks_known_desimal().is_some()
     }
 
     /// Teks desimal untuk nilai yang mengandung `x`/`z`.
@@ -152,11 +156,36 @@ impl<const M: usize> FormatArg<M> {
     }
 }
 
+/// Skala waktu modul untuk format `%t` (LRM §21.8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TimeScale {
+    /// Femtosecond per `timeunit`: nilai `$time` dihitung dalam satuan ini.
+    pub unit_femtos: u64,
+    /// Femtosecond per `timeprecision`: satuan yang dipakai `%t` menampilkan.
+    pub precision_femtos: u64,
+}
+
+impl TimeScale {
+    /// Skala nanosecond, dipakai design tanpa `timescale`.
+    pub const NANOSECOND: TimeScale = TimeScale {
+        unit_femtos: 1_000_000,
+        precision_femtos: 1_000_000,
+    };
+}
+
 /// Render `$display` dengan gaya printf SystemVerilog (LRM §20.2).
 ///
 /// Baris baru selalu ditambahkan di akhir karena `$display` berbeda dengan
 /// `$write` yang tidak menambahkannya.
-pub fn format_args<const M: usize>(fmt: &str, args: &[FormatArg<M>]) -> String {
+///
+/// `time_scale` hanya dipakai `%t`: LRM §20.4 menyatakan waktu ditampilkan
+/// sebagai bilangan bulat dalam satuan `timeprecision` modul, bukan sebagai
+/// teks dengan sufiks satuan.
+pub fn format_args<const M: usize>(
+    fmt: &str,
+    args: &[FormatArg<M>],
+    time_scale: TimeScale,
+) -> String {
     let mut out = String::new();
     let mut sisa: Vec<&FormatArg<M>> = args.iter().collect();
     let chars: Vec<char> = fmt.chars().collect();
@@ -177,10 +206,15 @@ pub fn format_args<const M: usize>(fmt: &str, args: &[FormatArg<M>]) -> String {
         let mut nol = false;
         let mut lebar: Option<usize> = None;
         while i < chars.len() && (chars[i] == '0' || chars[i].is_ascii_digit()) {
-            if chars[i] == '0' {
+            // BUG: `%10d` pernah terbaca sebagai lebar 1 + flag nol, karena
+            // digit kedua (`0`) hanya menyalakan `nol` dan lebar sudah terkunci
+            // pada digit pertama. Lebar harus diakumulasi sebagai angka,
+            // dengan nol di depan dibaca sebagai flag saja.
+            if chars[i] == '0' && lebar.is_none() {
                 nol = true;
-            } else if lebar.is_none() {
-                lebar = chars[i].to_digit(10).map(|d| d as usize);
+            } else {
+                let d = chars[i].to_digit(10).unwrap_or(0) as usize;
+                lebar = Some(lebar.unwrap_or(0) * 10 + d);
             }
             i += 1;
         }
@@ -222,9 +256,42 @@ pub fn format_args<const M: usize>(fmt: &str, args: &[FormatArg<M>]) -> String {
             'c' | 'C' => char::from_u32(arg.value.to_u64() as u32)
                 .map(|c| c.to_string())
                 .unwrap_or_default(),
-            // LRM §20.4: `%t` merender nilai waktu dengan satuan otomatis.
-            // Nilai dibaca sebagai nanosecond, satuan bawaan `timeunit`.
-            't' | 'T' => SimTime::from_nanos(arg.value.to_u64()).format(),
+            // LRM §20.4 dan §21.8: `%t` menampilkan waktu sebagai bilangan bulat
+            // dalam satuan `timeprecision` modul. Nilai argumen adalah hasil
+            // `$time`, yaitu jumlah `timeunit`, jadi dikalikan femtosecond per
+            // unit lalu dibagi presisi.
+            //
+            // Lebar field bawaan 20 karakter rata kanan (persis seperti
+            // `iverilog` dan `verilator`); lebar eksplisit `%0Nt` dihormati.
+            't' | 'T' => {
+                // Lebar bawaan 20 hanya untuk `%t` polos; `%0t` berarti tanpa
+                // padding sama sekali (lebar 0), dan `%5t` memakai lebar
+                // eksplisit.
+                let lebar_default = match (nol, lebar) {
+                    (true, None) => Some(0),
+                    (_, None) => Some(20),
+                    (_, Some(w)) => Some(w),
+                };
+                // BUG: `nol` diabaikan, jadi `%05t` mencetak ` 1000` (spasi)
+                // sementara `iverilog` dan `verilator` mencetak `01000`. Nol
+                // depan pada spesifikasi waktu berarti pad dengan nol, sama
+                // seperti `%05d`.
+                let dengan_nol = nol && lebar.is_some();
+                // BUG: nilai `x`/`z` pada argumen `%t` ikut dihitung sebagai 0
+                // oleh `to_u64()`, sehingga waktu yang belum diketahui tercetak
+                // sebagai angka pasti `0`. `iverilog` dan `verilator`
+                // mencetak `x`.
+                if !arg.is_fully_known() {
+                    pad("x", dengan_nol, lebar_default)
+                } else {
+                    let femtos = arg
+                        .value
+                        .to_u64()
+                        .saturating_mul(time_scale.unit_femtos.max(1));
+                    let presisi = time_scale.precision_femtos.max(1);
+                    pad(&(femtos / presisi).to_string(), dengan_nol, lebar_default)
+                }
+            }
             // `%s` dan `%m` tidak punya sumber nilai di engine ini.
             's' | 'S' | 'm' | 'M' => String::new(),
             _ => {
@@ -285,7 +352,7 @@ mod tests {
 
     #[test]
     fn format_desimal_dengan_baris_baru() {
-        let hasil = format_args("n=%d", &[arg(42, 8, false)]);
+        let hasil = format_args("n=%d", &[arg(42, 8, false)], TimeScale::NANOSECOND);
         assert_eq!(hasil, "n=42\n");
     }
 
@@ -381,64 +448,74 @@ mod tests {
 
     #[test]
     fn format_tanpa_spesifikasi_menampilkan_desimal() {
-        let hasil = format_args("", &[arg(7, 8, false), arg(9, 8, false)]);
+        let hasil = format_args(
+            "",
+            &[arg(7, 8, false), arg(9, 8, false)],
+            TimeScale::NANOSECOND,
+        );
         assert_eq!(hasil, "7 9\n");
     }
 
     #[test]
     fn hex_mengikuti_lebar_logis() {
-        let hasil = format_args("%h", &[arg(0xAB, 8, false)]);
+        let hasil = format_args("%h", &[arg(0xAB, 8, false)], TimeScale::NANOSECOND);
         assert_eq!(hasil, "ab\n");
     }
 
     #[test]
     fn biner_mengikuti_lebar_logis() {
-        let hasil = format_args("%b", &[arg(0b1010, 8, false)]);
+        let hasil = format_args("%b", &[arg(0b1010, 8, false)], TimeScale::NANOSECOND);
         assert_eq!(hasil, "00001010\n");
     }
 
     #[test]
     fn desimal_bertanda_menampilkan_minus() {
-        let hasil = format_args("%d", &[arg(0xFF, 8, true)]);
+        let hasil = format_args("%d", &[arg(0xFF, 8, true)], TimeScale::NANOSECOND);
         assert_eq!(hasil, "-1\n");
     }
 
     #[test]
     fn nol_leading_menampilkan_nol_depan() {
-        let hasil = format_args("%04d", &[arg(7, 8, false)]);
+        let hasil = format_args("%04d", &[arg(7, 8, false)], TimeScale::NANOSECOND);
         assert_eq!(hasil, "0007\n");
     }
 
     #[test]
     fn persen_ganda_menghasilkan_literal_persen() {
-        let hasil = format_args::<8>("100%%", &[]);
+        let hasil = format_args::<8>("100%%", &[], TimeScale::NANOSECOND);
         assert_eq!(hasil, "100%\n");
     }
 
     #[test]
     fn spesifikasi_tanpa_argumen_ditambah_otomatis() {
         // LRM §20.2: spesifikasi tanpa argumen ditampilkan apa adanya.
-        let hasil = format_args("a=%d b=%d", &[arg(1, 8, false)]);
+        let hasil = format_args("a=%d b=%d", &[arg(1, 8, false)], TimeScale::NANOSECOND);
         assert_eq!(hasil, "a=1 b=%d\n");
     }
 
     #[test]
     fn argumen_berlebihan_dicetak_sebagai_desimal() {
-        let hasil = format_args("x=%d", &[arg(1, 8, false), arg(2, 8, false)]);
+        let hasil = format_args(
+            "x=%d",
+            &[arg(1, 8, false), arg(2, 8, false)],
+            TimeScale::NANOSECOND,
+        );
         assert_eq!(hasil, "x=1 2\n");
     }
 
     #[test]
     fn teks_biasa_keloloskan_apa_adanya() {
-        let hasil = format_args::<8>("halo dunia", &[]);
+        let hasil = format_args::<8>("halo dunia", &[], TimeScale::NANOSECOND);
         assert_eq!(hasil, "halo dunia\n");
     }
 
     #[test]
-    fn format_waktu_menggunakan_satuan_otomatis() {
-        // LRM §20.4: `%t` menulis waktu lengkap dengan satuannya.
-        let hasil = format_args::<64>("t=%t", &[waktu(100)]);
-        assert_eq!(hasil, "t=100ns\n");
+    fn format_waktu_menampilkan_angka_dalam_satuan_presisi() {
+        // LRM §20.4: `%t` menampilkan waktu sebagai bilangan bulat dalam
+        // satuan `timeprecision`, rata kanan lebar 20 — bukan teks bersufiks
+        // satuan seperti "100ns". `iverilog` dan `verilator` sama.
+        let hasil = format_args::<64>("t=%t", &[waktu(100)], TimeScale::NANOSECOND);
+        assert_eq!(hasil, format!("t={:>20}\n", 100));
     }
 
     /// Waktu simulasi lebarnya 64 bit, jadi argumennya perlu `Bits<64>`.
@@ -451,17 +528,73 @@ mod tests {
     }
 
     #[test]
-    fn format_waktu_memilih_satuan_terbesar_yang_habis_dibagi() {
-        // 2000 ns habis dibagi microsecond => ditulis "2us"; 1500 ns tidak
-        // habis dibagi, jadi tetap "1500ns".
-        let hasil = format_args::<64>("%t %t", &[waktu(2000), waktu(1500)]);
-        assert_eq!(hasil, "2us 1500ns\n");
+    fn format_waktu_menghormati_lebar_eksplisit() {
+        let hasil = format_args::<64>("%0t|%5t", &[waktu(7), waktu(7)], TimeScale::NANOSECOND);
+        assert_eq!(hasil, "7|    7\n");
+        // `%t` polos memakai lebar bawaan 20 rata kanan.
+        let polos = format_args::<64>("%t", &[waktu(7)], TimeScale::NANOSECOND);
+        assert_eq!(polos, format!("{:>20}\n", 7));
     }
 
     #[test]
-    fn format_waktu_nol_menghasilkan_nol_tanpa_satuan() {
-        let hasil = format_args::<64>("t=%t", &[waktu(0)]);
+    fn format_waktu_memakai_presisi_modul() {
+        // `timescale 1us/1ns`: `$time` bernilai jumlah microsecond, `%t`
+        // menampilkannya dalam satuan presisi (nanosecond).
+        let skala = TimeScale {
+            unit_femtos: 1_000_000_000,
+            precision_femtos: 1_000_000,
+        };
+        let hasil = format_args::<64>("t=%0t", &[waktu(1500)], skala);
+        assert_eq!(hasil, "t=1500000\n");
+    }
+
+    #[test]
+    fn format_waktu_nol_menghasilkan_nol() {
+        let hasil = format_args::<64>("t=%0t", &[waktu(0)], TimeScale::NANOSECOND);
         assert_eq!(hasil, "t=0\n");
+    }
+
+    /// BUG: `%05t` mengabaikan flag nol dan mencetak ` 1000` (spasi), sedangkan
+    /// `iverilog` dan `verilator` mencetak `01000`.
+    #[test]
+    fn bug_format_waktu_nol_depan_menggunakan_pad_nol() {
+        let hasil = format_args::<64>("[%05t]", &[waktu(1000)], TimeScale::NANOSECOND);
+        assert_eq!(hasil, "[01000]\n");
+        // `%0t` (lebar 0) tetap tanpa padding sama sekali.
+        let tanpa = format_args::<64>("[%0t]", &[waktu(1000)], TimeScale::NANOSECOND);
+        assert_eq!(tanpa, "[1000]\n");
+    }
+
+    /// BUG: lebar multi-digit salah dibaca. Parser spesifikasi memakai
+    /// `lebar = Some(lebar * 10 + d)`, bukan "digit pertama mengunci lebar".
+    /// `%10t` dengan nilai 1000 harus lebar 10.
+    #[test]
+    fn bug_lebar_multi_digit_dibaca_sebagai_angka() {
+        let waktu = format_args::<64>("[%10t]", &[waktu(1000)], TimeScale::NANOSECOND);
+        assert_eq!(waktu, "[      1000]\n");
+        let desimal = format_args::<8>("[%10d]", &[arg(7, 8, false)], TimeScale::NANOSECOND);
+        assert_eq!(desimal, "[         7]\n");
+        // `%03d` tetap nol-depan dengan lebar 3.
+        let nol = format_args::<8>("[%03d]", &[arg(7, 8, false)], TimeScale::NANOSECOND);
+        assert_eq!(nol, "[007]\n");
+    }
+
+    /// BUG: nilai `x`/`z` pada argumen `%t` dihitung sebagai 0 oleh
+    /// `to_u64()`, sehingga waktu yang belum diketahui tercetak `0`. LRM §20.4
+    /// tidak mengizinkan angka pasti dari nilai tak diketahui; iverilog dan
+    /// verilator mencetak `x`.
+    #[test]
+    fn bug_format_waktu_dengan_x_mencetak_x() {
+        let tak_diketahui = FormatArg {
+            value: Bits::<64>::from_unknown(0, 0xFF, 0, 8),
+            width: 8,
+            signed: false,
+        };
+        let hasil = format_args::<64>("[%0t]", &[tak_diketahui], TimeScale::NANOSECOND);
+        assert_eq!(hasil, "[x]\n");
+        // Nilai pasti tetap normal — penjaga tidak boleh terlalu longgar.
+        let pasti = format_args::<64>("[%0t]", &[waktu(5)], TimeScale::NANOSECOND);
+        assert_eq!(pasti, "[5]\n");
     }
 }
 

@@ -1,6 +1,7 @@
 // Tanggung jawab: pub API crate sv-ast.
 pub mod combinational;
 pub mod declaration;
+pub mod delay_unit;
 pub mod event_edge;
 pub mod event_item;
 pub mod expression;
@@ -12,6 +13,7 @@ pub mod port;
 pub mod routine;
 pub mod statement;
 pub mod system_task;
+pub mod time_scale;
 pub mod time_unit;
 pub mod typedef;
 pub mod width;
@@ -30,6 +32,7 @@ pub use module::Module;
 pub use port::{Port, PortDirection};
 pub use routine::{ArgDirection, RoutineDecl, RoutineKind, TaskCall};
 pub use statement::{SequentialStatement, Statement};
+pub use time_scale::TimeScale;
 pub use time_unit::TimeUnit;
 pub use typedef::{EnumMember, TypeDefBody, TypeDefDecl};
 pub use width::{ParamDecl, WidthExpr};

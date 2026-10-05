@@ -12,11 +12,12 @@ use sv_ir::Design;
 pub fn write_system_task(
     kind: SystemTaskKind,
     args: &[SystemArg],
+    scale: sv_ir::TimeScale,
     out: &mut String,
     indent: &Indent,
 ) {
     match kind {
-        SystemTaskKind::Display => write_display(args, out, indent),
+        SystemTaskKind::Display => write_display(args, scale, out, indent),
         // LRM §20.2: `$monitor` mendaftarkan format + argumen; pencetakan
         // terjadi nanti di driver saat ada sinyal yang berubah.
         SystemTaskKind::Monitor => write_monitor(out, indent),
@@ -31,7 +32,7 @@ pub fn write_system_task(
         }
         // LRM §20.3: argumen `$strobe` dievaluasi SAAT dipanggil, lalu
         // dicetak di akhir timestep. Jadi nilai ikut disimpan saat ini.
-        SystemTaskKind::Strobe => write_strobe(args, out, indent),
+        SystemTaskKind::Strobe => write_strobe(args, scale, out, indent),
         // LRM §20.3: `$finish` menghentikan simulasi. Selain menandai flag,
         // statement setelahnya pada proses yang sama tidak boleh jalan lagi,
         // jadi proses langsung keluar lewat `return`.
@@ -75,11 +76,15 @@ fn write_dumpfile(args: &[SystemArg], out: &mut String, indent: &Indent) {
 }
 
 /// Antrekan satu panggilan `$strobe` beserta argumen yang sudah dievaluasi.
-fn write_strobe(args: &[SystemArg], out: &mut String, indent: &Indent) {
+fn write_strobe(args: &[SystemArg], scale: sv_ir::TimeScale, out: &mut String, indent: &Indent) {
     indent.push(out);
+    // Skala `%t` ikut disimpan karena milik modul pemanggil, bukan modul top
+    // (LRM §21.8) — design yang sudah di-flatten tidak lagi tahu asal masing-masing
+    // argumen.
     out.push_str(&format!(
-        "self.strobe_pending.push(({:?}, vec![\n",
-        format_monitor(args)
+        "self.strobe_pending.push(({:?}, {}, vec![\n",
+        format_monitor(args),
+        crate::time_gen::literal_time_scale_dari(scale)
     ));
     let mut ada = false;
     for arg in args {
@@ -216,7 +221,7 @@ fn find_task(design: &Design, jenis: SystemTaskKind) -> Option<sv_ir::system_tas
 }
 
 /// Gabungkan seluruh argumen format menjadi satu string lalu tulis printf call.
-fn write_display(args: &[SystemArg], out: &mut String, indent: &Indent) {
+fn write_display(args: &[SystemArg], scale: sv_ir::TimeScale, out: &mut String, indent: &Indent) {
     let mut format = String::new();
     for arg in args {
         if let SystemArg::Format(teks) = arg {
@@ -255,7 +260,12 @@ fn write_display(args: &[SystemArg], out: &mut String, indent: &Indent) {
         // Tanpa argumen nilai, const generic M masih harus tegas.
         out.push_str(", &[] as &[sv_runtime::FormatArg<MAX_WIDTH>]");
     }
-    out.push_str("));\n");
+    // LRM §21.8 + §20.4: `%t` memakai `timeunit`/`timeprecision` modul yang
+    // memuat format string ini, bukan modul top.
+    out.push_str(&format!(
+        ", {}));\n",
+        crate::time_gen::literal_time_scale_dari(scale)
+    ));
 }
 
 /// Escape string sebagai literal Rust; newline dari lexer dikembalikan
@@ -282,7 +292,13 @@ mod tests {
 
     fn render(kind: SystemTaskKind, args: &[SystemArg]) -> String {
         let mut out = String::new();
-        write_system_task(kind, args, &mut out, &Indent::new());
+        write_system_task(
+            kind,
+            args,
+            sv_ir::TimeScale::default(),
+            &mut out,
+            &Indent::new(),
+        );
         out
     }
 
@@ -301,7 +317,8 @@ mod tests {
         );
         assert_eq!(
             kode,
-            "print!(\"{}\", sv_runtime::sv_format_args(\"halo\", &[] as &[sv_runtime::FormatArg<MAX_WIDTH>]));\n"
+            "print!(\"{}\", sv_runtime::sv_format_args(\"halo\", &[] as &[sv_runtime::FormatArg<MAX_WIDTH>], \
+            sv_runtime::TimeScale { unit_femtos: 1000000, precision_femtos: 1000000 }));\n"
         );
     }
 

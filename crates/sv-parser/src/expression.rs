@@ -608,6 +608,9 @@ fn parse_primary(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
         }
         Token::SystemTask(nama) if nama == "time" => Ok((
             Expr::SystemTime {
+                // `timescale` modul belum diketahui saat parsing;
+                // `sv_ast::delay_unit::terapkan_module` yang mengisinya.
+                unit: sv_ast::time_unit::TimeUnit::default_unit(),
                 span: tokens[0].span,
             },
             1,

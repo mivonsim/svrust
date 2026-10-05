@@ -8,6 +8,7 @@ use sv_ast::module::Module;
 use sv_ast::port::PortDirection;
 use sv_ir::datatype::DataType;
 use sv_ir::scope::ScopePath;
+use sv_ir::time_scale::TimeScale;
 use sv_ir::variable::{VarDecl, VarKind};
 use sv_ir::{Design, PortDirection as IrPortDirection, PortInfo};
 
@@ -23,6 +24,10 @@ pub fn elaborate(module: &Module) -> Result<Design, ElaborateError> {
     let module = &crate::instance::substitusi_parameter(module, &params_awal, "", None)?;
     let mut symbols = SymbolTable::new();
     let mut design = Design::new(module.name.clone());
+    // LRM §21.8: skala waktu top dipakai untuk membulatkan `$time` dan header
+    // VCD. Modul anak bisa punya `timescale` sendiri; setelah flatten hanya
+    // skala top yang tersisa, jadi `$time` global mengikuti presisi top.
+    design.time_scale = Some(map_time_scale(module.time_scale));
     // Tabel lengkap (parameter port + `localparam`) dipakai lagi di sini:
     // lebar dimension dan tipe `typedef` boleh merujuk `localparam`.
     let params = ParamTable::untuk_modul(module)?;
@@ -111,6 +116,17 @@ pub fn elaborate_top(modules: &[Module], top: &str) -> Result<Design, ElaborateE
     };
     let mut symbols = SymbolTable::new();
     let mut design = Design::new(module.name.clone());
+    // LRM §21.8: presisi simulasi adalah `timeprecision` **terkecil** di antara
+    // seluruh modul, bukan milik modul top saja. Header VCD menulis nilai waktu
+    // dalam satuan presisi itu, jadi memakai presisi top akan membuat pembaca VCD
+    // salah menafsirkan setiap timestamp ketika ada modul anak yang lebih tajam.
+    let scale = map_time_scale(module.time_scale);
+    let presisi_paling_kecil = modules
+        .iter()
+        .map(|m| map_time_unit(m.time_scale.precision))
+        .min_by_key(|u| u.femtos())
+        .unwrap_or(scale.precision);
+    design.time_scale = Some(TimeScale::new(scale.unit, presisi_paling_kecil));
     // Tabel yang sudah memuat `localparam` dipakai lagi di sini: lebar
     // dimension dan tipe `typedef` boleh merujuknya.
     let params = ParamTable::untuk_modul(module)?;
@@ -303,6 +319,30 @@ fn map_direction(direction: PortDirection) -> IrPortDirection {
         PortDirection::Input => IrPortDirection::Input,
         PortDirection::Output => IrPortDirection::Output,
         PortDirection::Inout => IrPortDirection::Inout,
+    }
+}
+
+/// Petakan `timescale` AST ke bentuk IR.
+pub fn map_time_scale(scale: sv_ast::time_scale::TimeScale) -> sv_ir::time_scale::TimeScale {
+    sv_ir::time_scale::TimeScale::new(map_time_unit(scale.unit), map_time_unit(scale.precision))
+}
+
+/// Petakan satuan waktu AST ke enum IR.
+fn map_time_unit(unit: sv_ast::time_unit::TimeUnit) -> sv_ir::TimeUnit {
+    use sv_ast::time_unit::TimeUnit as Ast;
+    use sv_ir::TimeUnit as Ir;
+    match unit {
+        // `Bawaan` sudah diselesaikan parser lewat `terapkan_module`; bila
+        // sampai ke sini, modul dibangun tanpa `parse_file` dan tidak ada
+        // `timescale` yang bisa dipakai, jadi nanosecond adalah pilihan yang
+        // tidak mungkin diam-diam menggeser waktu lebih jauh.
+        Ast::Bawaan => Ir::NanoSeconds,
+        Ast::Seconds => Ir::Seconds,
+        Ast::MilliSeconds => Ir::MilliSeconds,
+        Ast::MicroSeconds => Ir::MicroSeconds,
+        Ast::NanoSeconds => Ir::NanoSeconds,
+        Ast::PicoSeconds => Ir::PicoSeconds,
+        Ast::FectoSeconds => Ir::FectoSeconds,
     }
 }
 

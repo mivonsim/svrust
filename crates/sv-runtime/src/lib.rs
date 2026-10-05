@@ -28,5 +28,5 @@ pub use reduction::{
 pub use scheduler::{EventKind, Region, ScheduledEvent, Scheduler};
 pub use shift::{geser_kanan_aritmetik, geser_kanan_logis, geser_kiri};
 pub use signal::{PendingWrite, SignalCell};
-pub use system_task::{format_args as sv_format_args, FormatArg};
+pub use system_task::{format_args as sv_format_args, FormatArg, TimeScale};
 pub use time::{SimTime, FS_PER_SEC, FS_PER_US};
