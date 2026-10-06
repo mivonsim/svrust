@@ -64,9 +64,25 @@ pub fn generate_module(design: &Design) -> String {
     // field ini wajib ada begitu ada blok `initial` meski desainnya tanpa
     // delay sama sekali. Versi lama hanya memunculkannya bila `has_time`, dan
     // kode hasil generate gagal dengan `no field time_now`.
-    if crate::time_scan::has_time(design) || has_initial(design) {
+    //
+    // Proses waktu (`always #N`) juga menulisi `time_now`, jadi ikut menghitung
+    // sebagai pemicu field ini.
+    if crate::time_scan::has_time(design)
+        || has_initial(design)
+        || crate::time_scan::jumlah_proses_waktu(design) > 0
+    {
         field_indent.push(&mut out);
         out.push_str("time_now: SimTime,\n");
+    }
+    // LRM §9.2.1: tiap proses `always #N` punya waktu bangun sendiri; dua
+    // proses `#5` harus keduanya menambah 5 dari waktu yang sama.
+    //
+    // BUG: field `timed_maks` lama tidak pernah dipakai untuk apa pun yang
+    // berarti — `eval_timed` sudah memakai variabel lokal `__maks` sendiri,
+    // jadi field itu hanya menambah state yang tidak terpakai.
+    if crate::time_scan::jumlah_proses_waktu(design) > 0 {
+        field_indent.push(&mut out);
+        out.push_str("timed_time: Vec<SimTime>,\n");
     }
     // State `$monitor` hanya perlu ada bila design memakainya.
     if crate::system_task_gen::uses_monitor_flag(design) {
@@ -108,6 +124,7 @@ pub fn generate_module(design: &Design) -> String {
     write_new(design, &struct_name, &inner, &mut out);
     write_accessors(design, &inner, &mut out);
     write_eval_comb(design, &inner, &mut out);
+    write_eval_timed(design, &inner, &mut out);
     write_eval_seq(design, &inner, &mut out);
     write_sample_edge(design, &inner, &mut out);
     write_eval_initial(design, &inner, &mut out);
@@ -202,6 +219,13 @@ fn write_new(design: &Design, struct_name: &str, inner: &Indent, out: &mut Strin
     if ada_waktu {
         fields.push(out);
         out.push_str("time_now: SimTime::ZERO,\n");
+    }
+    if crate::time_scan::jumlah_proses_waktu(design) > 0 {
+        fields.push(out);
+        out.push_str(&format!(
+            "timed_time: vec![SimTime::ZERO; {}],\n",
+            crate::time_scan::jumlah_proses_waktu(design)
+        ));
     }
     if crate::system_task_gen::uses_monitor_flag(design) {
         fields.push(out);
@@ -298,7 +322,6 @@ fn write_eval_comb(design: &Design, inner: &Indent, out: &mut String) {
         .iter()
         .filter(|p| p.kind == ProcessKind::Combinational)
         .collect();
-
     inner.push(out);
     out.push_str("pub fn eval_comb(&mut self) {\n");
     let body = inner.child();
@@ -314,6 +337,127 @@ fn write_eval_comb(design: &Design, inner: &Indent, out: &mut String) {
     out.push_str("}\n\n");
 }
 
+fn write_eval_timed(design: &Design, inner: &Indent, out: &mut String) {
+    let timed: Vec<_> = design
+        .processes
+        .iter()
+        .filter(|p| p.kind == ProcessKind::Timed)
+        .collect();
+    if timed.is_empty() {
+        return;
+    }
+    // LRM §4.4 + §11.2: tiap proses waktu punya jam bangun sendiri, dan simulasi
+    // berakhir pada event BERIKUTNYA — bukan pada satu iterasi per proses.
+    //
+    // BUG: versi lama menjalankan tiap proses tepat SEKALI per pemanggilan
+    // driver. Dengan dua proses waktu `#5` dan `#3`, keduanya maju satu periode
+    // per langkah: pada t=30 proses `#3` hanya berayun 6 kali (harus 10) dan
+    // proses `#5` 6 kali (benar), jadi hasil testbench salah diam-diam.
+    //
+    // Perbaikan: satu pemanggilan，直到 waktu bangun TERCEPAT dari seluruh
+    // proses. Proses yang periodenya lebih pendek mengulang beberapa kali
+    // sampai waktunya mengejar, karena LRM §4.4 menganggap keduanya berjalan
+    // pada jam simulasi yang sama.
+    //
+    // Periode harus konstanta agar batas loop bisa ditulis sebagai konstanta;
+    // bila ada yang runtime, jatuh ke satu-iterasi-per-pemanggilan.
+    let periode = crate::wake_plan::periode_waktu(design).filter(|p| !p.is_empty());
+
+    inner.push(out);
+    out.push_str("pub fn eval_timed(&mut self) {\n");
+    let arm = inner.child();
+    match periode {
+        Some(periode) => {
+            // Satu iterasi = satu event waktu: majukan jam ke waktu bangun
+            // tercepat, lalu jalankan setiap proses yang waktunya sudah tiba.
+            //
+            // `__t` dideklarasikan DI LUAR loop supaya masih hidup setelah loop
+            // selesai — deklarasinya di dalam membuat `self.time_now = __t`
+            // gagal dikompilasi dengan `cannot find value __t in this scope`.
+            arm.push(out);
+            out.push_str(&format!("let __t = {};\n", kode_min_periode(&periode)));
+            arm.push(out);
+            out.push_str("loop {\n");
+            let dalam = arm.child();
+            // Pemisah `&&` ditulis SEBELUM tiap suku ke-2, bukan sesudahnya:
+            // menempelkannya sesudah membuat dua perbandingan tersambung
+            // (`a >= __tb >= __t`), yang ditolak rustc dengan
+            // `comparison operators cannot be chained`.
+            let syarat: Vec<String> = (0..periode.len())
+                .map(|index| format!("self.timed_time[{index}] >= __t"))
+                .collect();
+            dalam.push(out);
+            out.push_str(&format!("let __semua_sampai = {};\n", syarat.join(" && ")));
+            dalam.push(out);
+            out.push_str("if __semua_sampai { break; }\n");
+            for (index, process) in timed.iter().enumerate() {
+                dalam.push(out);
+                out.push_str(&format!("// {} (proses {index})\n", process.name));
+                dalam.push(out);
+                out.push_str(&format!("if self.timed_time[{index}] < __t {{\n"));
+                let lengan = dalam.child();
+                lengan.push(out);
+                out.push_str(&format!("self.time_now = self.timed_time[{index}];\n"));
+                write_statements(&process.body, out, &lengan.child());
+                lengan.push(out);
+                out.push_str(&format!("self.timed_time[{index}] = self.time_now;\n"));
+                lengan.push(out);
+                out.push_str("}\n");
+            }
+            arm.push(out);
+            out.push_str("}\n");
+            // Jam desain berada pada event yang baru saja diproses; proses
+            // yang tertinggal tidak boleh menarik mundur.
+            arm.push(out);
+            out.push_str("self.time_now = __t.max(self.time_now);\n");
+        }
+        None => {
+            arm.push(out);
+            out.push_str("let mut __maks = self.time_now;\n");
+            for (index, process) in timed.iter().enumerate() {
+                arm.push(out);
+                out.push_str(&format!("// {} (proses {index})\n", process.name));
+                // Tiap proses berangkat dari waktu bangun sendiri (LRM §4.4).
+                arm.push(out);
+                out.push_str(&format!("self.time_now = self.timed_time[{index}];\n"));
+                write_statements(&process.body, out, &arm.child());
+                arm.push(out);
+                out.push_str(&format!("self.timed_time[{index}] = self.time_now;\n"));
+                arm.push(out);
+                out.push_str("if self.time_now > __maks { __maks = self.time_now; }\n");
+            }
+            arm.push(out);
+            out.push_str("self.time_now = __maks;\n");
+        }
+    }
+    inner.push(out);
+    out.push_str("}\n\n");
+}
+
+/// Kode Rust untuk `min(timed_time[0] + p0, timed_time[1] + p1, ...)`.
+///
+/// Periode ditulis sebagai konstanta femtosecond supaya batas loop
+/// `eval_timed` bisa ditentukan compiler dan tidak membaca sinyal.
+fn kode_min_periode(periode: &[u64]) -> String {
+    let bagian: Vec<String> = periode
+        .iter()
+        .enumerate()
+        .map(|(index, periode)| {
+            format!(
+                "self.timed_time[{index}].saturating_add(sv_runtime::SimTime::from_femtos({periode}))"
+            )
+        })
+        .collect();
+    // Setiap `min` membungkus seluruh argumennya, jadi kurung buka harus ikut
+    // bertambah seiring jumlah proses — tidak cukup menempelkan `)` sejumlah
+    // proses di akhir (hasilnya kurung berlebih dan kode gagal dikompilasi).
+    let mut kode = bagian[0].clone();
+    for bagian in &bagian[1..] {
+        kode = format!("{kode}.min({bagian})");
+    }
+    kode
+}
+
 fn write_eval_seq(design: &Design, inner: &Indent, out: &mut String) {
     let sequential: Vec<_> = design
         .processes
@@ -321,10 +465,26 @@ fn write_eval_seq(design: &Design, inner: &Indent, out: &mut String) {
         .filter(|p| p.kind == ProcessKind::Sequential)
         .collect();
 
+    // LRM §9.7 + §11.2: ketika clock digerakkan proses waktu (`always #N`),
+    // proses sekuensial HANYA boleh jalan pada edge NYATA. Syarat lama
+    // `clock == {id}` benar setiap langkah driver, jadi `always_ff @(posedge
+    // clk)` ikut jalan pada SETIAP langkah — termasuk saat `clk` tetap 0 di
+    // antara dua toggle. Register bergeser jauh lebih cepat dari stimulus,
+    // dan tidak ada pesan apa pun.
+    //
+    // BUG: `clock == {id}` adalah perbandingan id sinyal dengan argumen
+    // driver yang juga id sinyal itu, jadi nilainya `true` secara permanen —
+    // bukan(edge). Perbandingan edge nyata sudah tersedia lewat `edge_test`,
+    // tapi hanya dipakai untuk sensitivitas gabungan, sehingga clock yang
+    // digerakkan `always #N` tidak pernah terpakai.
+    let edge_nyata = crate::time_scan::jumlah_proses_waktu(design) > 0;
+
     inner.push(out);
     // Tanpa proses sekuensial, parameter `clock` tak terpakai; diganti
     // garis bawah agar hasil generate bebas warning `unused_variables`.
-    let arg_clock = if sequential.is_empty() {
+    // Pada mode edge nyata juga tak terpakai karena syaratnya tidak
+    // merujuk argumen clock.
+    let arg_clock = if sequential.is_empty() || edge_nyata {
         "_clock"
     } else {
         "clock"
@@ -339,18 +499,20 @@ fn write_eval_seq(design: &Design, inner: &Indent, out: &mut String) {
         body.push(out);
         out.push_str(&format!("// {} (clock = {})\n", process.name, clock_id));
         body.push(out);
+        let events: Vec<sv_ir::process::EventItem> = process
+            .sensitivity
+            .iter()
+            .map(|s| sv_ir::process::EventItem {
+                edge: s.edge,
+                signal: s.signal,
+            })
+            .collect();
         // LRM §9.7: selain evaluasi langkah utama pada clock pertama, proses
         // dengan event gabungan (mis. async reset) juga dievaluasi saat edge
         // nyata terjadi pada salah satu sinyal sensitivitasnya.
-        let syarat = if process.sensitivity.len() > 1 {
-            let events: Vec<sv_ir::process::EventItem> = process
-                .sensitivity
-                .iter()
-                .map(|s| sv_ir::process::EventItem {
-                    edge: s.edge,
-                    signal: s.signal,
-                })
-                .collect();
+        let syarat = if edge_nyata {
+            edge_test(&events)
+        } else if process.sensitivity.len() > 1 {
             format!("clock == {} || ({})", clock_id, edge_test(&events))
         } else {
             format!("clock == {}", clock_id)
@@ -367,10 +529,14 @@ fn write_eval_seq(design: &Design, inner: &Indent, out: &mut String) {
 
 /// True bila design butuh field `edge_prev` dan method `sample_edge`.
 ///
-/// Pemicu: menunggu edge di blok `initial`, atau proses sekuensial dengan
-/// event control gabungan (LRM §9.7) yang diuji terhadap nilai edge sebelumnya.
+/// Pemicu: menunggu edge di blok `initial`, proses sekuensial dengan event
+/// control gabungan (LRM §9.7), atau adanya proses waktu `always #N`
+/// (LRM §11.2) — pada kasus terakhir edge clock nyata hanya bisa dikenali
+/// lewat perbandingan dengan nilai langkah sebelumnya.
 pub fn perlu_edge_prev(design: &Design) -> bool {
-    crate::initial_step::total_tunggu(design) > 0 || ada_event_gabungan(design)
+    crate::initial_step::total_tunggu(design) > 0
+        || ada_event_gabungan(design)
+        || crate::time_scan::jumlah_proses_waktu(design) > 0
 }
 
 /// True bila ada proses sekuensial dengan lebih dari satu item sensitivitas.
@@ -541,10 +707,39 @@ fn write_eval_initial(design: &Design, inner: &Indent, out: &mut String) {
     inner.push(out);
     out.push_str(&format!(
         "pub const INITIAL_STEPS: usize = {};\n\n",
-        crate::initial_step::langkah_driver(design)
+        crate::initial_step::langkah_simulasi(design)
     ));
 
     let ada_tunggu = crate::initial_step::total_tunggu(design) > 0;
+
+    // LRM §4.4 + §11.2: begitu ada proses waktu `always #N`, jam simulasi
+    // bergerak karena clock, bukan karena nomor langkah driver. Segmen
+    // `initial` dengan `#52` lalu hanya boleh jalan setelah jam benar-benar
+    // mencapai t=52 — bukan pada langkah kedua.
+    //
+    // BUG: tanpa gerbang waktu, `initial #52 $display` melompat ke t=52 begitu
+    // dipanggil, membaca counter yang baru berayun satu atau dua kali, lalu
+    // mencetak angka yang salah tanpa pesan.
+    //
+    // Gerbang wake HANYA dipasang bila ada proses waktu yang menggerakkan jam.
+    //
+    // BUG: tanpa syarat ini, gerbang dipasang pada design TANPA proses waktu
+    // juga — padahal tanpa `always #N` tidak ada yangattva jam simulasi, jadi
+    // `__sekarang` selalu 0 dan setiap segmen `#5` tertahan selamanya pada
+    // syarat `0 >= 5000000`. Blok `initial` yang tadinya mencetak `a1 t=5`
+    // diam-diam hanya mencetak baris pertama.
+    //
+    // Tanpa proses waktu, penjadwalan tetap berbasis nomor langkah: setiap
+    // pemanggilan `eval_initial` menjalankan satu segmen per proses dan delay di
+    // segmen itulah yang menggeser jam.
+    //
+    // Wake plan juga butuh SELURUH delay-nya konstanta; delay runtime (`#n`
+    // variabel) membuat rencana `None` dan menjatuhkan kembali ke jalur lama.
+    let ada_proses_waktu = crate::time_scan::jumlah_proses_waktu(design) > 0;
+    let wake_plan = ada_proses_waktu
+        .then(|| crate::wake_plan::wake_plan(design))
+        .flatten();
+    let pakai_wake = wake_plan.is_some();
 
     inner.push(out);
     out.push_str("pub fn eval_initial(&mut self, step: usize) {\n");
@@ -563,6 +758,14 @@ fn write_eval_initial(design: &Design, inner: &Indent, out: &mut String) {
     // t=101 milik proses lain dan berakhir di t=102.
     body.push(out);
     out.push_str("    let mut __maks = self.time_now;\n");
+    // BUG: jam proses disetel ulang ke `initial_time[i]` DI DALAM tiap segmen,
+    // jadi segmen berikutnya tidak punya cara tahu waktu absolut yang sudah
+    // dicapai. Karena itu waktu desain harus disalin sebelum segmen mana pun
+    // mengubahnya — itulah yang dibandingkan dengan wake plan.
+    if pakai_wake {
+        body.push(out);
+        out.push_str("    let __sekarang = self.time_now;\n");
+    }
     if ada_tunggu {
         // Segmen dijalankan menurut penunjuk tiap proses, bukan menurut
         // indeks langkah, supaya segmen yang menunggu edge bisa dicoba lagi.
@@ -575,21 +778,27 @@ fn write_eval_initial(design: &Design, inner: &Indent, out: &mut String) {
                 let awal = if urut == 0 { "if" } else { "} else if" };
                 let events = await_event_control(segment);
                 let syarat_urut = format!("self.initial_pc[{}] == {}", index, urut);
-                let header = match events {
-                    Some(events) => format!("{} {} && {} ", awal, syarat_urut, edge_test(events)),
-                    None => format!("{} {} ", awal, syarat_urut),
+                let header = match (events, wake_gate(wake_plan.as_deref(), index, urut)) {
+                    (Some(events), Some(gate)) => {
+                        format!(
+                            "{} {} && {} && {} ",
+                            awal,
+                            syarat_urut,
+                            gate,
+                            edge_test(events)
+                        )
+                    }
+                    (Some(events), None) => {
+                        format!("{} {} && {} ", awal, syarat_urut, edge_test(events))
+                    }
+                    (None, Some(gate)) => format!("{} {} && {} ", awal, syarat_urut, gate),
+                    (None, None) => format!("{} {} ", awal, syarat_urut),
                 };
                 body.push(out);
                 out.push_str(&format!("    // {} segmen {}\n", nama_proses(index), urut));
                 body.push(out);
                 out.push_str(&format!("    {} {{\n", header));
                 let arm = body.child();
-                // Proses ini berangkat dari waktu bangun sendiri, bukan dari
-                // jam desain (lihat catatan di atas).
-                arm.push(out);
-                out.push_str(&format!(
-                    "        self.time_now = self.initial_time[{index}];\n"
-                ));
                 // Bodynya ditulis sebagai daftar statement; untuk segmen event
                 // control statement `@(...)`-nya sendiri tidak diulang.
                 let statements: &[sv_ir::process::Statement] = if events.is_some() {
@@ -597,6 +806,23 @@ fn write_eval_initial(design: &Design, inner: &Indent, out: &mut String) {
                 } else {
                     segment.as_slice()
                 };
+                // LRM §9.7 + §4.4: proses yang ditangguhkan `@(posedge clk)`
+                // BANGUN pada waktu edge itu terjadi — bukan pada waktu bangun
+                // lamanya yang sudah basi.
+                //
+                // BUG: memakai `initial_time[index]` membuat segmen yang
+                // menunggu edge melaporkan waktu lamanya (t=0) walau edge-nya
+                // baru terjadi di t=5, sehingga `$time` di dalam segmen salah.
+                // Segmen yang hanya menunggu waktu tetap memakai waktu bangunnya
+                // sendiri — itulah yang mencegah rantai `#1 #1 #1` ikut
+                // terseret ke waktu proses lain yang lebih maju.
+                let waktu_mulai = if events.is_some() && pakai_wake {
+                    "__sekarang"
+                } else {
+                    &format!("self.initial_time[{index}]")
+                };
+                arm.push(out);
+                out.push_str(&format!("        self.time_now = {waktu_mulai};\n"));
                 if !statements.is_empty() {
                     // LRM §20.3: `$finish` menghentikan sisa segmen INI saja.
                     // Closure memastikan `return` dari `$finish` tidak keluar
@@ -637,55 +863,75 @@ fn write_eval_initial(design: &Design, inner: &Indent, out: &mut String) {
     }
 
     body.push(out);
-    out.push_str("    match step {\n");
-    for step in 0..crate::initial_step::jumlah_langkah(design) {
-        let lanjutan: Vec<(usize, String, &[sv_ir::process::Statement])> = segmen
-            .iter()
-            .enumerate()
-            .filter_map(|(index, segments)| {
-                segments
-                    .get(step)
-                    .filter(|segmen| !segmen.is_empty())
-                    .map(|segmen| (index, nama_proses(index), segmen.as_slice()))
-            })
-            .collect();
-        if lanjutan.is_empty() {
-            continue;
+    out.push_str("    let _ = step;\n");
+    // Rantai `if/else if` per proses: hanya SATU segmen per proses yang boleh
+    // jalan pada satu waktu simulasi (LRM §4.4), dan segmen yang waktunya belum
+    // tiba harus dicoba lagi pada langkah berikutnya — bukan dilewati.
+    for (index, segments) in segmen.iter().enumerate() {
+        for (urut, segment) in segments.iter().enumerate() {
+            let awal = if urut == 0 { "if" } else { "} else if" };
+            let gate = wake_gate(wake_plan.as_deref(), index, urut);
+            let header = match gate {
+                Some(gate) => format!("{} self.initial_pc[{index}] == {urut} && {gate}", awal),
+                None => format!("{} self.initial_pc[{index}] == {urut}", awal),
+            };
+            body.push(out);
+            out.push_str(&format!("    // {} segmen {urut}\n", nama_proses(index)));
+            body.push(out);
+            out.push_str(&format!("    {header} {{\n"));
+            let arm = body.child();
+            // Setiap proses berangkat dari waktu bangun sendiri (lihat catatan
+            // `initial_time` di atas).
+            arm.push(out);
+            out.push_str(&format!(
+                "        self.time_now = self.initial_time[{index}];\n"
+            ));
+            if !segment.is_empty() {
+                // LRM §20.3: `$finish` menghentikan sisa segmen INI saja;
+                // closure menjaga proses lain tetap jalan.
+                arm.push(out);
+                out.push_str("        (|| {\n");
+                write_statements(segment, out, &arm.child());
+                arm.push(out);
+                out.push_str("        })();\n");
+            }
+            arm.push(out);
+            out.push_str(&format!(
+                "        self.initial_pc[{index}] = {};\n",
+                urut + 1
+            ));
+            arm.push(out);
+            out.push_str(&format!(
+                "        self.initial_time[{index}] = self.time_now;\n"
+            ));
+            arm.push(out);
+            out.push_str("        if self.time_now > __maks { __maks = self.time_now; }\n");
+            body.push(out);
+            if urut + 1 == segments.len() {
+                out.push_str("    }\n");
+            }
         }
-        body.push(out);
-        out.push_str(&format!("        {} => {{\n", step));
-        let arm = body.child();
-        for (index, nama, statements) in lanjutan {
-            arm.push(out);
-            out.push_str(&format!("// {}\n", nama));
-            // Setiap proses berangkat dari waktu bangun sendiri.
-            arm.push(out);
-            out.push_str(&format!("self.time_now = self.initial_time[{index}];\n"));
-            // LRM §20.3: `$finish` menghentikan sisa segmen INI saja; closure
-            // menjaga proses lain tetap jalan.
-            arm.push(out);
-            out.push_str("(|| {\n");
-            write_statements(statements, out, &arm.child());
-            arm.push(out);
-            out.push_str("})();\n");
-            arm.push(out);
-            out.push_str(&format!("self.initial_time[{index}] = self.time_now;\n"));
-            arm.push(out);
-            out.push_str("if self.time_now > __maks { __maks = self.time_now; }\n");
-        }
-        body.push(out);
-        out.push_str("        }\n");
     }
-    body.push(out);
-    out.push_str("        _ => {}\n");
-    body.push(out);
-    out.push_str("    }\n");
     body.push(out);
     out.push_str("    self.time_now = __maks;\n");
     inner.push(out);
     out.push_str("}\n\n");
+}
 
-    inner.push(out);
+/// Syarat gerbang waktu untuk satu segmen proses `initial`.
+///
+/// Menghasilkan `Some("__sekarang >= SimTime::from_femtos(N)")` bila wake plan
+/// tersedia; `None` bila tidak — pemanggil lalu tidak memasang gerbang dan
+/// penjadwalan tetap berbasis nomor langkah.
+///
+/// BUG yang dicegah: tanpa gerbang, segmen `#52` langsung lolos pada langkah
+/// pertama begitu ada proses waktu lain yang pushes jam ke t=52, sehingga
+/// statement testbench membaca counter pada waktu yang salah.
+fn wake_gate(wake_plan: Option<&[Vec<Option<u64>>]>, index: usize, urut: usize) -> Option<String> {
+    let wake = wake_plan?.get(index)?.get(urut).copied().flatten()?;
+    Some(format!(
+        "__sekarang >= sv_runtime::SimTime::from_femtos({wake})"
+    ))
 }
 
 /// Tulis method `is_finished` bila design punya blok `initial` atau memanggil
@@ -739,14 +985,22 @@ fn sinyal_terawasi(design: &Design) -> Vec<u32> {
 /// Gabungan sinyal yang diawasi blok `initial` dan sinyal sensitivitas proses
 /// sekuensial dengan event gabungan; keduanya dibandingkan dengan langkah
 /// sebelumnya untuk mengenali edge (LRM §9.7).
+///
+/// BUG: bila ada proses waktu `always #N` (LRM §11.2), SEMUA sinyal sensitivitas
+/// proses sekuensial harus ikut disampel — bukan hanya yang sensitivitasnya lebih
+/// dari satu. Tanpa itu `edge_prev` tidak pernah diisi untuk clock Tunggal,
+/// sehingga `edge_test` membandingkan `0` dengan nilai sekarang dan posedge
+/// pertama yang muncul dianggap sedang terjadi (atau tidak pernah terjadi),
+/// tergantung nilai awal clock.
 fn sinyal_disampel(design: &Design) -> Vec<u32> {
     let mut out = sinyal_terawasi(design);
+    let semua_sensitif = crate::time_scan::jumlah_proses_waktu(design) > 0;
     for process in design
         .processes
         .iter()
         .filter(|p| p.kind == ProcessKind::Sequential)
     {
-        if process.sensitivity.len() > 1 {
+        if process.sensitivity.len() > 1 || semua_sensitif {
             for item in &process.sensitivity {
                 if !out.contains(&item.signal) {
                     out.push(item.signal);

@@ -42,9 +42,9 @@ pub fn kumpulkan(module: &Module) -> Vec<&Declaration> {
 /// Kumpulkan deklarasi lokal dari satu statement modul.
 fn kumpulkan_statement(statement: &Statement) -> Vec<&Declaration> {
     match statement {
-        Statement::AlwaysComb { body, .. } | Statement::Initial { body, .. } => {
-            kumpulkan_comb(body)
-        }
+        Statement::AlwaysTimed { body, .. }
+        | Statement::AlwaysComb { body, .. }
+        | Statement::Initial { body, .. } => kumpulkan_comb(body),
         Statement::AlwaysFf { body, .. } => kumpulkan_seq(body),
         Statement::ContinuousAssign { .. } => Vec::new(),
     }

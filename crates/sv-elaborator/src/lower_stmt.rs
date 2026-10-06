@@ -377,6 +377,29 @@ pub fn lower_module_statement(
                 }],
             })
         }
+        // LRM §9.2.1: `always` dengan badan penundaan adalah proses WAKTU.
+        // Dimodelkan sebagai proses own dengan sensitivitas kosong; driver
+        // menjalankannya berulang dan penundaannya menambah waktu simulasi.
+        AstStatement::AlwaysTimed { body, span } => {
+            let lowered = lower_comb_block(body, symbols)?;
+            let mut reads = Vec::new();
+            for statement in &lowered {
+                collect_statement_reads(statement, &mut reads);
+            }
+            Ok(Process {
+                name: "always_timed".to_string(),
+                kind: ProcessKind::Timed,
+                sensitivity: reads
+                    .into_iter()
+                    .map(|signal| SensitivityItem {
+                        signal,
+                        edge: EdgeSensitivity::AnyChange,
+                    })
+                    .collect(),
+                body: lowered,
+                span: to_ir_span(*span),
+            })
+        }
         AstStatement::AlwaysComb { body, span } => {
             let lowered = lower_comb_block(body, symbols)?;
             let mut reads = Vec::new();

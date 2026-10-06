@@ -122,6 +122,10 @@ impl<'a> Inliner<'a> {
                 body: self.seq_list(body)?,
                 span: *span,
             },
+            Statement::AlwaysTimed { body, span } => Statement::AlwaysTimed {
+                body: self.comb_list(body)?,
+                span: *span,
+            },
             Statement::AlwaysComb { body, span } => Statement::AlwaysComb {
                 body: self.comb_list(body)?,
                 span: *span,
@@ -831,6 +835,7 @@ fn stmt_span(stmt: &Statement) -> sv_lexer::span::Span {
     match stmt {
         Statement::ContinuousAssign { span, .. }
         | Statement::AlwaysFf { span, .. }
+        | Statement::AlwaysTimed { span, .. }
         | Statement::AlwaysComb { span, .. }
         | Statement::Initial { span, .. } => *span,
     }

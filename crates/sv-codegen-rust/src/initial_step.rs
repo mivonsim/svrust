@@ -77,6 +77,36 @@ pub fn jumlah_langkah(design: &Design) -> usize {
         .unwrap_or(0)
 }
 
+/// Jumlah iterasi yang dibutuhkan driver supaya jam simulasi mencapai waktu
+/// bangun terakhir yang konstanta.
+///
+/// BUG: `langkah_driver` hanya menghitung jumlah SEGMENT. Begitu ada proses
+/// waktu `always #5 clk = ~clk;`, segmen `#52` butuh sepuluh iterasi clock
+/// sebelum waktunya benar-benar tiba — sedangkan `langkah_driver` mengembalikan
+/// 2. Blok `initial` lalu melompat ke t=52 pada langkah kedua, membaca counter
+/// yang baru berayun dua kali, dan mencetak angka yang salah tanpa pesan.
+///
+///`_N` di sini adalah jumlah iterasi proses waktu, bukan nomor langkah.
+pub fn langkah_simulasi(design: &Design) -> usize {
+    let dasar = langkah_driver(design);
+    let (Some(terakhir), Some(langkah)) = (
+        crate::wake_plan::wake_terakhir(design),
+        crate::wake_plan::langkah_waktu_minimum(design),
+    ) else {
+        return dasar;
+    };
+    // `langkah == 0` berarti tidak ada delay konstanta pada proses waktu; tanpa
+    // periode tetap, jumlah iterasi tidak bisa dihitung dan langkah dasar tetap
+    // dipakai (jam lalu tidak bergerak pada desain seperti itu).
+    if langkah == 0 {
+        return dasar;
+    }
+    // Satu iterasi tambahan untuk menjamin segmen pada waktu bangun terakhir
+    // sempat dijalankan setelah jam simulasi mencapatinya.
+    let perlu = terakhir / langkah + 2;
+    dasar.max(perlu as usize)
+}
+
 /// Jumlah event control pada seluruh proses `initial` di design.
 pub fn total_tunggu(design: &Design) -> usize {
     design

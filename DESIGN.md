@@ -87,18 +87,22 @@ Semantics: active → NBA → postponed, per delta cycle.
 ## CLI
 
 ```
-cargo sv check      // parse + elaborate only
+cargo sv check      // parse + elaborate semua modul root
 cargo sv build      // SV → Rust → native binary
 cargo sv run        // build + execute
-cargo sv test       // jalankan testbench
-cargo sv sim        // interactive simulation
-cargo sv trace      // waveform / VCD
-cargo sv elaborate  // elaboration only
-cargo sv codegen    // Rust source only
-cargo sv inspect    // design statistics
-cargo sv preprocess // preprocessed SV
+cargo sv elaborate  // statistik + daftar proses tiap modul root
+cargo sv codegen    // Rust source saja (satu berkas per design)
+cargo sv inspect    // statistik design
 cargo sv clean      // clean target/sv/
+cargo sv help       // bantuan
+cargo sv version    // versi
 ```
+
+Opsi: `--rtl <BERKAS>` (boleh diulang), `--top <NAMA>` (batasi modul top),
+`--steps <N>` (jumlah langkah simulasi), `--vcd <BERKAS>` (rekam waveform).
+
+Tanpa `--top`, semua modul yang tidak diinstansiasi modul lain dijalankan
+sebagai modul root (LRM §23.1) — masing-masing sebagai design sendiri.
 
 ## Output
 

@@ -23,6 +23,15 @@ pub fn has_time(design: &Design) -> bool {
             .any(|process| process.body.iter().any(statement_uses_time))
 }
 
+/// Jumlah proses waktu (`always #N ...`) pada design.
+pub fn jumlah_proses_waktu(design: &Design) -> usize {
+    design
+        .processes
+        .iter()
+        .filter(|p| p.kind == sv_ir::ProcessKind::Timed)
+        .count()
+}
+
 /// Kumpulkan task `$monitor` terakhir dari sebuah daftar statement.
 ///
 /// LRM §20.2: panggilan `$monitor` berikutnya menggantikan yang sebelumnya,
@@ -42,6 +51,7 @@ pub fn kumpulkan_task(
     }
 }
 
+/// Jumlah proses waktu (`always #N ...`) pada design.
 /// Kumpulkan task `$monitor` terakhir dari satu statement beserta turunannya.
 pub fn kumpulkan_monitor_stmt(
     statement: &Statement,

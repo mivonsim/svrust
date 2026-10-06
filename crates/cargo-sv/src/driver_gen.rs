@@ -80,6 +80,8 @@ fn generate_plain_driver_named(
 ) -> String {
     let struct_name = qualify(module, &sv_codegen_rust::to_struct_name(&design.name));
     let mut out = header_fungsi(&struct_name, fn_name, steps);
+    // LRM §9.2.1: proses `always #N` adalah proses waktu, bukan combinational.
+    let ada_proses_waktu = sv_codegen_rust::time_scan::jumlah_proses_waktu(design) > 0;
 
     for port in input_ports(design) {
         out.push_str(&format!(
@@ -107,11 +109,15 @@ fn generate_plain_driver_named(
         // berubah, jadi clock ditoggle tiap langkah pada desain yang menunggu.
         let ada_tunggu = sv_codegen_rust::initial_step::total_tunggu(design) > 0;
         if ada_tunggu {
-            if let Some((cf, cw)) = &clock_var(design) {
-                out.push_str(&format!(
-                    "    design.set_{}(Bits::<{}>::from_u64(0));\n",
-                    cf, cw
-                ));
+            // Clock sintetis hanya sah bila TIDAK ada proses waktu yang
+            // menggandakannya sendiri (lihat catatan di loop langkah).
+            if !ada_proses_waktu {
+                if let Some((cf, cw)) = &clock_var(design) {
+                    out.push_str(&format!(
+                        "    design.set_{}(Bits::<{}>::from_u64(0));\n",
+                        cf, cw
+                    ));
+                }
             }
             out.push_str("    design.eval_initial(0);\n");
             out.push_str("    design.commit_pending();\n");
@@ -136,13 +142,27 @@ fn generate_plain_driver_named(
             "    for __step in 1..{}::INITIAL_STEPS {{\n",
             struct_name
         ));
-        if ada_tunggu {
+        if ada_tunggu && !ada_proses_waktu {
+            // BUG: clock yang digerakkan `always #N clk = ~clk;` (LRM §11.2)
+            // tidak boleh di-toggle driver juga. Dua penulis untuk satu sinyal:
+            // driver men-toggle di SINI (sebelum `eval_timed`), lalu
+            // `eval_timed` menimpanya — dan karena penulisan driver terjadi
+            // lebih dulu, `@(posedge clk)` di blok `initial` terbaca pada
+            // langkah pertama (t=0) alih-alih menunggu edge pertama di t=5.
             if let Some((cf, cw)) = &clock_var(design) {
                 out.push_str(&format!(
                     "        design.set_{}(Bits::<{}>::from_u64((__step % 2) as u64));\n",
                     cf, cw
                 ));
             }
+        }
+        if ada_proses_waktu {
+            // LRM §9.2.1 + §4.4: proses `always #N` ADVANCE jam simulasi, dan
+            // harus jalan SEBELUM segmen `initial` diperiksa — supaya gerbang
+            // waktu di `eval_initial` membandingkan terhadap jam yang sudah
+            // mencukupi, bukan jam satu periode di belakang.
+            out.push_str("        design.eval_timed();\n");
+            out.push_str("        design.commit_pending();\n");
         }
         out.push_str("        design.eval_initial(__step);\n");
         out.push_str("        design.commit_pending();\n");
@@ -193,6 +213,15 @@ fn generate_plain_driver_named(
         out.push_str("    // Clock simulation\n");
         out.push_str(&format!("    let clock_id = {};\n", clock));
         out.push_str("    for _cycle in 0..STEPS {\n");
+        if ada_proses_waktu {
+            // BUG: loop ini TIDAK pernah memanggil `eval_timed`, padahal
+            // `eval_timed` hanya ditulis di dalam blok `if has_initial`.
+            // Design `always #5 clk = ~clk; always_ff @(posedge clk) ...;`
+            // tanpa blok `initial` membuat clock membeku di t=0 — tidak pernah
+            // ada posedge, jadi register tidak pernah berubah sama sekali.
+            out.push_str("        design.eval_timed();\n");
+            out.push_str("        design.commit_pending();\n");
+        }
         out.push_str("        design.eval_comb();\n");
         out.push_str("        design.commit_pending();\n");
         out.push_str("        design.eval_seq(clock_id);\n");
@@ -254,6 +283,8 @@ fn generate_vcd_driver_named(
 ) -> String {
     let struct_name = qualify(module, &sv_codegen_rust::to_struct_name(&design.name));
     let mut out = header_fungsi(&struct_name, fn_name, steps);
+    // LRM §9.2.1: proses `always #N` berjalan sebagai proses waktu.
+    let ada_proses_waktu = sv_codegen_rust::time_scan::jumlah_proses_waktu(design) > 0;
 
     // LRM §21.8: waktu simulasi untuk timestamp VCD, dalam satuan
     // `timeprecision` modul. Design tanpa `#delay`/`$time` tidak punya field
@@ -351,13 +382,29 @@ fn generate_vcd_driver_named(
         ));
     }
     // Toggle clock bila ada proses sekuensial.
-    if let Some((cf, cw)) = &clock_field {
-        out.push_str(&format!(
-            "        design.set_{}(Bits::<{}>::from_u64(((i as u64) % 2)));\n",
-            cf, cw
-        ));
+    //
+    // BUG: clock yang digerakkan `always #N clk = ~clk;` (LRM §11.2) TIDAK
+    // boleh di-toggle driver juga — ada dua penulis untuk satu sinyal, dan
+    // `commit_pending` setelah `eval_timed` menimpa nilai driver. Waveform VCD
+    // jadi meaningless karena clock tampak berayun pada langkah driver, bukan
+    // pada waktu simulasi.
+    let clock_jadi_writer = !ada_proses_waktu;
+    if clock_jadi_writer {
+        if let Some((cf, cw)) = &clock_field {
+            out.push_str(&format!(
+                "        design.set_{}(Bits::<{}>::from_u64(((i as u64) % 2)));\n",
+                cf, cw
+            ));
+        }
     }
 
+    if ada_proses_waktu {
+        // LRM §9.2.1 + §4.4: proses waktu maju jam simulasi SEBELUM segmen
+        // `initial` diperiksa, supaya gerbang waktunya membandingkan terhadap
+        // jam yang sudah mencukupi.
+        out.push_str("        design.eval_timed();\n");
+        out.push_str("        design.commit_pending();\n");
+    }
     out.push_str("        design.eval_comb();\n");
     out.push_str("        design.commit_pending();\n");
     // LRM §15.2: blok `initial` juga harus berjalan pada mode VCD. Tanpa ini

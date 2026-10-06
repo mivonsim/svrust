@@ -46,9 +46,9 @@ pub(crate) fn kumpulkan_deklarasi(items: &[GenerateItem]) -> Vec<Declaration> {
 /// Kumpulkan deklarasi dari satu statement modul.
 fn kumpulkan_dari_statement(stmt: &Statement, out: &mut Vec<Declaration>) {
     match stmt {
-        Statement::AlwaysComb { body, .. } | Statement::Initial { body, .. } => {
-            kumpulan_comb(body, out)
-        }
+        Statement::AlwaysTimed { body, .. }
+        | Statement::AlwaysComb { body, .. }
+        | Statement::Initial { body, .. } => kumpulan_comb(body, out),
         Statement::AlwaysFf { body, .. } => kumpulan_seq(body, out),
         Statement::ContinuousAssign { .. } => {}
     }
@@ -159,6 +159,10 @@ pub(crate) fn subst_statement(stmt: &Statement, env: &GenvarEnv, scope: &ScopeBl
         Statement::ContinuousAssign { lhs, rhs, span } => Statement::ContinuousAssign {
             lhs: subst_lvalue(lhs, scope, env),
             rhs: subst_expr(rhs, env, scope),
+            span: *span,
+        },
+        Statement::AlwaysTimed { body, span } => Statement::AlwaysTimed {
+            body: subst_comb(body, env, scope),
             span: *span,
         },
         Statement::AlwaysComb { body, span } => Statement::AlwaysComb {

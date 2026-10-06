@@ -1111,9 +1111,9 @@ pub(crate) fn substitusi_parameter(
 /// Substitusi pada deklarasi lokal di dalam statement combinational.
 fn substitusi_local_decl_stmt(s: &mut AstStatement, prefix: &str, koneksi: &KoneksiMap) {
     let (body, span) = match s {
-        AstStatement::AlwaysComb { body, span } | AstStatement::Initial { body, span } => {
-            (body, *span)
-        }
+        AstStatement::AlwaysTimed { body, span }
+        | AstStatement::AlwaysComb { body, span }
+        | AstStatement::Initial { body, span } => (body, *span),
         AstStatement::AlwaysFf { body, .. } => {
             for stmt in body.iter_mut() {
                 substitusi_seq_local(stmt, prefix, koneksi);
@@ -1189,6 +1189,10 @@ fn lingkup_statement(s: &AstStatement, prefix: &str, koneksi: &KoneksiMap) -> As
         AstStatement::ContinuousAssign { lhs, rhs, span } => AstStatement::ContinuousAssign {
             lhs: lingkup_lvalue(lhs, prefix, koneksi),
             rhs: lingkup_expr(rhs, prefix, koneksi, *span),
+            span: *span,
+        },
+        AstStatement::AlwaysTimed { body, span } => AstStatement::AlwaysTimed {
+            body: lingkup_comb(body, prefix, koneksi),
             span: *span,
         },
         AstStatement::AlwaysComb { body, span } => AstStatement::AlwaysComb {

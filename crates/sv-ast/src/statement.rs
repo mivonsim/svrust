@@ -25,6 +25,18 @@ pub enum Statement {
         body: Vec<CombinationalStatement>,
         span: Span,
     },
+    /// Proses WAKTU: `always` tanpa sensitivitas yang badannya penundaan,
+    /// misal `always #5 clk = ~clk;` (LRM §9.2.1, §11.2).
+    ///
+    /// Bentuk ini BUKAN `always_comb`: tidak punya sensitivitas, dan
+    /// penundaan di dalamnya menentukan kapan badan berjalan — bukan
+    /// "setiap perubahan sinyal". Memperlakukannya sebagai proses
+    /// combinational membuat jam simulasi bergerak setiap kali proses
+    /// dievaluasi.
+    AlwaysTimed {
+        body: Vec<CombinationalStatement>,
+        span: Span,
+    },
     /// Blok `initial begin ... end` pada testbench (LRM §15.2).
     Initial {
         body: Vec<CombinationalStatement>,

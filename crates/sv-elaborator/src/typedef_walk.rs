@@ -27,6 +27,13 @@ fn statement(stmt: &Statement, table: &TypeTable) -> Result<Statement, Elaborate
             rhs: table.ganti_literal(rhs),
             span: *span,
         },
+        Statement::AlwaysTimed { body, span } => Statement::AlwaysTimed {
+            body: body
+                .iter()
+                .map(|s| comb(s, table))
+                .collect::<Result<Vec<_>, ElaborateError>>()?,
+            span: *span,
+        },
         Statement::AlwaysFf { events, body, span } => Statement::AlwaysFf {
             events: events.clone(),
             body: body

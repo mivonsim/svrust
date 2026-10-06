@@ -8,6 +8,7 @@ pub mod stmt_gen;
 pub mod system_task_gen;
 pub mod time_gen;
 pub mod time_scan;
+pub mod wake_plan;
 
 pub use indent::Indent;
 pub use module_gen::{generate_module, to_module_name, to_struct_name};

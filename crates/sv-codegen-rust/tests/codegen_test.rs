@@ -816,15 +816,30 @@ fn bug_field_waktu_hadir_untuk_setiap_blok_initial() {
     );
 }
 
+/// BUG: segmented `initial` memakai `match step`, jadi hanya nomor langkah yang
+/// sudah lewat yang bisa menjalankan segmen. Begitu ada proses waktu `always #N`,
+/// segmen `#4` yang waktunya belum tiba dilewati tanpa pernah dijalankan —
+/// pointer `initial_pc` menggantikannya supaya tiap segmen dicoba tepat satu kali
+/// dan hanya boleh naik setelah dijalankan.
 #[test]
-fn setiap_langkah_memiliki_lengan_match() {
+fn setiap_segmen_punya_lengan_pointer() {
     let code = generate(
         "module tb; logic [7:0] a; initial begin a = 1; #4 a = 2; #4 a = 3; end endmodule",
     );
-    assert!(code.contains("0 => {"), "code:\n{code}");
-    assert!(code.contains("1 => {"), "code:\n{code}");
-    assert!(code.contains("2 => {"), "code:\n{code}");
-    assert!(code.contains("_ => {}"), "code:\n{code}");
+    // Tiga statement menghasilkan tiga segmen: `a=1`, `#4 a=2`, `#4 a=3`.
+    for urut in 0..3 {
+        assert!(
+            code.contains(&format!("self.initial_pc[0] == {urut}")),
+            "segmen {urut} tidak punya syarat pointer:\n{code}"
+        );
+    }
+    // Pointer naik satu tingkat per segmen dan tidak pernah melewati akhir.
+    for berikut in 1..=3 {
+        assert!(
+            code.contains(&format!("self.initial_pc[0] = {berikut};")),
+            "kenaikan pointer ke {berikut} tidak ada:\n{code}"
+        );
+    }
 }
 
 #[test]
@@ -1019,11 +1034,18 @@ fn event_control_hanya_maju_bila_edge_terjadi() {
     );
 }
 
+/// BUG: `eval_initial` memakai `match step` sehingga segmen hanya bisa dijalankan
+/// pada nomor langkah yang sudah lewat — begitu ada proses waktu `always #N`,
+/// segmen `#52` langsung dijalankan pada langkah kedua padahal jam simulasi baru
+/// mencapai t=5. Pointer `initial_pc` sekarang jadi penentu segmen, supaya
+/// segmen yang waktunya belum tiba bisa dicoba lagi pada langkah berikutnya.
 #[test]
-fn design_tanpa_event_control_tetap_pakai_langkah_berurutan() {
+fn design_tanpa_event_control_memakai_pointer_segmen() {
     let code = generate("module tb(output logic [7:0] c); initial c = 8'd1; endmodule");
-    // Tanpa menunggu edge, `eval_initial` tetap memakai match langkah.
-    assert!(code.contains("match step {"), "code:\n{code}");
+    // Segmen dipilih lewat pointer, bukan nomor langkah.
+    assert!(code.contains("self.initial_pc[0] == 0"), "code:\n{code}");
+    assert!(code.contains("self.initial_pc[0] = 1;"), "code:\n{code}");
+    // Tanpa menunggu edge, tidak ada kebutuhan menyampel nilai sebelumnya.
     assert!(!code.contains("sample_edge"), "code:\n{code}");
 }
 

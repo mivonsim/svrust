@@ -33,9 +33,24 @@ pub fn parse_always(tokens: &[SpannedToken]) -> Result<(Statement, usize), Strin
     let span = tokens[0].span;
     let mut idx = 1;
 
-    // Tanpa `@`: sensitivity implisit (LRM §9.4.2 `always @*` setara).
+    // Tanpa `@`: dua bentuk yang BERBEDA (LRM §9.2.1 + §11.2).
+    //
+    // - Body memuat `#delay` (misal `always #5 clk = ~clk;`) adalah proses
+    //   WAKTU: tidak punya sensitivitas, badannya diulang terus-menerus, dan
+    //   penundaannya menentukan kapan iterasi berikutnya berjalan.
+    //   Memperlakukannya sebagai `always_comb` membuat penundaan dieksekusi
+    //   setiap kali proses combinational dievaluasi — jam simulasi bergerak
+    //   jauh sebelum stimulus, dan clock tidak pernah menghasilkan edge yang
+    //   dibaca `always_ff` yang menunggu `@(posedge clk)`.
+    // - Selain itu (`always begin a = b; end`) adalah sensitivity implisit,
+    //   setara `always @*`. Catatan: iverilog 12.0 menolak bentuk tanpa
+    //   timing control di elaborasi (`always process does not have any
+    //   delay`); SVRust menerimanya sebagai sensitivitas implisit.
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::At) {
         let (body, next) = super::always_comb::parse_comb_body(tokens, idx)?;
+        if super::always_comb::mengandung_delay(&body) {
+            return Ok((Statement::AlwaysTimed { body, span }, next));
+        }
         return Ok((Statement::AlwaysComb { body, span }, next));
     }
     idx += 1; // '@'

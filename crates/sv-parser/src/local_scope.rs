@@ -59,7 +59,9 @@ pub fn unik_nama_modul(statements: &mut [Statement]) {
     for statement in statements {
         ctx.scopes = vec![HashMap::new()];
         match statement {
-            Statement::AlwaysComb { body, .. } | Statement::Initial { body, .. } => {
+            Statement::AlwaysTimed { body, .. }
+            | Statement::AlwaysComb { body, .. }
+            | Statement::Initial { body, .. } => {
                 for stmt in body {
                     jalan_comb(stmt, &mut ctx);
                 }

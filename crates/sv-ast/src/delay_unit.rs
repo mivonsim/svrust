@@ -74,7 +74,9 @@ fn statement_modul(statement: &mut Statement, scale: TimeScale) {
                 statement_sekuensial(stmt, scale);
             }
         }
-        Statement::AlwaysComb { body, .. } | Statement::Initial { body, .. } => {
+        Statement::AlwaysTimed { body, .. }
+        | Statement::AlwaysComb { body, .. }
+        | Statement::Initial { body, .. } => {
             for stmt in body {
                 statement_kombinasional(stmt, scale);
             }
