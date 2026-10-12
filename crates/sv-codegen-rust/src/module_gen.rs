@@ -70,13 +70,11 @@ pub fn generate_module(design: &Design) -> String {
     //
     // Proses waktu (`always #N`) juga menulisi `time_now`, jadi ikut menghitung
     // sebagai pemicu field ini.
-    if crate::time_scan::has_time(design)
-        || has_initial(design)
-        || crate::time_scan::jumlah_proses_waktu(design) > 0
-    {
-        field_indent.push(&mut out);
-        out.push_str("time_now: SimTime,\n");
-    }
+    //
+    // Scheduler event queue (LRM §4) selalu butuh `time_now` untuk melacak
+    // waktu simulasi saat ini, jadi field ini SELALU ada.
+    field_indent.push(&mut out);
+    out.push_str("time_now: SimTime,\n");
     // LRM §9.2.1: tiap proses `always #N` punya waktu bangun sendiri; dua
     // proses `#5` harus keduanya menambah 5 dari waktu yang sama.
     //
@@ -163,7 +161,7 @@ fn imports() -> &'static str {
 fn write_new(design: &Design, struct_name: &str, inner: &Indent, out: &mut String) {
     let ada_initial = has_initial(design);
     let perlu_finish = ada_initial || crate::system_task_gen::has_finish(design);
-    let ada_waktu = crate::time_scan::has_time(design) || ada_initial;
+    let _ada_waktu = crate::time_scan::has_time(design) || ada_initial;
     inner.push(out);
     out.push_str("pub fn new() -> Self {\n");
     let body = inner.child();
@@ -247,10 +245,9 @@ fn write_new(design: &Design, struct_name: &str, inner: &Indent, out: &mut Strin
         fields.push(out);
         out.push_str("edge_prev: vec![0; signal_count],\n");
     }
-    if ada_waktu {
-        fields.push(out);
-        out.push_str("time_now: SimTime::ZERO,\n");
-    }
+    // time_now SELALU ada (scheduler butuhnya)
+    fields.push(out);
+    out.push_str("time_now: SimTime::ZERO,\n");
     if crate::time_scan::jumlah_proses_waktu(design) > 0 {
         fields.push(out);
         out.push_str(&format!(
@@ -1108,6 +1105,14 @@ pub fn has_initial(design: &Design) -> bool {
         .processes
         .iter()
         .any(|p| p.kind == ProcessKind::Initial)
+}
+
+/// True bila design punya setidaknya satu proses `always_ff` (sequential).
+pub fn has_sequential(design: &Design) -> bool {
+    design
+        .processes
+        .iter()
+        .any(|p| p.kind == ProcessKind::Sequential)
 }
 
 fn write_commit_pending(inner: &Indent, out: &mut String) {

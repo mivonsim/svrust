@@ -82,6 +82,7 @@ fn generate_plain_driver_named(
     let mut out = header_fungsi(&struct_name, fn_name, steps);
     // LRM §9.2.1: proses `always #N` adalah proses waktu, bukan combinational.
     let ada_proses_waktu = sv_codegen_rust::time_scan::jumlah_proses_waktu(design) > 0;
+    let ada_sequential = sv_codegen_rust::module_gen::has_sequential(design);
 
     for port in input_ports(design) {
         out.push_str(&format!(
@@ -138,68 +139,74 @@ fn generate_plain_driver_named(
             sv_codegen_rust::system_task_gen::has_monitor(design),
             &mut out,
         );
-        out.push_str(&format!(
-            "    for __step in 1..{}::INITIAL_STEPS {{\n",
-            struct_name
-        ));
-        if ada_tunggu && !ada_proses_waktu {
-            // BUG: clock yang digerakkan `always #N clk = ~clk;` (LRM §11.2)
-            // tidak boleh di-toggle driver juga. Dua penulis untuk satu sinyal:
-            // driver men-toggle di SINI (sebelum `eval_timed`), lalu
-            // `eval_timed` menimpanya — dan karena penulisan driver terjadi
-            // lebih dulu, `@(posedge clk)` di blok `initial` terbaca pada
-            // langkah pertama (t=0) alih-alih menunggu edge pertama di t=5.
-            if let Some((cf, cw)) = &clock_var(design) {
-                out.push_str(&format!(
-                    "        design.set_{}(Bits::<{}>::from_u64((__step % 2) as u64));\n",
-                    cf, cw
-                ));
+
+        if ada_sequential {
+            // Design dengan proses sekuensial: gunakan loop clock + step_scheduler
+            out.push_str(&format!(
+                "    for __step in 1..{}::INITIAL_STEPS {{\n",
+                struct_name
+            ));
+            if ada_tunggu && !ada_proses_waktu {
+                if let Some((cf, cw)) = &clock_var(design) {
+                    out.push_str(&format!(
+                        "        design.set_{}(Bits::<{}>::from_u64((__step % 2) as u64));\n",
+                        cf, cw
+                    ));
+                }
             }
-        }
-        if ada_proses_waktu {
-            // LRM §9.2.1 + §4.4: proses `always #N` ADVANCE jam simulasi, dan
-            // harus jalan SEBELUM segmen `initial` diperiksa — supaya gerbang
-            // waktu di `eval_initial` membandingkan terhadap jam yang sudah
-            // mencukupi, bukan jam satu periode di belakang.
-            out.push_str("        design.eval_timed();\n");
+            if ada_proses_waktu {
+                out.push_str("        design.eval_timed();\n");
+                out.push_str("        design.commit_pending();\n");
+            }
+            out.push_str("        design.eval_initial(__step);\n");
             out.push_str("        design.commit_pending();\n");
-        }
-        out.push_str("        design.eval_initial(__step);\n");
-        out.push_str("        design.commit_pending();\n");
-        // LRM §20.3: `$finish` menghentikan simulasi. Bila segmen `initial`
-        // yang baru saja jalan memanggil `$finish`, proses sekuensial tak
-        // boleh lagi dievaluasi pada langkah yang sama.
-        if sv_codegen_rust::system_task_gen::has_finish(design) {
-            out.push_str("        if design.is_finished() {\n");
-            out.push_str("            break;\n");
-            out.push_str("        }\n");
-        }
-        out.push_str("        design.eval_comb();\n");
-        out.push_str("        design.commit_pending();\n");
-        match clock_id {
-            Some(id) => {
+            if sv_codegen_rust::system_task_gen::has_finish(design) {
+                out.push_str("        if design.is_finished() {\n");
+                out.push_str("            break;\n");
+                out.push_str("        }\n");
+            }
+            out.push_str("        design.eval_comb();\n");
+            out.push_str("        design.commit_pending();\n");
+            if let Some(id) = clock_id {
                 out.push_str(&format!("        design.eval_seq({});\n", id));
                 out.push_str("        design.commit_pending();\n");
             }
-            None => out.push_str("        // tanpa proses sekuensial pada design ini\n"),
+            if sv_codegen_rust::system_task_gen::has_finish(design) {
+                out.push_str("        if design.is_finished() {\n");
+                out.push_str("            break;\n");
+                out.push_str("        }\n");
+            }
+            if sv_codegen_rust::system_task_gen::uses_monitor_flag(design) {
+                out.push_str("        pantau_monitor!();\n");
+            }
+            if sv_codegen_rust::system_task_gen::has_strobe(design) {
+                out.push_str("        design.run_strobe();\n");
+            }
+            if perlu_prev {
+                out.push_str("        design.sample_edge();\n");
+            }
+            out.push_str("    }\n\n");
+        } else {
+            // Design TANPA proses sekuensial: gunakan scheduler event-driven
+            // LRM §4: jalankan event queue sampai idle
+            out.push_str("    while design.step_scheduler() {\n");
+            out.push_str("        design.commit_pending();\n");
+            if sv_codegen_rust::system_task_gen::has_finish(design) {
+                out.push_str("        if design.is_finished() {\n");
+                out.push_str("            break;\n");
+                out.push_str("        }\n");
+            }
+            if sv_codegen_rust::system_task_gen::uses_monitor_flag(design) {
+                out.push_str("        pantau_monitor!();\n");
+            }
+            if sv_codegen_rust::system_task_gen::has_strobe(design) {
+                out.push_str("        design.run_strobe();\n");
+            }
+            if perlu_prev {
+                out.push_str("        design.sample_edge();\n");
+            }
+            out.push_str("    }\n\n");
         }
-        if sv_codegen_rust::system_task_gen::has_finish(design) {
-            out.push_str("        if design.is_finished() {\n");
-            out.push_str("            break;\n");
-            out.push_str("        }\n");
-        }
-        if sv_codegen_rust::system_task_gen::uses_monitor_flag(design) {
-            out.push_str("        pantau_monitor!();\n");
-        }
-        // LRM §20.3: `$strobe` cetak di akhir timestep, setelah semua proses.
-        if sv_codegen_rust::system_task_gen::has_strobe(design) {
-            out.push_str("        design.run_strobe();\n");
-        }
-        // Nilai sinyal yang diawasi disimpan untuk langkah berikutnya.
-        if perlu_prev {
-            out.push_str("        design.sample_edge();\n");
-        }
-        out.push_str("    }\n\n");
     }
 
     if let Some(clock) = clock_signal_id(design) {
