@@ -77,7 +77,7 @@ pub fn jumlah_langkah(design: &Design) -> usize {
         .unwrap_or(0)
 }
 
-/// Jumlah iterasi yang dibutuhkan driver supaya jam simulasi mencapai waktu
+/// Jumlah event waktu yang harus diproses sebelum jam simulasi mencapai waktu
 /// bangun terakhir yang konstanta.
 ///
 /// BUG: `langkah_driver` hanya menghitung jumlah SEGMENT. Begitu ada proses
@@ -86,25 +86,44 @@ pub fn jumlah_langkah(design: &Design) -> usize {
 /// 2. Blok `initial` lalu melompat ke t=52 pada langkah kedua, membaca counter
 /// yang baru berayun dua kali, dan mencetak angka yang salah tanpa pesan.
 ///
-///`_N` di sini adalah jumlah iterasi proses waktu, bukan nomor langkah.
+/// SATU pemanggilan `eval_timed` memproses SATU event — event terdekat di
+/// antara seluruh proses. Maka jumlah langkah yang dibutuhkan adalah jumlah
+/// EVENT, bukan kelipatan satu periode.
+///
+/// BUG: rumus `terakhir / periode` under-estimate karena event terjadi di
+/// **irisan** seluruh periode, bukan kelipatan satu periode. Untuk `#3` + `#4`
+/// event-nya t=3, 4, 6, 8, 9, 12 — butuh 7 panggilan untuk mencapai t=12,
+/// sedangkan `12/4` hanya memberi 5 dan blok `initial` kehilangan seluruh
+/// output-nya tanpa pesan.
+///
+/// Batas atas `BATAS_LANGKAH` mencegah waktu simulasi yang sangat besar
+/// (`#100000000` dengan clock `#1`) menghasilkan loop yang tidak pernah selesai.
+const BATAS_LANGKAH: usize = 1 << 20;
+
 pub fn langkah_simulasi(design: &Design) -> usize {
     let dasar = langkah_driver(design);
-    let (Some(terakhir), Some(langkah)) = (
+    let (Some(terakhir), Some(periode)) = (
         crate::wake_plan::wake_terakhir(design),
-        crate::wake_plan::langkah_waktu_minimum(design),
+        crate::wake_plan::periode_waktu(design),
     ) else {
         return dasar;
     };
-    // `langkah == 0` berarti tidak ada delay konstanta pada proses waktu; tanpa
-    // periode tetap, jumlah iterasi tidak bisa dihitung dan langkah dasar tetap
-    // dipakai (jam lalu tidak bergerak pada desain seperti itu).
-    if langkah == 0 {
+    // Periode kosong atau nol berarti tidak ada proses waktu dengan delay
+    // konstanta; jumlah event tidak bisa dihitung dan langkah dasar tetap dipakai.
+    if periode.is_empty() || periode.iter().any(|p| *p == 0) {
         return dasar;
     }
-    // Satu iterasi tambahan untuk menjamin segmen pada waktu bangun terakhir
-    // sempat dijalankan setelah jam simulasi mencapatinya.
-    let perlu = terakhir / langkah + 2;
-    dasar.max(perlu as usize)
+    // Batas atas yang AMAN: setiap proses menyala `terakhir / periode[i]` kali,
+    // dan satu panggilan memproses setidaknya satu proses — jadi jumlah
+    // panggilan tidak bisa melebihi jumlah seluruh penembakan itu. Memakai
+    // hanya periode terpanjang akan under-estimate dan testbench kehilangan
+    // output-nya.
+    let total: u128 = periode
+        .iter()
+        .map(|periode| (terakhir as u128).div_ceil(*periode as u128))
+        .sum();
+    let perlu = total.min(BATAS_LANGKAH as u128) as usize;
+    dasar.max(perlu + 2)
 }
 
 /// Jumlah event control pada seluruh proses `initial` di design.

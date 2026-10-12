@@ -592,16 +592,36 @@ fn casez_tanpa_default_tidak_menutup_blok_berlebih() {
         "module m(input [1:0] s, output [3:0] y); \
          always_comb casez (s) 2'b1?: y = 4'd1; 2'b01: y = 4'd2; endcase endmodule",
     );
+    let eval_comb = extract_eval_comb(&code);
     assert_eq!(
-        code.matches("} else if ").count(),
+        eval_comb.matches("} else if ").count(),
         1,
-        "dua cabang => satu else if:\n{code}"
+        "dua cabang => satu else if:\n{eval_comb}"
     );
     assert!(
-        !code.contains("} else {\n"),
-        "tanpa default tidak boleh ada else polos:\n{code}"
+        !eval_comb.contains("} else {\n"),
+        "tanpa default tidak boleh ada else polos:\n{eval_comb}"
     );
     assert_braces_seimbang(&code);
+}
+
+/// Ekstrak body method `eval_comb` dari kode generate.
+fn extract_eval_comb(code: &str) -> String {
+    let start = code.find("pub fn eval_comb").unwrap_or(0);
+    let mut depth = 0;
+    let mut end = start;
+    for (i, ch) in code[start..].char_indices() {
+        if ch == '{' {
+            depth += 1;
+        } else if ch == '}' {
+            depth -= 1;
+            if depth == 0 {
+                end = start + i + 1;
+                break;
+            }
+        }
+    }
+    code[start..end].to_string()
 }
 
 #[test]
@@ -610,15 +630,16 @@ fn casez_default_di_akhir_menghasilkan_rantai_lengkap() {
         "module m(input [2:0] s, output [3:0] y); \
          always_comb casez (s) 3'b1?0: y = 4'd1; 3'b0??: y = 4'd2; default: y = 4'd3; endcase endmodule",
     );
+    let eval_comb = extract_eval_comb(&code);
     assert_eq!(
-        code.matches("} else if ").count(),
+        eval_comb.matches("} else if ").count(),
         1,
-        "satu else if:\n{code}"
+        "satu else if:\n{eval_comb}"
     );
     assert_eq!(
-        code.matches("} else {").count(),
+        eval_comb.matches("} else {").count(),
         1,
-        "satu else untuk default:\n{code}"
+        "satu else untuk default:\n{eval_comb}"
     );
     assert_braces_seimbang(&code);
 }

@@ -244,6 +244,129 @@ fn langkah_simulasi_memperhitungkan_waktu_bangun() {
     );
 }
 
+/// BUG: syarat "jatuh tempo" memakai `timed_time[i] < __t`, yaitu waktu bangun
+/// SEBELUMNYA. Event berikutnya sebenarnya terjadi pada
+/// `timed_time[i] + periode[i]`, sehingga proses yang bangun lebih lambat tapi
+/// masih di bawah `__t` ikut jalan lebih awal.
+///
+/// Untuk `always #3` + `always #4` + `initial #12` (iverilog: `na=2 nb=1`),
+/// proses `#4` ikut jalan pada t=3 lalu t=7 — bukan t=4 lalu t=8 — sehingga
+/// `nb` terbaca `1`, bukan `2` setelah toggle pertama.
+#[test]
+fn syarat_jatuh_tempo_memakai_waktu_bangun_plus_periode() {
+    let src = "module tb; logic a = 0; logic b = 0; \
+               integer na = 0; integer nb = 0; \
+               always #3 a = ~a; \
+               always #4 b = ~b; \
+               always @(posedge a) na = na + 1; \
+               always @(posedge b) nb = nb + 1; \
+               initial begin #12 $display(\"na=%0d nb=%0d\", na, nb); $finish; end \
+             endmodule";
+    let kode = struct_design(src);
+    let eval_timed = kode
+        .split("pub fn eval_timed")
+        .nth(1)
+        .expect("ada eval_timed");
+    // Syarat harus menjumlahkan waktu bangun dengan periode konstan.
+    assert!(
+        eval_timed.contains(".saturating_add(sv_runtime::SimTime::from_femtos(3000000))"),
+        "syarat jatuh tempo harus memakai periode #3:\n{eval_timed}"
+    );
+    assert!(
+        eval_timed.contains(".saturating_add(sv_runtime::SimTime::from_femtos(4000000))"),
+        "syarat jatuh tempo harus memakai periode #4:\n{eval_timed}"
+    );
+    // Perbandingan waktu bangun polos adalah bentuk yang salah: mengabaikan
+    // periode, sehingga proses lambat ikut jalan lebih awal.
+    assert!(
+        !eval_timed.contains("if self.timed_time[0] < __t {"),
+        "syarat `timed_time < __t` salah: mengabaikan periode\n{eval_timed}"
+    );
+}
+
+/// BUG: satu pemanggilan `eval_timed` mengulang dalam `loop` sampai semua proses
+/// mengejar waktu terdekat. Itu memproses BEBERAPA event sekaligus, sedangkan
+/// `eval_seq` hanya dievaluasi sekali per langkah driver — edge yang saling
+/// meniadakan di tengah hilang tanpa pernah terlihat, dan penghitung posedge
+/// membaca nilai yang salah.
+#[test]
+fn eval_timed_memproses_satu_event_per_panggilan() {
+    let src = "module tb; logic a = 0; logic b = 0; \
+               always #3 a = ~a; always #4 b = ~b; \
+             endmodule";
+    let kode = struct_design(src);
+    let eval_timed = kode
+        .split("pub fn eval_timed")
+        .nth(1)
+        .expect("ada eval_timed");
+    assert!(
+        !eval_timed.contains("loop {"),
+        "loop membuat satu panggilan memproses banyak event:\n{eval_timed}"
+    );
+}
+
+/// BUG: jumlah langkah dihitung sebagai `terakhir / periode`, padahal event
+/// terjadi di IRISAN seluruh periode — bukan kelipatan satu periode. Untuk
+/// `#3` + `#4` + `initial #12` dibutuhkan 7 panggilan (event t=3,4,6,8,9,12
+/// lalu t=12), sedangkan `12/4` hanya memberi 5 dan blok `initial` kehilangan
+/// seluruh output-nya tanpa pesan.
+#[test]
+fn langkah_simulasi_menghitung_irisan_periode() {
+    let src = "module tb; logic a = 0; logic b = 0; \
+               always #3 a = ~a; always #4 b = ~b; \
+               initial begin #12 $display(\"x\"); $finish; end \
+             endmodule";
+    let kode = struct_design(src);
+    let baris = kode
+        .lines()
+        .find(|l| l.contains("INITIAL_STEPS"))
+        .expect("ada INITIAL_STEPS");
+    let nilai: usize = baris
+        .split("=")
+        .nth(1)
+        .expect("ada nilai")
+        .trim()
+        .trim_end_matches(';')
+        .parse()
+        .expect("angka");
+    // ceil(12/3) + ceil(12/4) + 2 = 4 + 3 + 2 = 9
+    assert!(
+        nilai >= 9,
+        "INITIAL_STEPS = {nilai}, padahal irisan `#3`+`#4` sampai t=12 butuh >= 9"
+    );
+}
+
+/// BUG: waktu simulasi besar (`#100000000`) dengan clock cepat (`#1`) membuat
+/// `INITIAL_STEPS` bernilailimpah sehingga loop driver tidak pernah selesai.
+/// Jumlah langkah harus dibatasi.
+#[test]
+fn langkah_simulasi_dibatasi_agar_tidak_hang() {
+    let src = "module tb; logic clk = 0; \
+               always #1 clk = ~clk; \
+               initial begin #100000000 $finish; end \
+             endmodule";
+    let kode = struct_design(src);
+    let baris = kode
+        .lines()
+        .find(|l| l.contains("INITIAL_STEPS"))
+        .expect("ada INITIAL_STEPS");
+    let nilai: usize = baris
+        .split("=")
+        .nth(1)
+        .expect("ada nilai")
+        .trim()
+        .trim_end_matches(';')
+        .parse()
+        .expect("angka");
+    // Batasnya `1 << 20` langkah, plus 2 langkah sisa. Tanpa batas, `#100000000`
+// dengan clock `#1` meminta 100.000.002 langkah dan loop driver tidak pernah
+// selesai.
+assert!(
+        nilai <= (1 << 20) + 2,
+        "INITIAL_STEPS = {nilai} melewati batas — simulasi tidak akan selesai"
+    );
+}
+
 /// Gerbang wake hanya boleh dipasang bila ada proses waktu. Tanpa itu, design
 /// TANPA `always #N` tidak punya yang menggerakkan jam, `__sekarang` selalu 0,
 /// dan setiap segmen `#5` tertahan selamanya pada syarat `0 >= 5000000`.

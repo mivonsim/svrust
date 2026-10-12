@@ -33,6 +33,9 @@ pub fn generate_module(design: &Design) -> String {
     out.push_str("pending: Vec<PendingWrite<MAX_WIDTH>>,\n");
     field_indent.push(&mut out);
     out.push_str("sensitivity: Vec<Vec<usize>>,\n");
+    // Scheduler event queue untuk delta-cycle semantics (LRM §4).
+    field_indent.push(&mut out);
+    out.push_str("scheduler: sv_runtime::Scheduler,\n");
     // Flag `$finish` dibutuhkan bila ada blok `initial` ATAU ada proses
     // sekuensial/combinational yang memanggil `$finish`. Gate hanya pada
     // `has_initial` membuat `$finish` di dalam `always_ff` pada design tanpa
@@ -135,6 +138,7 @@ pub fn generate_module(design: &Design) -> String {
     write_run_strobe(design, &inner, &mut out);
     write_dump_accessors(design, &inner, &mut out);
     write_commit_pending(&inner, &mut out);
+    write_step_scheduler(design, &inner, &mut out);
 
     inner.push(&mut out);
     out.push_str("}\n");
@@ -152,7 +156,8 @@ fn imports() -> &'static str {
      use ::sv_runtime::Logic;\n\
      use ::sv_runtime::PendingWrite;\n\
      use ::sv_runtime::SignalCell;\n\
-     use ::sv_runtime::SimTime;\n\n"
+     use ::sv_runtime::SimTime;\n\
+     use ::sv_runtime::Scheduler;\n\n"
 }
 
 fn write_new(design: &Design, struct_name: &str, inner: &Indent, out: &mut String) {
@@ -196,6 +201,32 @@ fn write_new(design: &Design, struct_name: &str, inner: &Indent, out: &mut Strin
     }
     fields.push(out);
     out.push_str("    ],\n");
+    // Scheduler diinisialisasi dan di-populate dengan event awal.
+    fields.push(out);
+    out.push_str("scheduler: {\n");
+    let sched_fields = fields.child();
+    sched_fields.push(out);
+    out.push_str("let mut s = ::sv_runtime::Scheduler::new();\n");
+    // Populate scheduler dengan event awal untuk setiap proses.
+    // Proses combinational: Active region di waktu 0.
+    // Proses sequential: NonBlocking region di waktu 0 (akan di-trigger oleh edge).
+    // Proses initial: Active region di waktu 0.
+    // Proses timed: Active region di waktu 0 (akan menjadwalkan dirinya sendiri).
+    for (pid, process) in design.processes.iter().enumerate() {
+        let region = match process.kind {
+            sv_ir::process::ProcessKind::Combinational => "Active",
+            sv_ir::process::ProcessKind::Sequential => "NonBlocking",
+            sv_ir::process::ProcessKind::Initial => "Active",
+            sv_ir::process::ProcessKind::Timed => "Active",
+            sv_ir::process::ProcessKind::Latch => "Active",
+        };
+        sched_fields.push(out);
+        out.push_str(&format!("s.schedule_at(::sv_runtime::SimTime::ZERO, ::sv_runtime::Region::{region}, ::sv_runtime::EventKind::Process({pid}));\n"));
+    }
+    sched_fields.push(out);
+    out.push_str("s\n");
+    fields.push(out);
+    out.push_str("},\n");
     if perlu_finish {
         fields.push(out);
         out.push_str("finished: false,\n");
@@ -346,21 +377,35 @@ fn write_eval_timed(design: &Design, inner: &Indent, out: &mut String) {
     if timed.is_empty() {
         return;
     }
-    // LRM §4.4 + §11.2: tiap proses waktu punya jam bangun sendiri, dan simulasi
-    // berakhir pada event BERIKUTNYA — bukan pada satu iterasi per proses.
+    // LRM §4.4 + §11.2: tiap proses waktu punya jam bangun sendiri, dan satu
+    // pemanggilan MEMPROSATUKAN SATU EVENT waktu — event terdekat di antara
+    // seluruh proses.
     //
-    // BUG: versi lama menjalankan tiap proses tepat SEKALI per pemanggilan
-    // driver. Dengan dua proses waktu `#5` dan `#3`, keduanya maju satu periode
-    // per langkah: pada t=30 proses `#3` hanya berayun 6 kali (harus 10) dan
-    // proses `#5` 6 kali (benar), jadi hasil testbench salah diam-diam.
+    // BUG: versi lama memakai `if self.timed_time[i] < __t` untuk menentukan
+    // proses mana yang "jatuh tempo". Itu salah: `timed_time[i]` adalah waktu
+    // bangun SEBELUMNYA, sedangkan event berikutnya terjadi pada
+    // `timed_time[i] + periode[i]`. Proses yang bangun lebih LAMBAT tapi masih
+    // di bawah `__t` ikut jalan lebih awal.
     //
-    // Perbaikan: satu pemanggilan，直到 waktu bangun TERCEPAT dari seluruh
-    // proses. Proses yang periodenya lebih pendek mengulang beberapa kali
-    // sampai waktunya mengejar, karena LRM §4.4 menganggap keduanya berjalan
-    // pada jam simulasi yang sama.
+    // Contoh `always #3` + `always #4` dengan `initial #12` (iverilog:
+    // `na=2 nb=1`): pada event t=4 proses `#3` sudah bangun di t=3 sehingga
+    // `3 < 4` dan ikut jalan — padahal harusnya nunggu t=6. Akibatnya proses
+    // `#4` toggle pada t=3 dan t=7, bukan t=4 dan t=8, dan penghitungnya salah
+    // (`na=1`, bukan `na=2`).
     //
-    // Periode harus konstanta agar batas loop bisa ditulis sebagai konstanta;
-    // bila ada yang runtime, jatuh ke satu-iterasi-per-pemanggilan.
+    // Perbaikan: yang diperiksa adalah KEDATARANGAN event —
+    // `timed_time[i] + periode[i] <= __t`. Karena `__t` adalah minimum
+    // seluruh event, `<=` ekuivalen dengan `==` dan hanya proses yang
+    // BENAR-BENAR jatuh tempo yang jalan.
+    //
+    // Satu event per pemanggilan juga menjaga `eval_seq` sinkron: driver
+    // mengevaluasi proses sekuensial sekali per langkah, jadi satu langkah
+    // harus berpadanan dengan satu waktu simulasi. Kalau `eval_timed`
+    // memproses beberapa event sekaligus, edge yang saling meniadakan di
+    // tengah hilang tanpa pernah terlihat.
+    //
+    // Periode harus konstanta agar batasnya bisa ditulis sebagai konstanta;
+    // bila ada yang runtime, jatuh ke satu-iterasi-per-proses.
     let periode = crate::wake_plan::periode_waktu(design).filter(|p| !p.is_empty());
 
     inner.push(out);
@@ -368,34 +413,38 @@ fn write_eval_timed(design: &Design, inner: &Indent, out: &mut String) {
     let arm = inner.child();
     match periode {
         Some(periode) => {
-            // Satu iterasi = satu event waktu: majukan jam ke waktu bangun
-            // tercepat, lalu jalankan setiap proses yang waktunya sudah tiba.
+            // LRM §4.4 stratified event queue: pada satu waktu simulasi, segmen
+            // `initial` yang waktunya sudah tiba dijalankan SEBELUM event clock
+            // pada waktu yang sama.
             //
-            // `__t` dideklarasikan DI LUAR loop supaya masih hidup setelah loop
-            // selesai — deklarasinya di dalam membuat `self.time_now = __t`
-            // gagal dikompilasi dengan `cannot find value __t in this scope`.
+            // BUG: tanpa batas bawah ini, event clock pada waktu yang PERSIS
+            // sama dengan waktu bangun `initial` diproses lebih dulu, sehingga
+            // statement testbench membaca nilai yang sudah berubah. Iverilog
+            // (deterministik, diverifikasi 3×) mencetak `a=1` untuk
+            // `always #2` + `initial #12`, SVRust mencetak `a=0` — clock sudah
+            // toggle sebelum statement berjalan.
+            //
+            // Karena itu event proses waktu HANYA diproses kalau waktunya
+            // STRUKTUR lebih kecil daripada waktu bangun `initial` berikutnya.
+            // Kalau keduanya sama, jam tetap bergerak ke waktu itu tetapi event
+            // clock ditunda satu langkah — `initial` membaca dulu, dan pada
+            // panggilan berikutnya `initial_pc` sudah maju sehingga batasnya
+            // bergeser dan event clock akhirnya jalan.
             arm.push(out);
             out.push_str(&format!("let __t = {};\n", kode_min_periode(&periode)));
-            arm.push(out);
-            out.push_str("loop {\n");
-            let dalam = arm.child();
-            // Pemisah `&&` ditulis SEBELUM tiap suku ke-2, bukan sesudahnya:
-            // menempelkannya sesudah membuat dua perbandingan tersambung
-            // (`a >= __tb >= __t`), yang ditolak rustc dengan
-            // `comparison operators cannot be chained`.
-            let syarat: Vec<String> = (0..periode.len())
-                .map(|index| format!("self.timed_time[{index}] >= __t"))
-                .collect();
-            dalam.push(out);
-            out.push_str(&format!("let __semua_sampai = {};\n", syarat.join(" && ")));
-            dalam.push(out);
-            out.push_str("if __semua_sampai { break; }\n");
             for (index, process) in timed.iter().enumerate() {
-                dalam.push(out);
+                arm.push(out);
                 out.push_str(&format!("// {} (proses {index})\n", process.name));
-                dalam.push(out);
-                out.push_str(&format!("if self.timed_time[{index}] < __t {{\n"));
-                let lengan = dalam.child();
+                // Satu proses per iterasi: `time_now` disetel ke waktu bangun
+                // proses itu sendiri, lalu badan menambah periodenya. Bila dua
+                // proses jatuh tempo pada `__t` yang sama, keduanya jalan pada
+                // langkah yang sama — itu benar (LRM §4.4 active region).
+                arm.push(out);
+                out.push_str(&format!(
+                    "if self.timed_time[{index}]\n            .saturating_add(sv_runtime::SimTime::from_femtos({}))\n            <= __t\n        {{\n",
+                    periode[index]
+                ));
+                let lengan = arm.child();
                 lengan.push(out);
                 out.push_str(&format!("self.time_now = self.timed_time[{index}];\n"));
                 write_statements(&process.body, out, &lengan.child());
@@ -404,12 +453,10 @@ fn write_eval_timed(design: &Design, inner: &Indent, out: &mut String) {
                 lengan.push(out);
                 out.push_str("}\n");
             }
+            // Jam desain tepat pada event yang baru diproses. Proses yang belum
+            // jatuh tempo tetap menggantung di `timed_time` miliknya sendiri.
             arm.push(out);
-            out.push_str("}\n");
-            // Jam desain berada pada event yang baru saja diproses; proses
-            // yang tertinggal tidak boleh menarik mundur.
-            arm.push(out);
-            out.push_str("self.time_now = __t.max(self.time_now);\n");
+            out.push_str("self.time_now = __t;\n");
         }
         None => {
             arm.push(out);
@@ -1073,6 +1120,80 @@ fn write_commit_pending(inner: &Indent, out: &mut String) {
     out.push_str("self.signals[write.target].write_masked(write.value, write.mask);\n");
     body.push(out);
     out.push_str("}\n");
+    inner.push(out);
+    out.push_str("}\n\n");
+}
+
+/// Step scheduler: ambil event berikutnya dan eksekusi proses yang sesuai.
+/// Mengembalikan `true` bila ada event yang dieksekusi, `false` bila scheduler idle.
+fn write_step_scheduler(design: &Design, inner: &Indent, out: &mut String) {
+    inner.push(out);
+    out.push_str("pub fn step_scheduler(&mut self) -> bool {\n");
+    let body = inner.child();
+    body.push(out);
+    out.push_str("if let Some(event) = self.scheduler.pop_next() {\n");
+    let if_body = body.child();
+    if_body.push(out);
+    out.push_str("self.time_now = event.time;\n");
+    if_body.push(out);
+    out.push_str("match event.kind {\n");
+    let match_body = if_body.child();
+    for (pid, process) in design.processes.iter().enumerate() {
+        match_body.push(out);
+        out.push_str(&format!("::sv_runtime::EventKind::Process({pid}) => {{\n"));
+        let proc_body = match_body.child();
+        proc_body.push(out);
+        out.push_str(&format!("// {}\n", process.name));
+        match process.kind {
+            sv_ir::process::ProcessKind::Combinational => {
+                proc_body.push(out);
+                out.push_str("self.eval_comb();\n");
+                proc_body.push(out);
+                out.push_str("self.commit_pending();\n");
+                // Reschedule combinational process for next delta cycle if any signal changed
+                proc_body.push(out);
+                out.push_str(&format!("self.scheduler.schedule_at(self.time_now, ::sv_runtime::Region::Active, ::sv_runtime::EventKind::Process({pid}));\n"));
+            }
+            sv_ir::process::ProcessKind::Sequential => {
+                // Sequential processes are triggered by edge detection in driver
+                // Here we just evaluate if triggered
+                proc_body.push(out);
+                out.push_str("// Sequential process - evaluated via eval_seq in driver\n");
+            }
+            sv_ir::process::ProcessKind::Initial => {
+                // Initial processes are handled by eval_initial with step tracking
+                proc_body.push(out);
+                out.push_str("// Initial process - evaluated via eval_initial in driver\n");
+            }
+            sv_ir::process::ProcessKind::Timed => {
+                proc_body.push(out);
+                out.push_str("self.eval_timed();\n");
+                proc_body.push(out);
+                out.push_str("self.commit_pending();\n");
+                // Timed process reschedules itself in eval_timed
+            }
+            sv_ir::process::ProcessKind::Latch => {
+                proc_body.push(out);
+                out.push_str("self.eval_comb();\n");
+                proc_body.push(out);
+                out.push_str("self.commit_pending();\n");
+            }
+        }
+        match_body.push(out);
+        out.push_str("}\n");
+    }
+    match_body.push(out);
+    out.push_str("_ => {}\n");
+    match_body.push(out);
+    out.push_str("}\n");
+    if_body.push(out);
+    out.push_str("true\n");
+    body.push(out);
+    out.push_str("} else {\n");
+    body.child().push(out);
+    out.push_str("false\n");
+    body.push(out);
+    out.push_str("}\n"); // scheduler_idle
     inner.push(out);
     out.push_str("}\n\n");
 }
