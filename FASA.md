@@ -379,8 +379,10 @@ SVRust telah mencapai dukungan fitur utama SystemVerilog LRM melalui 8 fase. Fit
 - Infinite loop dan bug stabilitas telah diperbaiki
 
 Sisa keterbatalan untuk 100% LRM:
-- SVA concurrent assertion (`assert property`)
-- 4-state tipe Logic di jalur simulasi (saat ini hanya 2-state Bits)
-- typedef di luar module (compilation-unit scope)
-- Unpacked array multi-dimensi
-- Array sebagai port/argumen task/function
+- Unpacked array multi-dimensi (LRM §7.8) — dimensi bertingkat masih ditolak
+- Array sebagai port/argumen task/function (LRM §13.3/§13.4) — port/argumen bertipe array belum ditangani parser
+
+Catatan verifikasi (sudah full support, demo OK):
+- SVA concurrent assertion `assert property` (LRM §20/§21) — demo `examples/e2e_assert/`
+- 4-state tipe Logic di jalur simulasi (LRM §11.4) — demo `examples/e2e_4state/`
+- `typedef` di luar module / compilation-unit scope (LRM §8.20) — demo `examples/e2e_typedef_global/`
