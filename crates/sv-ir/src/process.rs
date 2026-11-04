@@ -171,6 +171,8 @@ pub enum Statement {
         span: Span,
     },
     Block {
+        /// Nama blok (LRM §12.9); tidak ada efek runtime.
+        label: Option<String>,
         body: Vec<Statement>,
         span: Span,
     },

@@ -874,7 +874,8 @@ fn lingkup_comb(
                 body: lingkup_comb(body, prefix, koneksi),
                 span: *span,
             },
-            CombinationalStatement::Block { body, span } => CombinationalStatement::Block {
+            CombinationalStatement::Block { label, body, span } => CombinationalStatement::Block {
+                label: label.clone(),
                 body: lingkup_comb(body, prefix, koneksi),
                 span: *span,
             },
@@ -1011,6 +1012,11 @@ fn lingkup_seq(i: &SequentialStatement, prefix: &str, koneksi: &KoneksiMap) -> S
         }
         SequentialStatement::Deassign { lhs, span } => SequentialStatement::Deassign {
             lhs: lingkup_lvalue(lhs, prefix, koneksi),
+            span: *span,
+        },
+        SequentialStatement::Block { label, body, span } => SequentialStatement::Block {
+            label: label.clone(),
+            body: lingkup_seq_list(body, prefix, koneksi),
             span: *span,
         },
     }

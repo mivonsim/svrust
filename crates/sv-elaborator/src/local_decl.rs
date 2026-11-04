@@ -122,6 +122,7 @@ fn kumpulkan_seq(body: &[SequentialStatement]) -> Vec<&Declaration> {
             | SequentialStatement::Forever { .. }
             | SequentialStatement::ProceduralAssign { .. }
             | SequentialStatement::Deassign { .. } => {}
+            SequentialStatement::Block { body, .. } => out.extend(kumpulkan_seq(body)),
         }
     }
     out

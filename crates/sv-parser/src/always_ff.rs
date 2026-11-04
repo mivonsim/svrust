@@ -258,6 +258,14 @@ fn parse_seq_statement(tokens: &[SpannedToken]) -> Result<(SequentialStatement, 
     if tokens.is_empty() {
         return Err("expected statement".to_string());
     }
+    // LRM §12.9: `nama: begin ... end` blok berlabel di konteks sekuensial.
+    if tokens.len() >= 3
+        && matches!(&tokens[0].token, Token::Ident(_))
+        && tokens.get(1).map(|t| &t.token) == Some(&Token::Colon)
+        && tokens.get(2).map(|t| &t.token) == Some(&Token::Begin)
+    {
+        return parse_labeled_block_seq(tokens);
+    }
     // BUG-29: `++a;` pre-increment sebagai statement utuh.
     if matches!(tokens[0].token, Token::Incr | Token::Decr) {
         let naik = tokens[0].token == Token::Incr;
@@ -462,6 +470,47 @@ fn parse_deassign_seq(tokens: &[SpannedToken]) -> Result<(SequentialStatement, u
     }
     idx += 1;
     Ok((SequentialStatement::Deassign { lhs, span }, idx))
+}
+
+/// Parse `nama: begin ... end` blok berlabel di konteks sekuensial (LRM §12.9).
+///
+/// `tokens` dimulai pada token `Ident` nama blok. Mengembalikan
+/// `SequentialStatement::Block` dan indeks tepat setelah `end` penutup.
+fn parse_labeled_block_seq(
+    tokens: &[SpannedToken],
+) -> Result<(SequentialStatement, usize), String> {
+    let span = tokens[0].span;
+    let label = match &tokens[0].token {
+        Token::Ident(nama) => nama.clone(),
+        _ => return Err("expected nama blok setelah label".to_string()),
+    };
+    if tokens.get(1).map(|t| &t.token) != Some(&Token::Colon) {
+        return Err("expected ':' setelah nama blok".to_string());
+    }
+    if tokens.get(2).map(|t| &t.token) != Some(&Token::Begin) {
+        return Err("expected 'begin' setelah ':' label blok".to_string());
+    }
+    let (body, consumed) = parse_seq_block(&tokens[2..], 0)?;
+    let idx = 2 + consumed;
+    // `end` boleh diikuti `;` (block terakhir) atau statement lain langsung.
+    if idx < tokens.len() && tokens[idx].token == Token::Semi {
+        return Ok((
+            SequentialStatement::Block {
+                label: Some(label),
+                body,
+                span,
+            },
+            idx + 1,
+        ));
+    }
+    Ok((
+        SequentialStatement::Block {
+            label: Some(label),
+            body,
+            span,
+        },
+        idx,
+    ))
 }
 
 #[cfg(test)]
@@ -718,6 +767,23 @@ mod tests {
                     assert_eq!(lhs.name, "x");
                 }
                 other => panic!("bukan deassign: {:?}", other),
+            },
+            other => panic!("bukan always_ff: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn blok_berlabel_dalam_always_ff_diurai() {
+        let (stmt, _) = parse("always_ff @(posedge clk) blk: begin q <= d; end;");
+        match stmt {
+            Statement::AlwaysFf { body, .. } => match &body[0] {
+                SequentialStatement::Block {
+                    label, body: isi, ..
+                } => {
+                    assert_eq!(label, &Some("blk".to_string()));
+                    assert_eq!(isi.len(), 1);
+                }
+                other => panic!("bukan blok berlabel: {:?}", other),
             },
             other => panic!("bukan always_ff: {:?}", other),
         }

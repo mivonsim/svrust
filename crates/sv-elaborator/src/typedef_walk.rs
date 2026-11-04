@@ -116,6 +116,11 @@ fn seq(
             body: seq_list(body, table)?,
             span: *span,
         },
+        SequentialStatement::Block { label, body, span } => SequentialStatement::Block {
+            label: label.clone(),
+            body: seq_list(body, table)?,
+            span: *span,
+        },
         SequentialStatement::ProceduralAssign { lhs, rhs, span } => {
             SequentialStatement::ProceduralAssign {
                 lhs: lhs.clone(),
@@ -244,7 +249,8 @@ fn comb(
             },
             span: *span,
         },
-        CombinationalStatement::Block { body, span } => CombinationalStatement::Block {
+        CombinationalStatement::Block { label, body, span } => CombinationalStatement::Block {
+            label: label.clone(),
             body: comb_list(body, table)?,
             span: *span,
         },

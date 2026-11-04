@@ -252,7 +252,8 @@ impl Substitution {
                 kind: *kind,
                 span: *span,
             },
-            CombinationalStatement::Block { body, span } => CombinationalStatement::Block {
+            CombinationalStatement::Block { label, body, span } => CombinationalStatement::Block {
+                label: label.clone(),
                 body: self.ganti_statements(body),
                 span: *span,
             },
@@ -401,6 +402,11 @@ impl Substitution {
                 lhs: self.ganti_lvalue(lhs),
                 span: *span,
             },
+            SequentialStatement::Block { label, body, span } => SequentialStatement::Block {
+                label: label.clone(),
+                body: body.iter().map(|s| self.ganti_seq(s)).collect(),
+                span: *span,
+            },
         }
     }
 }
@@ -516,7 +522,8 @@ fn rename_statement(
             kind: *kind,
             span: *span,
         },
-        CombinationalStatement::Block { body, span } => CombinationalStatement::Block {
+        CombinationalStatement::Block { label, body, span } => CombinationalStatement::Block {
+            label: label.clone(),
             body: rename_locals(body, ""),
             span: *span,
         },

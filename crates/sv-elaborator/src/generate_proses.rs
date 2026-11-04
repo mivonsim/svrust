@@ -119,6 +119,7 @@ fn kumpulan_seq(body: &[SequentialStatement], out: &mut Vec<Declaration>) {
                 }
             }
             SequentialStatement::Forever { body, .. } => kumpulan_seq(body, out),
+            SequentialStatement::Block { body, .. } => kumpulan_seq(body, out),
         }
     }
 }
@@ -460,7 +461,8 @@ pub(crate) fn subst_comb(
                 body: subst_comb(body, env, scope),
                 span: *span,
             },
-            CombinationalStatement::Block { body, span } => CombinationalStatement::Block {
+            CombinationalStatement::Block { label, body, span } => CombinationalStatement::Block {
+                label: label.clone(),
                 body: subst_comb(body, env, scope),
                 span: *span,
             },
@@ -592,6 +594,11 @@ pub(crate) fn subst_seq(
             }
             SequentialStatement::Deassign { lhs, span } => SequentialStatement::Deassign {
                 lhs: subst_lvalue(lhs, scope, env),
+                span: *span,
+            },
+            SequentialStatement::Block { label, body, span } => SequentialStatement::Block {
+                label: label.clone(),
+                body: subst_seq(body, env, scope),
                 span: *span,
             },
         })

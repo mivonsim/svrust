@@ -329,6 +329,7 @@ mod tests {
     fn langkah_waktu_minimum_menelusuri_blok_nested() {
         let mut design = Design::new("tb");
         design.processes.push(timed(vec![Statement::Block {
+            label: None,
             body: vec![delay(konstanta(7), TimeUnit::NanoSeconds)],
             span: Span::default(),
         }]));

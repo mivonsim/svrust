@@ -111,6 +111,11 @@ fn statement_sekuensial(statement: &mut SequentialStatement, scale: TimeScale) {
         | SequentialStatement::BlockingAssign { rhs, .. } => ekspresi(rhs, scale),
         SequentialStatement::ProceduralAssign { rhs, .. } => ekspresi(rhs, scale),
         SequentialStatement::Deassign { .. } => {}
+        SequentialStatement::Block { body, .. } => {
+            for stmt in body {
+                statement_sekuensial(stmt, scale);
+            }
+        }
         SequentialStatement::Decl(decl) => deklarasi(decl, scale),
         SequentialStatement::SystemTask(task) => system_task(task, scale),
         SequentialStatement::TaskCall(call) => {
@@ -458,10 +463,12 @@ mod tests {
     fn delay_di_dalam_blok_nested_ikut_berubah() {
         // `#delay` bersarang tiga tingkat harus ikut berubah.
         let dalam = CombinationalStatement::Block {
+            label: None,
             body: vec![CombinationalStatement::IfElse {
                 condition: Expr::Number(1),
                 then_branch: vec![delay(TimeUnit::Bawaan)],
                 else_branch: Some(vec![CombinationalStatement::Block {
+                    label: None,
                     body: vec![delay(TimeUnit::Bawaan)],
                     span: Span::dummy(),
                 }]),

@@ -312,6 +312,7 @@ mod tests {
             amount: konstanta(),
             unit: sv_ir::TimeUnit::PicoSeconds,
             body: Box::new(Statement::Block {
+                label: None,
                 body: Vec::new(),
                 span: Span::default(),
             }),
@@ -323,6 +324,7 @@ mod tests {
     #[test]
     fn delay_tersarang_di_dalam_blok_dideteksi() {
         let statement = Statement::Block {
+            label: None,
             body: vec![Statement::Delay {
                 amount: konstanta(),
                 unit: sv_ir::TimeUnit::MicroSeconds,

@@ -244,6 +244,13 @@ impl<'a> Inliner<'a> {
                     span: *span,
                 }]
             }
+            SequentialStatement::Block { label, body, span } => {
+                vec![SequentialStatement::Block {
+                    label: label.clone(),
+                    body: self.seq_list(body)?,
+                    span: *span,
+                }]
+            }
         };
         Ok(out)
     }
@@ -312,7 +319,11 @@ impl<'a> Inliner<'a> {
                 },
                 span: *span,
             }]),
-            CombinationalStatement::Block { body, span: _ } => {
+            CombinationalStatement::Block {
+                label: _,
+                body,
+                span: _,
+            } => {
                 // Blok tidak menambah semantik sekuensial; flatten isinya.
                 self.comb_to_seq_list(body)
             }
@@ -519,7 +530,8 @@ impl<'a> Inliner<'a> {
                 },
                 span: *span,
             },
-            CombinationalStatement::Block { body, span } => CombinationalStatement::Block {
+            CombinationalStatement::Block { label, body, span } => CombinationalStatement::Block {
+                label: label.clone(),
                 body: self.comb_list(body)?,
                 span: *span,
             },
@@ -543,6 +555,7 @@ impl<'a> Inliner<'a> {
                     // Task yang di-inline di dalam `#n stmt` menghasilkan lebih
                     // dari satu statement; bungkusnya jadi blok.
                     banyak => Box::new(CombinationalStatement::Block {
+                        label: None,
                         body: banyak.to_vec(),
                         span: *span,
                     }),

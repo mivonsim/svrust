@@ -270,6 +270,13 @@ fn jalan_seq(stmt: &mut SequentialStatement, ctx: &mut Ctx) {
             }
             ctx.keluar();
         }
+        // LRM §12.9: blok berlabel — nama tidak diperkenalkan sebagai variabel,
+        // konten blok dinamai seperti biasa.
+        SequentialStatement::Block { body, .. } => {
+            for s in body {
+                jalan_seq(s, ctx);
+            }
+        }
         // LRM §14: `assign lhs = rhs;` dan `deassign lhs;` merujuk sinyal.
         SequentialStatement::ProceduralAssign { lhs, rhs, .. } => {
             nama_lvalue(lhs, ctx);

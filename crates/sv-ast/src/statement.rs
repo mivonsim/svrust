@@ -91,6 +91,15 @@ pub enum SequentialStatement {
         body: Vec<SequentialStatement>,
         span: Span,
     },
+    /// Blok berlabel `nama: begin ... end` di dalam blok sekuensial (LRM §12.9).
+    ///
+    /// Nama blok menciptakan scope hierarki; konten blok disatukan ke body
+    /// induk karena blok sekuensial tidak menambah statement runtime sendiri.
+    Block {
+        label: Option<String>,
+        body: Vec<SequentialStatement>,
+        span: Span,
+    },
     /// Penetapans berkelanjutan prosedural `assign lhs = rhs;` di dalam blok
     /// prosedural (LRM §14).
     ProceduralAssign {

@@ -92,7 +92,8 @@ fn lower_comb_statement(
                 span: to_ir_span(*span),
             })
         }
-        CombinationalStatement::Block { body, span } => Ok(Statement::Block {
+        CombinationalStatement::Block { label, body, span } => Ok(Statement::Block {
+            label: label.clone(),
             body: lower_comb_block(body, symbols)?,
             span: to_ir_span(*span),
         }),
@@ -620,6 +621,13 @@ fn lower_seq_statement(
                 span: to_ir_span(*span),
             })
         }
+        // LRM §12.9: blok berlabel `nama: begin ... end` — konten blok
+        // disatukan ke body induk, nama hanya menjadi scope hierarki.
+        SequentialStatement::Block { label, body, span } => Ok(Statement::Block {
+            label: label.clone(),
+            body: lower_seq_list(body, symbols)?,
+            span: to_ir_span(*span),
+        }),
         SequentialStatement::Return { span, .. } => Err(ElaborateError::new(
             "`return` hanya sah di dalam task/function",
             *span,

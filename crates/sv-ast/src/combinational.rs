@@ -122,6 +122,9 @@ pub enum CombinationalStatement {
         span: Span,
     },
     Block {
+        /// Nama blok (LRM §12.9), misal `blk: begin ... end`. Tidak ada efek
+        /// runtime; blok menciptakan scope hierarki untuk referensi nama.
+        label: Option<String>,
         body: Vec<CombinationalStatement>,
         span: Span,
     },
@@ -217,6 +220,7 @@ mod tests {
                 Span::dummy(),
             )],
             body: vec![CombinationalStatement::Block {
+                label: None,
                 body: Vec::new(),
                 span: Span::dummy(),
             }],

@@ -17,6 +17,15 @@ pub fn parse_combinational_statement(
         return Err("expected combinational statement".to_string());
     }
 
+    // LRM §12.9: `nama: begin ... end` blok berlabel.
+    if tokens.len() >= 3
+        && matches!(&tokens[0].token, Token::Ident(_))
+        && tokens[1].token == Token::Colon
+        && tokens[2].token == Token::Begin
+    {
+        return parse_labeled_block_combinational(tokens);
+    }
+
     match &tokens[0].token {
         Token::Case => parse_case(tokens, CaseKind::Exact),
         Token::Casez => parse_case(tokens, CaseKind::Casez),
@@ -79,6 +88,7 @@ pub fn parse_combinational_statement(
             idx += 1;
             Ok((
                 CombinationalStatement::Block {
+                    label: None,
                     body,
                     span: tokens[0].span,
                 },
@@ -220,6 +230,45 @@ pub fn parse_combinational_statement(
     }
 }
 
+/// Parse `nama: begin ... end` blok berlabel di konteks combinational (LRM §12.9).
+///
+/// `tokens` dimulai pada token `Ident` nama blok. Mengembalikan statement dan
+/// indeks tepat setelah `end` penutup.
+fn parse_labeled_block_combinational(
+    tokens: &[SpannedToken],
+) -> Result<(CombinationalStatement, usize), String> {
+    let span = tokens[0].span;
+    let label = match &tokens[0].token {
+        Token::Ident(nama) => nama.clone(),
+        _ => return Err("expected nama blok setelah label".to_string()),
+    };
+    if tokens.get(1).map(|t| &t.token) != Some(&Token::Colon) {
+        return Err("expected ':' setelah nama blok".to_string());
+    }
+    if tokens.get(2).map(|t| &t.token) != Some(&Token::Begin) {
+        return Err("expected 'begin' setelah ':' label blok".to_string());
+    }
+    let (body, consumed) = parse_combinational_block(&tokens[3..])?;
+    let idx = 3 + consumed;
+    if idx >= tokens.len() || tokens[idx].token != Token::End {
+        return Err("expected 'end' menutup blok berlabel".to_string());
+    }
+    // `end` boleh diikuti `;` (block terakhir) atau statement lain langsung.
+    let akhir = if idx + 1 < tokens.len() && tokens[idx + 1].token == Token::Semi {
+        idx + 2
+    } else {
+        idx + 1
+    };
+    Ok((
+        CombinationalStatement::Block {
+            label: Some(label),
+            body,
+            span,
+        },
+        akhir,
+    ))
+}
+
 /// Petakan token compound operator ke AST.
 fn map_compound(op: sv_lexer::token::CompoundOp) -> CompoundOp {
     use sv_lexer::token::CompoundOp as L;
@@ -263,6 +312,7 @@ fn parse_delay(tokens: &[SpannedToken]) -> Result<(CombinationalStatement, usize
     let body = if tokens.get(idx).map(|t| &t.token) == Some(&Token::Semi) {
         idx += 1;
         CombinationalStatement::Block {
+            label: None,
             body: Vec::new(),
             span,
         }
@@ -1076,5 +1126,25 @@ mod tests {
             }
             other => panic!("bukan deassign: {:?}", other),
         }
+    }
+
+    #[test]
+    fn blok_berlabel_dalam_always_comb_diurai() {
+        // LRM §12.9: `nama: begin ... end` blok berlabel.
+        let stmt = parse("blk: begin x = 8'd1; end;");
+        match &stmt {
+            CombinationalStatement::Block { label, body, .. } => {
+                assert_eq!(label, &Some("blk".to_string()));
+                assert_eq!(body.len(), 1);
+            }
+            other => panic!("bukan blok berlabel: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn blok_berlabel_tanpa_nama_ditolak() {
+        // `: begin` tanpa nama ident tidak sah.
+        let tokens = sv_lexer::lex(": begin x = 1; end;").unwrap();
+        assert!(parse_combinational_statement(&tokens).is_err());
     }
 }

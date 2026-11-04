@@ -23,6 +23,7 @@ Setiap fase:
 | F9 | 4-state penuh | Tipe `Logic` di jalur simulasi (bukan hanya label casez/casex) | **Selesai** |
 | F10 | typedef di luar module | Compilation-unit scope (LRM §8.20) | **Selesai** |
 | F11 | Prosedural assign / deassign | `assign lhs = rhs;` dan `deassign lhs;` di dalam blok prosedural (LRM §14) | **Selesai** |
+| F12 | Blok berlabel | `nama: begin ... end` di dalam blok prosedural (LRM §12.9), sintaks dieksekusi dan nama disimpan sebagai metadata scope hierarki | **Selesai** |
 
 ## Aturan fase
 
@@ -333,6 +334,32 @@ Semua 10 fase telah selesai.
 - `cargo fmt --check`: clean
 - `examples/e2e_procedural_assign/demo.sh`: DEMO OK
 
+## Ringkasan Fase 12 (Selesai)
+
+### Implementasi
+
+1. **Blok berlabel `nama: begin ... end` (LRM §12.9)**
+   - `sv-ast`: field `label: Option<String>` pada `CombinationalStatement::Block` dan varian baru `SequentialStatement::Block`.
+   - `sv-ir`: field `label` pada `Statement::Block`.
+   - `sv-parser`: parsing `nama: begin ... end` di konteks combinational (`combinational.rs`) dan sekuensial (`always_ff.rs`).
+   - `sv-elaborator`: lowering label melalui seluruh jalur (`lower_stmt`, `generate_proses`, `instance`, `local_decl`, `routine`, `routine_subst`, `typedef_walk`).
+   - `sv-codegen-rust`: label diteruskan ke IR (tidak ada efek runtime; nama adalah metadata scope hierarki).
+   - `sv-parser` local_scope / delay_unit: blok berlabel diturunkan ke isinya.
+
+### Test baru
+- `blok_berlabel_dalam_always_comb_diurai` dan `blok_berlabel_tanpa_nama_ditolak` di `crates/sv-parser/src/combinational.rs`.
+- `blok_berlabel_dalam_always_ff_diurai` di `crates/sv-parser/src/always_ff.rs`.
+
+### Demo
+- `examples/e2e_labeled_block/` — `blk: begin x = 8'hAA; end` mengeksekusi tubuhnya (`x=aa`).
+
+### Verifikasi
+- `cargo build`: OK
+- `cargo test --workspace`: semua lolos
+- `cargo clippy --all-targets`: clean (0 warning)
+- `cargo fmt --check`: clean
+- `examples/e2e_labeled_block/demo.sh`: DEMO OK
+
 ## Catatan Akhir
 
 SVRust telah mencapai dukungan fitur utama SystemVerilog LRM melalui 8 fase. Fitur-fitur utama yang didukung:
@@ -357,5 +384,3 @@ Sisa keterbatalan untuk 100% LRM:
 - typedef di luar module (compilation-unit scope)
 - Unpacked array multi-dimensi
 - Array sebagai port/argumen task/function
-- Forever statement
-- Blok berlabel
