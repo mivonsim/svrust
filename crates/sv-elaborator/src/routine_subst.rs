@@ -157,6 +157,7 @@ impl Substitution {
             Some(Expr::Ident { name, .. }) => Lvalue {
                 name: name.clone(),
                 slice: lhs.slice,
+                extra_slices: lhs.extra_slices.clone(),
                 // `genvar_index` harus ikut dibawa. Kalau dipaksa jadi `None`,
                 // LHS `q[i]` berubah jadi `q` polos sehingga seluruh sinyal
                 // ditulis — nilai simulasi salah tanpa pesan apa pun.
@@ -229,6 +230,10 @@ impl Substitution {
                 body: self.ganti_statements(body),
                 span: *span,
             },
+            CombinationalStatement::Forever { body, span } => CombinationalStatement::Forever {
+                body: self.ganti_statements(body),
+                span: *span,
+            },
             CombinationalStatement::Repeat { count, body, span } => {
                 CombinationalStatement::Repeat {
                     count: self.ganti(count),
@@ -281,6 +286,17 @@ impl Substitution {
             }
             CombinationalStatement::Return { value, span } => CombinationalStatement::Return {
                 value: value.as_ref().map(|v| self.ganti(v)),
+                span: *span,
+            },
+            CombinationalStatement::ProceduralAssign { lhs, rhs, span } => {
+                CombinationalStatement::ProceduralAssign {
+                    lhs: self.ganti_lvalue(lhs),
+                    rhs: self.ganti(rhs),
+                    span: *span,
+                }
+            }
+            CombinationalStatement::Deassign { lhs, span } => CombinationalStatement::Deassign {
+                lhs: self.ganti_lvalue(lhs),
                 span: *span,
             },
             // Deklarasi lokal di dalam badan subrutin tidak boleh ada: nama
@@ -370,6 +386,21 @@ impl Substitution {
                 span: *span,
             },
             SequentialStatement::Decl(decl) => SequentialStatement::Decl(decl.clone()),
+            SequentialStatement::Forever { body, span } => SequentialStatement::Forever {
+                body: body.iter().map(|s| self.ganti_seq(s)).collect(),
+                span: *span,
+            },
+            SequentialStatement::ProceduralAssign { lhs, rhs, span } => {
+                SequentialStatement::ProceduralAssign {
+                    lhs: self.ganti_lvalue(lhs),
+                    rhs: self.ganti(rhs),
+                    span: *span,
+                }
+            }
+            SequentialStatement::Deassign { lhs, span } => SequentialStatement::Deassign {
+                lhs: self.ganti_lvalue(lhs),
+                span: *span,
+            },
         }
     }
 }
@@ -457,6 +488,10 @@ fn rename_statement(
             body: rename_locals(body, ""),
             span: *span,
         },
+        CombinationalStatement::Forever { body, span } => CombinationalStatement::Forever {
+            body: rename_locals(body, ""),
+            span: *span,
+        },
         CombinationalStatement::Repeat { count, body, span } => CombinationalStatement::Repeat {
             count: rename_expr(count, peta),
             body: rename_locals(body, ""),
@@ -521,6 +556,17 @@ fn rename_statement(
             value: value.as_ref().map(|v| rename_expr(v, peta)),
             span: *span,
         },
+        CombinationalStatement::ProceduralAssign { lhs, rhs, span } => {
+            CombinationalStatement::ProceduralAssign {
+                lhs: rename_lvalue(lhs, peta),
+                rhs: rename_expr(rhs, peta),
+                span: *span,
+            }
+        }
+        CombinationalStatement::Deassign { lhs, span } => CombinationalStatement::Deassign {
+            lhs: rename_lvalue(lhs, peta),
+            span: *span,
+        },
     }
 }
 
@@ -531,6 +577,7 @@ fn rename_lvalue(lhs: &Lvalue, peta: &HashMap<String, String>) -> Lvalue {
             .cloned()
             .unwrap_or_else(|| lhs.name.clone()),
         slice: lhs.slice,
+        extra_slices: lhs.extra_slices.clone(),
         genvar_index: lhs.genvar_index.clone(),
         span: lhs.span,
     }
@@ -715,6 +762,7 @@ fn kumpulkan_lokal_dalam(body: &[CombinationalStatement], out: &mut Vec<String>)
             CombinationalStatement::For { body, .. }
             | CombinationalStatement::While { body, .. }
             | CombinationalStatement::Repeat { body, .. }
+            | CombinationalStatement::Forever { body, .. }
             | CombinationalStatement::EventControl { body, .. } => kumpulkan_lokal_dalam(body, out),
             CombinationalStatement::Delay { body, .. } => {
                 kumpulkan_lokal_dalam(std::slice::from_ref(body.as_ref()), out)
@@ -729,7 +777,9 @@ fn kumpulkan_lokal_dalam(body: &[CombinationalStatement], out: &mut Vec<String>)
             | CombinationalStatement::CompoundAssign { .. }
             | CombinationalStatement::SystemTask(_)
             | CombinationalStatement::TaskCall(_)
-            | CombinationalStatement::Return { .. } => {}
+            | CombinationalStatement::Return { .. }
+            | CombinationalStatement::ProceduralAssign { .. }
+            | CombinationalStatement::Deassign { .. } => {}
         }
     }
 }

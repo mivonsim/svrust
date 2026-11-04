@@ -6,7 +6,7 @@ set -e
 cd "$(dirname "$0")/../.."
 
 RTL_DIR=examples/e2e_timescale/rtl
-SV="cargo run -q -p cargo-sv -- sv"
+SV="cargo run -q -p svrust --"
 
 cek() {
   nama="$1"

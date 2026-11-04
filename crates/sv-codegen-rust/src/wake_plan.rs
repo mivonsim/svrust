@@ -162,8 +162,13 @@ fn delay_dalam(stmt: &Statement) -> Option<Wake> {
             .find_map(|arm| arm.body.iter().find_map(delay_dalam)),
         Statement::For { body, .. }
         | Statement::Repeat { body, .. }
-        | Statement::While { body, .. } => body.iter().find_map(delay_dalam),
-        Statement::Assign { .. } | Statement::SystemTask { .. } | Statement::Noop { .. } => None,
+        | Statement::While { body, .. }
+        | Statement::Forever { body, .. } => body.iter().find_map(delay_dalam),
+        Statement::Assign { .. }
+        | Statement::SystemTask { .. }
+        | Statement::Noop { .. }
+        | Statement::ProceduralAssign { .. }
+        | Statement::Deassign { .. } => None,
     }
 }
 

@@ -301,6 +301,27 @@ fn parse_seq_statement(tokens: &[SpannedToken]) -> Result<(SequentialStatement, 
         };
         return Ok((SequentialStatement::Return { value, span }, consumed));
     }
+    // LRM §20.4: `assert (condition);` di dalam blok sekuensial.
+    if tokens[0].token == Token::Assert {
+        let (stmt, consumed) = super::combinational::parse_assert(tokens)?;
+        let sv_ast::combinational::CombinationalStatement::SystemTask(task) = stmt else {
+            return Err("internal: parse_assert harus menghasilkan SystemTask".to_string());
+        };
+        return Ok((SequentialStatement::SystemTask(task), consumed));
+    }
+    // LRM §12.8: `forever body` di dalam blok sekuensial.
+    if tokens[0].token == Token::Forever {
+        return parse_forever_seq(tokens);
+    }
+    // LRM §14: `assign lhs = rhs;` di dalam blok sekuensial — override
+    // kontinu yang menangkal penulangan prosedural biasa.
+    if tokens[0].token == Token::Assign {
+        return parse_procedural_assign_seq(tokens);
+    }
+    // LRM §14: `deassign lhs;` melepasi override kontinu.
+    if tokens[0].token == Token::Deassign {
+        return parse_deassign_seq(tokens);
+    }
     // LRM §13.3: `nama(args);` adalah pemanggilan task, dibedakan dari
     // assignment lewat tanda kurung tepat setelah identifier.
     if matches!(tokens[0].token, Token::Ident(_))
@@ -381,6 +402,66 @@ fn parse_seq_statement(tokens: &[SpannedToken]) -> Result<(SequentialStatement, 
         SequentialStatement::NonBlockingAssign { lhs, rhs, span }
     };
     Ok((statement, idx))
+}
+
+/// Parse `forever body` di dalam blok sekuensial (LRM §12.8).
+///
+/// `forever` tidak punya kondisi — loop tak berujung. Body boleh kosong dengan
+/// `;`, selain itu tepat satu statement.
+fn parse_forever_seq(tokens: &[SpannedToken]) -> Result<(SequentialStatement, usize), String> {
+    let span = tokens[0].span;
+    let mut idx = 1; // skip 'forever'
+
+    if idx >= tokens.len() {
+        return Err("expected forever body".to_string());
+    }
+    let body = if tokens[idx].token == Token::Semi {
+        idx += 1;
+        Vec::new()
+    } else {
+        let (statement, consumed) = parse_seq_statement(&tokens[idx..])?;
+        idx += consumed;
+        vec![statement]
+    };
+
+    Ok((SequentialStatement::Forever { body, span }, idx))
+}
+
+/// Parse `assign lhs = rhs;` di dalam blok sekuensial (LRM §14).
+fn parse_procedural_assign_seq(
+    tokens: &[SpannedToken],
+) -> Result<(SequentialStatement, usize), String> {
+    let span = tokens[0].span;
+    let mut idx = 1; // skip 'assign'
+    let (lhs, consumed) = super::lvalue::parse_lvalue(&tokens[idx..])?;
+    idx += consumed;
+    if idx >= tokens.len() || tokens[idx].token != Token::Eq {
+        return Err("expected '=' setelah 'assign'".to_string());
+    }
+    idx += 1;
+    let (rhs, consumed) = super::expression::parse_expression(&tokens[idx..])?;
+    idx += consumed;
+    if idx >= tokens.len() || tokens[idx].token != Token::Semi {
+        return Err("expected ';' setelah ekspresi 'assign'".to_string());
+    }
+    idx += 1;
+    Ok((
+        SequentialStatement::ProceduralAssign { lhs, rhs, span },
+        idx,
+    ))
+}
+
+/// Parse `deassign lhs;` di dalam blok sekuensial (LRM §14).
+fn parse_deassign_seq(tokens: &[SpannedToken]) -> Result<(SequentialStatement, usize), String> {
+    let span = tokens[0].span;
+    let mut idx = 1; // skip 'deassign'
+    let (lhs, consumed) = super::lvalue::parse_lvalue(&tokens[idx..])?;
+    idx += consumed;
+    if idx >= tokens.len() || tokens[idx].token != Token::Semi {
+        return Err("expected ';' setelah 'deassign'".to_string());
+    }
+    idx += 1;
+    Ok((SequentialStatement::Deassign { lhs, span }, idx))
 }
 
 #[cfg(test)]
@@ -607,5 +688,38 @@ mod tests {
         let tokens = lex("always_ff @(posedge clk) if rst q <= 8'd0;").expect("lex");
         let err = parse_always_ff(&tokens).expect_err("harus gagal");
         assert!(err.contains("'('"), "pesan: {}", err);
+    }
+
+    #[test]
+    fn assign_prosedural_dalam_always_ff_diurai() {
+        // LRM §14: `assign x = y;` di dalam blok sekuensial juga override
+        // kontinu.
+        let (stmt, _) = parse("always_ff @(posedge clk) assign x = y;");
+        match stmt {
+            Statement::AlwaysFf { body, .. } => match &body[0] {
+                SequentialStatement::ProceduralAssign { lhs, rhs, .. } => {
+                    assert_eq!(lhs.name, "x");
+                    assert!(
+                        matches!(rhs, sv_ast::expression::Expr::Ident { name, .. } if name == "y")
+                    );
+                }
+                other => panic!("bukan procedural assign: {:?}", other),
+            },
+            other => panic!("bukan always_ff: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn deassign_prosedural_dalam_always_ff_diurai() {
+        let (stmt, _) = parse("always_ff @(posedge clk) deassign x;");
+        match stmt {
+            Statement::AlwaysFf { body, .. } => match &body[0] {
+                SequentialStatement::Deassign { lhs, .. } => {
+                    assert_eq!(lhs.name, "x");
+                }
+                other => panic!("bukan deassign: {:?}", other),
+            },
+            other => panic!("bukan always_ff: {:?}", other),
+        }
     }
 }

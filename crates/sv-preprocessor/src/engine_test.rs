@@ -199,6 +199,38 @@ fn direktif_tetap_error_bila_tidak_dikenal() {
     assert!(e.contains("tidak dikenal"), "hasil: {e}");
 }
 
+// --- Fase 2: direktif preprocessor lanjutan ---
+
+#[test]
+fn undefineall_menghapus_semua_makro() {
+    let out = run("`define A 1\n`define B 2\n`undefineall\n`ifdef A\nada_A\n`endif\n`ifdef B\nada_B\n`endif\ndone");
+    assert!(!out.contains("ada_A"), "hasil: {out}");
+    assert!(!out.contains("ada_B"), "hasil: {out}");
+    assert!(out.contains("done"), "hasil: {out}");
+}
+
+#[test]
+fn default_nettype_wire_menghapus_pengaturan_none() {
+    // default_nettype wire = bawaan, jadi makro masih bisa dipakai.
+    let out = run("`default_nettype wire\n`define W 8\n`ifdef W\nada_W\n`endif\ndone");
+    assert!(out.contains("ada_W"), "hasil: {out}");
+    assert!(out.contains("done"), "hasil: {out}");
+}
+
+#[test]
+fn default_nettype_none_disimpan() {
+    // default_nettype none hanya disimpan, tidak mengubah output preprocessor.
+    let out = run("`default_nettype none\nmodule m; endmodule");
+    assert_eq!(out.trim(), "module m; endmodule");
+}
+
+#[test]
+fn line_dan_pragma_diterima_tanpa_error() {
+    // `line dan `pragma diterima preprocessor tanpa mengubah source.
+    let out = run("`line 10 \"file.sv\"\n`pragma protect begin\nmodule m; endmodule");
+    assert!(out.contains("module m; endmodule"), "hasil: {out}");
+}
+
 // --- Bug: modul komentar tidak pernah dideklarasikan, direktif di dalam
 // komentar tetap diproses ---
 

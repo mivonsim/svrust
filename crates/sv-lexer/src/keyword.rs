@@ -15,8 +15,18 @@ pub fn keyword_or_ident(s: &str) -> Token {
         "shortint" => Token::ShortInt,
         "longint" => Token::LongInt,
         "time" => Token::Time,
+        "real" => Token::Real,
+        "supply0" => Token::Supply0,
+        "supply1" => Token::Supply1,
+        "struct" => Token::Struct,
+        "union" => Token::Union,
+        "assert" => Token::Assert,
+        // `property` — deklarasi properti SVA concurrent assertion (LRM §20/§21).
+        "property" => Token::Property,
         "while" => Token::While,
         "repeat" => Token::Repeat,
+        // `forever` — loop tak berujung (LRM §12.8).
+        "forever" => Token::Forever,
         "initial" => Token::Initial,
         "signed" => Token::Signed,
         "unsigned" => Token::Unsigned,
@@ -26,6 +36,8 @@ pub fn keyword_or_ident(s: &str) -> Token {
         "parameter" => Token::Parameter,
         "localparam" => Token::LocalParam,
         "assign" => Token::Assign,
+        // `deassign` — melepasi penetapans berkelanjutan prosedural (LRM §14).
+        "deassign" => Token::Deassign,
         "always" => Token::Always,
         "always_comb" => Token::AlwaysComb,
         "always_ff" => Token::AlwaysFf,
@@ -136,5 +148,10 @@ mod tests {
     fn typedef_enum_terpetakan_sebagai_keyword() {
         assert_eq!(keyword_or_ident("typedef"), Token::Typedef);
         assert_eq!(keyword_or_ident("enum"), Token::Enum);
+    }
+
+    #[test]
+    fn property_terpetakan_sebagai_keyword() {
+        assert_eq!(keyword_or_ident("property"), Token::Property);
     }
 }

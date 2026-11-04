@@ -6,6 +6,7 @@ use crate::param::ParamTable;
 use crate::symbol::{Symbol, SymbolTable};
 use sv_ast::module::Module;
 use sv_ast::port::PortDirection;
+use sv_ast::typedef::TypeDefDecl;
 use sv_ir::datatype::DataType;
 use sv_ir::scope::ScopePath;
 use sv_ir::time_scale::TimeScale;
@@ -58,7 +59,7 @@ pub fn elaborate(module: &Module) -> Result<Design, ElaborateError> {
         });
     }
 
-    isi_body(&mut design, &mut symbols, module, &params)?;
+    isi_body(&mut design, &mut symbols, module, &[], &params)?;
 
     // LRM §27: region generate tetap boleh dielabase tanpa modul lain, tetapi
     // instansiasi di dalamnya membutuhkan daftar module.
@@ -74,7 +75,11 @@ pub fn elaborate(module: &Module) -> Result<Design, ElaborateError> {
 }
 
 /// Elaborate top dari daftar module seberkas; instansi di-flatten.
-pub fn elaborate_top(modules: &[Module], top: &str) -> Result<Design, ElaborateError> {
+pub fn elaborate_top(
+    modules: &[Module],
+    typedefs_global: &[TypeDefDecl],
+    top: &str,
+) -> Result<Design, ElaborateError> {
     // Setiap module di-expand sebelum instansiasi, sehingga modul anak ikut
     // memakai subrutin yang dideklarasikan di body-nya sendiri.
     let expanded = modules
@@ -88,7 +93,9 @@ pub fn elaborate_top(modules: &[Module], top: &str) -> Result<Design, ElaborateE
         .iter()
         .map(|m| {
             let params = ParamTable::untuk_modul(m)?;
-            let types = crate::typedef::TypeTable::baru(&m.typedefs, &params)?;
+            let mut semua_typedef = typedefs_global.to_vec();
+            semua_typedef.extend_from_slice(&m.typedefs);
+            let types = crate::typedef::TypeTable::baru(&semua_typedef, &params)?;
             crate::typedef_walk::expand_literals(m, &types)
         })
         .collect::<Result<Vec<Module>, ElaborateError>>()?;
@@ -157,7 +164,7 @@ pub fn elaborate_top(modules: &[Module], top: &str) -> Result<Design, ElaborateE
         });
     }
 
-    isi_body(&mut design, &mut symbols, module, &params)?;
+    isi_body(&mut design, &mut symbols, module, typedefs_global, &params)?;
 
     for inst in &module.instances {
         lower_instance(
@@ -176,25 +183,34 @@ pub fn elaborate_top(modules: &[Module], top: &str) -> Result<Design, ElaborateE
     Ok(design)
 }
 
-/// Daftarkan nama `typedef` module ke tabel simbol sebagai target type cast.
+/// Daftarkan nama `typedef` module dan `typedef` global ke tabel simbol
+/// sebagai target type cast.
 ///
 /// LRM §6.14: `nama_tipe'(ekspresi)` memakai typedef yang sama dengan deklarasi
 /// variabel, jadi nama tipe harus sudah ada sebelum statement dielaborasi.
 ///
-/// LRM §8.20: typedef module-scoped, jadi setiap nama di-prefix instans yang
-/// sama seperti sinyal internal anak. Tanpa prefix, dua instansi modul yang
-/// sama dengan `w_t` berbeda lebar akan saling menimpa, dan cast di badan anak
-/// bisa diam-diam memakai lebar milik instansi lain.
+/// LRM §8.20: typedef di luar module (compilation-unit scope) tersedia untuk
+/// semua module tanpa prefix instans. Typedef module-scoped di-prefix instans
+/// seperti sinyal internal anak.
 ///
-/// Dipanggil `prefix` kosong dari `isi_body` (modul top, setelah port-nya ada
-/// supaya bentrok nama dengan sinyal terdeteksi) dan dari `lower_instance`
-/// dengan prefix instans.
+/// Dipanggil `prefix` kosong dari `isi_body` (modul top) dan dari
+/// `lower_instance` dengan prefix instans.
 pub(crate) fn daftarkan_tipe(
     symbols: &mut SymbolTable,
     module: &Module,
+    typedefs_global: &[TypeDefDecl],
     params: &ParamTable,
     prefix: &str,
 ) -> Result<(), ElaborateError> {
+    // Typedef global (compilation-unit scope) didaftarkan tanpa prefix instans,
+    // karena tersedia untuk semua module.
+    for decl in typedefs_global {
+        let types = crate::typedef::TypeTable::baru(std::slice::from_ref(decl), params)?;
+        for (nama, info) in types.iter_tipe() {
+            symbols.insert_type(nama, info.width, info.signed, decl.span)?;
+        }
+    }
+    // Typedef module-scoped di-prefix instans.
     for decl in &module.typedefs {
         let types = crate::typedef::TypeTable::baru(std::slice::from_ref(decl), params)?;
         for (nama, info) in types.iter_tipe() {
@@ -214,13 +230,65 @@ fn isi_body(
     design: &mut Design,
     symbols: &mut SymbolTable,
     module: &Module,
+    typedefs_global: &[TypeDefDecl],
     params: &ParamTable,
 ) -> Result<(), ElaborateError> {
-    // LRM §8.20 dan §6.7: typedef menentukan lebar tipe, dan nama anggota
-    // enum disubstitusi jadi konstanta sebelum statement dielaborasi.
-    let types = crate::typedef::TypeTable::baru(&module.typedefs, params)?;
+    // LRM §8.20 dan §6.7: typedef di luar module (compilation-unit scope)
+    // tersedia untuk semua module, digabung dengan typedef milik module itu
+    // sendiri. Typedef module-scoped memiliki prioritas lebih tinggi bila
+    // nama sama (shadowing), tetapi `TypeTable::baru` akan menolak duplicate
+    // nama dalam satu tabel — jadi kita gabungkan global dulu, lalu module
+    // lokal, dan biarkan `baru` menangkap duplikasi yang benar-benar ilegal.
+    let mut semua_typedef = typedefs_global.to_vec();
+    semua_typedef.extend_from_slice(&module.typedefs);
+    let types = crate::typedef::TypeTable::baru(&semua_typedef, params)?;
 
     for decl in &module.declarations {
+        // `struct`/`union` packed: lebar total = jumlah lebar semua field
+        // (LRM §6.7). Tangani sebelum lebar_deklarasi agar tidak mencari
+        // "struct"/"union" sebagai typedef di tabel tipe.
+        if decl.type_name.as_deref() == Some("struct") || decl.type_name.as_deref() == Some("union")
+        {
+            let total: u32 = decl
+                .struct_fields
+                .as_ref()
+                .map(|fields| {
+                    let lebar_list: Vec<u32> = fields
+                        .iter()
+                        .map(|f| match f.width {
+                            sv_ast::width::WidthExpr::Literal(w) => w as u32,
+                            _ => 0,
+                        })
+                        .collect();
+                    if decl.type_name.as_deref() == Some("union") {
+                        // Union: lebar = maksimum semua field (LRM §6.7).
+                        lebar_list.into_iter().max().unwrap_or(0)
+                    } else {
+                        // Struct: lebar = jumlah semua field.
+                        lebar_list.into_iter().sum()
+                    }
+                })
+                .unwrap_or(0);
+            let data_type = DataType::logic(total);
+            let symbol = Symbol {
+                name: decl.name.clone(),
+                signal_id: 0,
+                data_type,
+                kind: VarKind::Variable,
+                unpacked: None,
+                span: decl.span,
+            };
+            let id = symbols.insert(symbol)?;
+            design.add_variable(VarDecl::new(
+                decl.name.clone(),
+                ScopePath::root().child(decl.name.clone()),
+                data_type,
+                VarKind::Variable,
+                id,
+            ));
+            continue;
+        }
+
         let (bit, signed) = crate::typedef::lebar_deklarasi(
             &decl.width,
             decl.type_name.as_deref(),
@@ -231,21 +299,42 @@ fn isi_body(
         // LRM §7.8: array unpacked disimpan sebagai satu sinyal rata selebar
         // `lebar elemen * size`, dan dimensinya ikut tersimpan supaya indeks
         // bisa dipetakan ke rentang bit elemennya.
-        let (data_type, unpacked) = match decl.unpacked {
-            None => (
-                DataType::logic(bit).with_signed(signed || decl.signed),
-                None,
-            ),
-            Some(dim) => {
-                let total = (dim.size as u32).checked_mul(bit).ok_or_else(|| {
-                    ElaborateError::invalid_width(
-                        format!("lebar array unpacked {} x {} bit meluap", dim.size, bit),
-                        decl.span,
+        let (data_type, unpacked) = match &decl.unpacked {
+            None => {
+                // `real` adalah floating point 64-bit (LRM §5.5), bukan bit
+                // vector. Lebar dan signedness diabaikan.
+                if decl.type_name.as_deref() == Some("real") {
+                    (DataType::real(), None)
+                } else if decl.type_name.as_deref() == Some("supply0")
+                    || decl.type_name.as_deref() == Some("supply1")
+                {
+                    // `supply0`/`supply1` adalah net konstan 1-bit (LRM §6.6).
+                    (DataType::logic(1), None)
+                } else {
+                    (
+                        DataType::logic(bit).with_signed(signed || decl.signed),
+                        None,
                     )
-                })?;
+                }
+            }
+            Some(dims) => {
+                let total = dims
+                    .jumlah_elemen()
+                    .checked_mul(bit as u64)
+                    .and_then(|t| u32::try_from(t).ok())
+                    .ok_or_else(|| {
+                        ElaborateError::invalid_width(
+                            format!(
+                                "lebar array unpacked {} x {} bit meluap",
+                                dims.jumlah_elemen(),
+                                bit
+                            ),
+                            decl.span,
+                        )
+                    })?;
                 (
                     DataType::logic(total).with_signed(signed || decl.signed),
-                    Some(dim),
+                    Some(dims.clone()),
                 )
             }
         };
@@ -276,7 +365,7 @@ fn isi_body(
     // yang sudah dipakai sinyal, dan hanya berlaku untuk nama polos (tanpa
     // prefix instans). Nilai awal di bawah memakai cast, jadi pendaftaran ini
     // harus sebelumnya.
-    daftarkan_tipe(symbols, module, params, "")?;
+    daftarkan_tipe(symbols, module, typedefs_global, params, "")?;
 
     // Nilai awal variabel pada waktu nol (LRM §6.2.2).
     for decl in &module.declarations {
@@ -346,7 +435,7 @@ fn map_time_unit(unit: sv_ast::time_unit::TimeUnit) -> sv_ir::TimeUnit {
     }
 }
 
-/// Statistik design untuk perintah `cargo sv inspect`.
+/// Statistik design untuk perintah `svrust inspect`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesignStats {
     pub name: String,

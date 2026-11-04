@@ -334,6 +334,11 @@ pub fn lebar_deklarasi(
     span: Span,
 ) -> Result<(u32, bool), ElaborateError> {
     let base = match type_name {
+        // `real` adalah tipe built-in (LRM §5.5), bukan typedef yang dicari
+        // di tabel tipe modul.
+        Some("real") => return Ok((64, false)),
+        // `supply0`/`supply1` adalah net konstan 1-bit (LRM §6.6).
+        Some("supply0") | Some("supply1") => return Ok((1, false)),
         Some(nama) => table.tipe(nama, span)?,
         None => {
             let bit = params.lebar(width, span)? as u32;

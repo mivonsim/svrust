@@ -5,24 +5,58 @@ use crate::logic::Logic;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignalCell<const N: usize> {
     value: Bits<N>,
+    /// Override penetapans berkelanjutan prosedural (`assign x = expr;` di
+    /// blok prosedural, LRM §14). `Some` berarti pembaca selalu menerima
+    /// nilai ini lewat `read()`, walaupun penulangan prosedural biasa masih
+    /// menulis ke `value`. `deassign x;` menghapus override ini.
+    procedural_override: Option<Bits<N>>,
 }
 
 impl<const N: usize> SignalCell<N> {
     pub fn new(initial: Bits<N>) -> Self {
-        Self { value: initial }
+        Self {
+            value: initial,
+            procedural_override: None,
+        }
     }
 
+    /// Baca nilai efektif: override prosedural menangkal penulangan biasa.
     pub fn read(&self) -> Bits<N> {
-        self.value.clone()
+        self.procedural_override
+            .clone()
+            .unwrap_or_else(|| self.value.clone())
     }
 
-    /// Tulis nilai; kembalikan true bila benar-benar berubah.
+    /// Tulis nilai ke dasar sinyal; kembalikan true bila benar-benar berubah.
+    ///
+    /// Override (jika ada) tetap dipertahankan dan tetap menang di `read()`.
     pub fn write(&mut self, next: Bits<N>) -> bool {
         if self.value == next {
             return false;
         }
         self.value = next;
         true
+    }
+
+    /// Terapkan override kontinu pada digit yang dipilih `mask`.
+    ///
+    /// Hasilnya ditimpa ke `procedural_override` sebagai nilai efektif baru,
+    /// sehingga override berturut-turut menumpuk dengan benar. `deassign`
+    /// membuangnya lewat `clear_override`.
+    pub fn apply_override_masked(&mut self, val: Bits<N>, mask: Bits<N>) {
+        let cur = self.read();
+        let mut merged = cur.clone();
+        for i in 0..N {
+            if matches!(mask.get(i), Logic::One) {
+                merged.set(i, val.get(i));
+            }
+        }
+        self.procedural_override = Some(merged);
+    }
+
+    /// Lepas override kontinu; pembaca kembali ke dasar sinyal `value`.
+    pub fn clear_override(&mut self) {
+        self.procedural_override = None;
     }
 
     pub fn value(&self) -> &Bits<N> {
@@ -159,5 +193,34 @@ mod tests {
         let write =
             PendingWrite::new_masked(2, Bits::<8>::from_u64(0x0C), Bits::<8>::from_u64(0x0F));
         assert_eq!(write.mask.to_u64(), 0x0F);
+    }
+
+    #[test]
+    fn override_procedural_menangani_biasa_saat_dibaca() {
+        // `assign x = 8'hAA;` → override; `read()` mengembalikan override,
+        // bukan nilai dasar (`value`).
+        let mut sel = SignalCell::<8>::new(Bits::from_u64(0x00));
+        sel.apply_override_masked(Bits::from_u64(0xAA), Bits::satu());
+        assert_eq!(sel.read().to_u64(), 0xAA);
+        // Penulangan biasa masih ke `value` tetapi `read()` tetap override.
+        sel.write(Bits::from_u64(0x55));
+        assert_eq!(sel.read().to_u64(), 0xAA);
+        // `deassign x;` lepas override → `read()` kembali ke `value` = 0x55.
+        sel.clear_override();
+        assert_eq!(sel.read().to_u64(), 0x55);
+    }
+
+    #[test]
+    fn override_procedural_partial_mask() {
+        // `assign x[3:0] = 4'hF;` → override hanya nibble bawah.
+        let mut sel = SignalCell::<8>::new(Bits::from_u64(0x00));
+        sel.apply_override_masked(Bits::from_u64(0x0F), Bits::from_u64(0x0F));
+        assert_eq!(sel.read().to_u64(), 0x0F);
+        // Override berturut-turut menumpuk: nibble atas diubah oleh override lain.
+        sel.apply_override_masked(Bits::from_u64(0xF0), Bits::from_u64(0xF0));
+        assert_eq!(sel.read().to_u64(), 0xFF);
+        // `deassign` kembali ke dasar (0x00 karena tidak pernah ditulis biasa).
+        sel.clear_override();
+        assert_eq!(sel.read().to_u64(), 0x00);
     }
 }

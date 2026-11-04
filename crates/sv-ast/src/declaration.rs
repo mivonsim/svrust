@@ -17,12 +17,17 @@ pub struct Declaration {
     /// Nama tipe dari `typedef` bila deklarasi memakainya, misal
     /// `byte_t data;`. `None` berarti tipe ditulis langsung (`logic [7:0]`).
     pub type_name: Option<String>,
-    /// Dimensi unpacked (LRM §7.8), misal `logic [7:0] mem [0:15];`.
+    /// Dimensi unpacked (LRM §7.8), misal `logic [7:0] mem [0:15];` atau
+    /// `logic [7:0] mem [0:3][0:15];`.
     ///
     /// Unpacked array bukan vektor: `$bits(mem)` mengembalikan lebar ELEMEN,
     /// bukan lebar total. Elemennya dipaketkan menjadi satu sinyal rata dengan
-    /// lebar `lebar_elemen * size` saat elaborasi.
-    pub unpacked: Option<UnpackedDim>,
+    /// lebar `lebar_elemen × size_1 × size_2 × ...`.
+    pub unpacked: Option<UnpackedDims>,
+
+    /// Field-field dalam `struct`/`union` packed (LRM §6.7, §8).
+    /// `Some` bila deklarasi ini adalah struct/union, `None` untuk tipe biasa.
+    pub struct_fields: Option<Vec<StructField>>,
     pub span: Span,
 }
 
@@ -36,6 +41,72 @@ pub struct UnpackedDim {
     /// `true` bila indeks menurun dari `first` (bentuk `[15:0]`), `false` bila
     /// menaik (`[0:15]`).
     pub descending: bool,
+}
+
+/// Dimensi unpacked multi-tingkat (LRM §7.8).
+///
+/// `logic [7:0] mem [0:3][0:15];` memiliki dua dimensi: 4 elemen di tingkat
+/// pertama dan 16 elemen di tingkat kedua. Sinyal disimpan rata selebar
+/// `lebar_elemen × size_1 × size_2 × ...`.
+///
+/// Indeks `mem[i][j]` menghasilkan offset bit:
+///   `((i × size_2 + j) × lebar_elemen) .. (((i × size_2 + j + 1) × lebar_elemen) - 1)`
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnpackedDims {
+    /// Dimensi dari luar ke dalam, misal untuk `[0:3][0:15]` ini
+    /// `[UnpackedDim { size: 4, .. }, UnpackedDim { size: 16, .. }]`.
+    pub dims: Vec<UnpackedDim>,
+}
+
+impl UnpackedDims {
+    /// Buat dimensi unpacked satu tingkat.
+    pub fn satu(dim: UnpackedDim) -> Self {
+        Self { dims: vec![dim] }
+    }
+
+    /// Jumlah total elemen di semua dimensi.
+    pub fn jumlah_elemen(&self) -> u64 {
+        self.dims.iter().map(|d| d.size).product()
+    }
+
+    /// Hitung offset elemen dari indeks multi-tingkat, misal `mem[i][j]`.
+    ///
+    /// `indices` berisi indeks dari luar ke dalam. Mengembalikan `None` bila
+    /// ada lebih banyak indeks dari dimensi. Indeks parsial (kurang dari
+    /// jumlah dimensi) diizinkan: mengembalikan offset awal sub-array
+    /// yang tersisa.
+    pub fn offset(&self, indices: &[u64]) -> Option<u64> {
+        if indices.len() > self.dims.len() {
+            return None;
+        }
+        // perkalian = hasil kali ukuran SEMUA dimensi.
+        // Untuk setiap indeks yang disediakan, bagi perkalian dengan ukuran
+        // dimensi tersebut dan kalikan dengan indeksnya.
+        let mut perkalian: u64 = self.dims.iter().map(|d| d.size).product();
+        let mut jarak = 0u64;
+        for (dim, &idx) in self.dims.iter().zip(indices.iter()) {
+            perkalian = perkalian.checked_div(dim.size)?;
+            let d = dim.offset(idx)?;
+            jarak = jarak.checked_add(d.checked_mul(perkalian)?)?;
+        }
+        Some(jarak)
+    }
+
+    /// Bentuk penulisan yang setara, untuk pesan error.
+    pub fn describe(&self) -> String {
+        self.dims
+            .iter()
+            .map(UnpackedDim::describe)
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructField {
+    pub name: String,
+    pub width: WidthExpr,
+    pub signed: bool,
 }
 
 impl UnpackedDim {

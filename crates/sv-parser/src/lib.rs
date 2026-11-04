@@ -20,6 +20,6 @@ pub mod statement;
 pub mod typedef;
 
 pub use dimension::parse_dimension;
-pub use file::parse_file;
+pub use file::{parse_file, ParseResult};
 pub use lvalue::parse_lvalue;
 pub use module::parse_module;

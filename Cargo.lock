@@ -3,20 +3,6 @@
 version = 4
 
 [[package]]
-name = "cargo-sv"
-version = "0.1.0"
-dependencies = [
- "sv-ast",
- "sv-codegen-rust",
- "sv-elaborator",
- "sv-ir",
- "sv-lexer",
- "sv-opt",
- "sv-parser",
- "sv-preprocessor",
-]
-
-[[package]]
 name = "sv-ast"
 version = "0.1.0"
 dependencies = [
@@ -84,6 +70,20 @@ version = "0.1.0"
 [[package]]
 name = "sv-trace"
 version = "0.1.0"
+
+[[package]]
+name = "svrust"
+version = "0.1.0"
+dependencies = [
+ "sv-ast",
+ "sv-codegen-rust",
+ "sv-elaborator",
+ "sv-ir",
+ "sv-lexer",
+ "sv-opt",
+ "sv-parser",
+ "sv-preprocessor",
+]
 
 [[package]]
 name = "svrust-tests"

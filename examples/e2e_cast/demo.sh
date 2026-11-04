@@ -7,7 +7,7 @@ set -e
 cd "$(dirname "$0")/../.."
 
 RTL_DIR=examples/e2e_cast/rtl
-SV="cargo run -q -p cargo-sv -- sv"
+SV="cargo run -q -p svrust --"
 
 # Cek bahwa satu baris keluaran bernilai persis seperti yang diharapkan.
 cek() {

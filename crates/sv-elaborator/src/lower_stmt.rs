@@ -49,6 +49,7 @@ fn lower_comb_statement(
                 assignment: Assignment {
                     target,
                     slice,
+                    extra_slices: Vec::new(),
                     value,
                     style: AssignStyle::Blocking,
                 },
@@ -63,9 +64,31 @@ fn lower_comb_statement(
                 assignment: Assignment {
                     target,
                     slice,
+                    extra_slices: Vec::new(),
                     value,
                     style: AssignStyle::NonBlocking,
                 },
+                span: to_ir_span(*span),
+            })
+        }
+        // LRM §14: `assign lhs = rhs;` di dalam blok prosedural adalah override
+        // kontinu yang menangkal penulangan biasa hingga `deassign`.
+        CombinationalStatement::ProceduralAssign { lhs, rhs, span } => {
+            let (target, slice) = lookup_lvalue(lhs, symbols)?;
+            let value = sesuaikan_ke_target(rhs, lhs, slice, symbols)?;
+            Ok(Statement::ProceduralAssign {
+                target,
+                slice,
+                extra_slices: Vec::new(),
+                value,
+                span: to_ir_span(*span),
+            })
+        }
+        // LRM §14: `deassign lhs;` melepasi override kontinu pada `lhs`.
+        CombinationalStatement::Deassign { lhs, span } => {
+            let (target, _slice) = lookup_lvalue(lhs, symbols)?;
+            Ok(Statement::Deassign {
+                target,
                 span: to_ir_span(*span),
             })
         }
@@ -138,6 +161,7 @@ fn lower_comb_statement(
                 assignment: Assignment {
                     target,
                     slice,
+                    extra_slices: Vec::new(),
                     value: crate::lower_expr::sesuaikan_lebar(
                         nilai,
                         lebar,
@@ -227,6 +251,18 @@ fn lower_comb_statement(
             }
             Ok(Statement::While {
                 condition: lowered_condition,
+                body: lowered_body,
+                span: to_ir_span(*span),
+            })
+        }
+        CombinationalStatement::Forever { body, span } => {
+            let lowered_body = lower_comb_block(body, symbols)?;
+            // Sensitivitas mencakup seluruh body.
+            let mut reads = Vec::new();
+            for statement in &lowered_body {
+                collect_statement_reads(statement, &mut reads);
+            }
+            Ok(Statement::Forever {
                 body: lowered_body,
                 span: to_ir_span(*span),
             })
@@ -370,6 +406,7 @@ pub fn lower_module_statement(
                     assignment: Assignment {
                         target,
                         slice,
+                        extra_slices: Vec::new(),
                         value,
                         style: AssignStyle::Blocking,
                     },
@@ -483,6 +520,7 @@ fn lower_seq_statement(
                 assignment: Assignment {
                     target,
                     slice,
+                    extra_slices: Vec::new(),
                     value,
                     style: AssignStyle::NonBlocking,
                 },
@@ -496,9 +534,30 @@ fn lower_seq_statement(
                 assignment: Assignment {
                     target,
                     slice,
+                    extra_slices: Vec::new(),
                     value,
                     style: AssignStyle::Blocking,
                 },
+                span: to_ir_span(*span),
+            })
+        }
+        // LRM §14: `assign lhs = rhs;` di dalam blok sekuensial — override kontinu.
+        SequentialStatement::ProceduralAssign { lhs, rhs, span } => {
+            let (target, slice) = lookup_lvalue(lhs, symbols)?;
+            let value = sesuaikan_ke_target(rhs, lhs, slice, symbols)?;
+            Ok(Statement::ProceduralAssign {
+                target,
+                slice,
+                extra_slices: Vec::new(),
+                value,
+                span: to_ir_span(*span),
+            })
+        }
+        // LRM §14: `deassign lhs;` lepas override kontinu pada `lhs`.
+        SequentialStatement::Deassign { lhs, span } => {
+            let (target, _slice) = lookup_lvalue(lhs, symbols)?;
+            Ok(Statement::Deassign {
+                target,
                 span: to_ir_span(*span),
             })
         }
@@ -546,11 +605,21 @@ fn lower_seq_statement(
                 span: to_ir_span(task.span),
             })
         }
-        // Lihat catatan pada `lower_comb_statement`: node ini sudah ter-expand.
+        // Task sudah di-inline oleh `expand_module()` sebelum lowering, jadi
+        // node ini tidak seharusnya sampai ke IR. Jika sampai, berarti ada
+        // jalur yang melewati `expand_module()`.
         SequentialStatement::TaskCall(call) => Err(ElaborateError::new(
-            format!("task call '{}' belum dikembangkan", call.name),
+            format!("task call '{}' belum di-inline sebelum lowering", call.name),
             call.span,
         )),
+        // LRM §12.8: `forever body` di dalam blok sekuensial — loop tak berujung.
+        SequentialStatement::Forever { body, span } => {
+            let lowered_body = lower_seq_list(body, symbols)?;
+            Ok(Statement::Forever {
+                body: lowered_body,
+                span: to_ir_span(*span),
+            })
+        }
         SequentialStatement::Return { span, .. } => Err(ElaborateError::new(
             "`return` hanya sah di dalam task/function",
             *span,
@@ -578,6 +647,8 @@ fn lower_seq_list(
 pub fn collect_statement_reads(statement: &Statement, out: &mut Vec<SignalId>) {
     match statement {
         Statement::Assign { assignment, .. } => collect_signals(&assignment.value, out),
+        Statement::ProceduralAssign { value, .. } => collect_signals(value, out),
+        Statement::Deassign { .. } => {}
         Statement::If {
             condition,
             then_branch,
@@ -636,6 +707,14 @@ pub fn collect_statement_reads(statement: &Statement, out: &mut Vec<SignalId>) {
         Statement::Delay { amount, body, .. } => {
             collect_signals(amount, out);
             collect_statement_reads(body, out);
+        }
+        // LRM §12.8: `forever` loop tak berujung — bacaan dari seluruh body
+        // dikumpulkan agar sensitivitas proses mencakup semua sinyal yang
+        // digunakan.
+        Statement::Forever { body, .. } => {
+            for s in body {
+                collect_statement_reads(s, out);
+            }
         }
         // Sinyal yang diawasi event control dibaca tiap langkah, jadi masuk
         // daftar bacaan supaya proses initial dievaluasi saat berubah.
@@ -744,37 +823,66 @@ fn lookup_lvalue(
     // sinyal rata menempati rentang bit `[k*W +: W]`. Tanpa pemetaan ini nilai
     // 8-bit hanya menulis bit paling rendah elemen dan kehilangan sisanya.
     if symbol.unpacked.is_some() {
-        let msb_bit = ast_slice.msb;
-        let (msb, lsb) = symbol.elemen(u64::from(ast_slice.lsb)).ok_or_else(|| {
+        // Kumpulkan semua indeks dari slice + extra_slices (untuk multi-dimensi
+        // seperti mem[i][j]).
+        let mut all_indices: Vec<u64> = vec![u64::from(ast_slice.lsb)];
+        for extra in &lhs.extra_slices {
+            all_indices.push(u64::from(extra.lsb));
+        }
+        let (msb_bit, lsb_bit) = symbol.elemen(&all_indices).ok_or_else(|| {
             ElaborateError::new(
                 format!(
-                    "indeks {} di luar jangkauan array '{}' {}",
-                    ast_slice.lsb,
+                    "indeks [{}] di luar jangkauan array '{}' {}",
+                    all_indices
+                        .iter()
+                        .map(|i| i.to_string())
+                        .collect::<Vec<_>>()
+                        .join("]["),
                     lhs.name,
                     symbol
                         .unpacked
-                        .map(|i| i.dim.describe())
+                        .as_ref()
+                        .map(|i| i.dims.describe())
                         .unwrap_or_default()
                 ),
                 lhs.span,
             )
         })?;
-        debug_assert!(msb_bit == ast_slice.msb);
-        return Ok((symbol.signal_id, Some(Slice { msb, lsb })));
+        // msb_bit adalah bit MSB elemen (misal 7 untuk 8-bit), ast_slice.msb
+        // adalah indeks array (misal 0) — tidak perlu sama.
+        return Ok((
+            symbol.signal_id,
+            Some(Slice {
+                msb: msb_bit,
+                lsb: lsb_bit,
+            }),
+        ));
     }
-    let slice = Slice {
-        msb: ast_slice.msb,
-        lsb: ast_slice.lsb,
-    };
-    if slice.msb >= symbol.data_type.width {
+    // Hitung slice absolut untuk nested select `y[a:b][c:d]`:
+    // offset = lsb slice pertama + jumlah lsb semua extra, width = extra terakhir.
+    let mut offset = ast_slice.lsb as u64;
+    let mut width = ast_slice.width() as u64;
+    for extra in &lhs.extra_slices {
+        offset += extra.lsb as u64;
+        width = extra.width() as u64;
+    }
+    let lebar_sinyal = symbol.data_type.width as u64;
+    if offset + width > lebar_sinyal {
         return Err(ElaborateError::new(
             format!(
-                "part-select [{}:{}] di luar lebar sinyal '{}' ({} bit)",
-                slice.msb, slice.lsb, lhs.name, symbol.data_type.width
+                "seleksi bertingkat ['{}:{}'] melewati lebar sinyal '{}' ({} bit)",
+                offset + width - 1,
+                offset,
+                lhs.name,
+                lebar_sinyal
             ),
             lhs.span,
         ));
     }
+    let slice = Slice {
+        msb: (offset + width - 1) as u32,
+        lsb: offset as u32,
+    };
     Ok((symbol.signal_id, Some(slice)))
 }
 
@@ -824,6 +932,7 @@ fn map_system_task_kind(kind: sv_ast::system_task::SystemTaskKind) -> SystemTask
         Ast::Strobe => SystemTaskKind::Strobe,
         Ast::DumpFile => SystemTaskKind::DumpFile,
         Ast::DumpVars => SystemTaskKind::DumpVars,
+        Ast::Assert => SystemTaskKind::Assert,
     }
 }
 
@@ -878,6 +987,7 @@ fn lower_for_step(
     Ok(Assignment {
         target,
         slice,
+        extra_slices: Vec::new(),
         value,
         style: AssignStyle::Blocking,
     })

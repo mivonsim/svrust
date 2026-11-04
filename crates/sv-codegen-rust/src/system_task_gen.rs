@@ -1,5 +1,5 @@
 // Tanggung jawab: generate kode Rust untuk system task testbench.
-use crate::expr_gen::write_expr;
+use crate::expr_gen::{write_expr, write_truthy_pub};
 use crate::indent::Indent;
 use sv_ir::system_task::{SystemArg, SystemTaskKind};
 use sv_ir::Design;
@@ -52,9 +52,44 @@ pub fn write_system_task(
         // saat `$dumpvars` dipanggil.
         SystemTaskKind::DumpFile => write_dumpfile(args, out, indent),
         // LRM §23.2: `$dumpvars` menyalakan pencatatan waveform.
+        // Argumen opsional: level (integer) dan daftar sinyal.
+        // Level ditangani sebagai opsi; daftar sinyal akan direkam semua
+        // bila tidak ditentukan (perilaku bawaan LRM).
         SystemTaskKind::DumpVars => {
             indent.push(out);
             out.push_str("self.dump_on = true;\n");
+            // Level `$dumpvars(n, ...)`: argumen pertama bila ada adalah
+            // ekspresi konstanta integer. Simpan sebagai opsi untuk digunakan
+            // driver dalam menentukan berapa tingkat hierarki yang direkam.
+            // Untuk saat ini semua hierarki direkam (perilaku bawaan LRM
+            // bila tidak ada argumen).
+            let mut level_opt = None;
+            for arg in args {
+                if let SystemArg::Value(sv_ir::expr::Expr::Const { value, .. }) = arg {
+                    level_opt = Some(*value as u32);
+                    break;
+                }
+            }
+            if let Some(level) = level_opt {
+                out.push_str(&format!("self.dump_level = Some({});\n", level));
+            }
+        }
+        // LRM §20.4: `assert (condition);` — cek kondisi pada setiap tahap,
+        // cetak error dan set finished bila salah.
+        SystemTaskKind::Assert => {
+            indent.push(out);
+            out.push_str("if !");
+            if let SystemArg::Value(expr) = &args[0] {
+                write_truthy_pub(expr, out, indent);
+            } else {
+                out.push_str("false");
+            }
+            out.push_str(" {\n");
+            indent.child().push(out);
+            out.push_str("self.finished = true;\n");
+            out.push_str("eprintln!(\"assertion failed\");\n");
+            indent.push(out);
+            out.push_str("}\n");
         }
     }
 }
@@ -388,5 +423,19 @@ mod tests {
     fn dumpvars_menyalakan_flag_rekam() {
         let kode = render(SystemTaskKind::DumpVars, &[]);
         assert_eq!(kode, "self.dump_on = true;\n");
+    }
+
+    #[test]
+    fn dumpvars_dengan_level() {
+        // `$dumpvars(0)` — level 0, tanpa daftar sinyal.
+        let kode = render(
+            SystemTaskKind::DumpVars,
+            &[SystemArg::Value(Expr::constant(0, DataType::logic(32)))],
+        );
+        assert!(kode.contains("self.dump_on = true;\n"), "kode: {kode}");
+        assert!(
+            kode.contains("self.dump_level = Some(0);\n"),
+            "kode: {kode}"
+        );
     }
 }

@@ -216,6 +216,7 @@ pub fn parse_typed_declaration(
         init,
         type_name: Some(type_name.clone()),
         unpacked: None,
+        struct_fields: None,
         span,
     };
     Ok((type_name, decl, idx))
@@ -257,6 +258,7 @@ pub fn parse_more_typed_declarators(
             init,
             type_name: Some(type_name.to_string()),
             unpacked: None,
+            struct_fields: None,
             span,
         });
     }

@@ -361,15 +361,23 @@ fn lower_instance_body(
         // selebar `elemen * size` DAN membawa dimensinya, supaya indeksnya
         // dipetakan ke bit yang benar di badan anak. Tanpa ini deklarasinya
         // tetap jalan tapi hanya 8 bit dan `mem[2]` salah target.
-        let tipe = match d.unpacked {
+        let tipe = match &d.unpacked {
             None => DataType::logic(bit).with_signed(signed || d.signed),
-            Some(dim) => {
-                let total = (dim.size as u32).checked_mul(bit).ok_or_else(|| {
-                    ElaborateError::invalid_width(
-                        format!("lebar array unpacked {} x {} bit meluap", dim.size, bit),
-                        d.span,
-                    )
-                })?;
+            Some(dims) => {
+                let total = dims
+                    .jumlah_elemen()
+                    .checked_mul(bit as u64)
+                    .and_then(|t| u32::try_from(t).ok())
+                    .ok_or_else(|| {
+                        ElaborateError::invalid_width(
+                            format!(
+                                "lebar array unpacked {} x {} bit meluap",
+                                dims.jumlah_elemen(),
+                                bit
+                            ),
+                            d.span,
+                        )
+                    })?;
                 DataType::logic(total).with_signed(signed || d.signed)
             }
         };
@@ -382,8 +390,8 @@ fn lower_instance_body(
             unpacked: None,
             span: d.span,
         };
-        if let Some(dim) = d.unpacked {
-            symbol = symbol.dengan_unpacked(dim, bit);
+        if let Some(dims) = &d.unpacked {
+            symbol = symbol.dengan_unpacked(dims.clone(), bit);
         }
         let id = symbols.insert(symbol)?;
         design.add_variable(VarDecl::new(
@@ -403,15 +411,23 @@ fn lower_instance_body(
         // dipetakan ke bit yang benar di badan anak. Tanpa ini deklarasinya
         // tetap jalan tapi hanya 8 bit dan `mem[2]` salah target.
         let bit = params.lebar(&d.width, inst.span)?;
-        let tipe = match d.unpacked {
+        let tipe = match &d.unpacked {
             None => DataType::logic(bit as u32).with_signed(d.signed),
-            Some(dim) => {
-                let total = (dim.size as u32).checked_mul(bit as u32).ok_or_else(|| {
-                    ElaborateError::invalid_width(
-                        format!("lebar array unpacked {} x {} bit meluap", dim.size, bit),
-                        d.span,
-                    )
-                })?;
+            Some(dims) => {
+                let total = dims
+                    .jumlah_elemen()
+                    .checked_mul(bit as u64)
+                    .and_then(|t| u32::try_from(t).ok())
+                    .ok_or_else(|| {
+                        ElaborateError::invalid_width(
+                            format!(
+                                "lebar array unpacked {} x {} bit meluap",
+                                dims.jumlah_elemen(),
+                                bit
+                            ),
+                            d.span,
+                        )
+                    })?;
                 DataType::logic(total).with_signed(d.signed)
             }
         };
@@ -424,8 +440,8 @@ fn lower_instance_body(
             unpacked: None,
             span: d.span,
         };
-        if let Some(dim) = d.unpacked {
-            symbol = symbol.dengan_unpacked(dim, bit as u32);
+        if let Some(dims) = &d.unpacked {
+            symbol = symbol.dengan_unpacked(dims.clone(), bit as u32);
         }
         let id = symbols.insert(symbol)?;
         design.add_variable(VarDecl::new(
@@ -441,7 +457,9 @@ fn lower_instance_body(
     // prefix instans yang sama seperti sinyal internal anak. Tanpa ini cast
     // di badan anak selalu "undefined type", dan tanpa prefix dua instansi
     // dengan nama typedef sama akan saling menimpa.
-    crate::design::daftarkan_tipe(symbols, child, &params, &prefix)?;
+    // Typedef global (compilation-unit scope) sudah didaftarkan oleh `isi_body`
+    // di parent dengan prefix kosong, jadi tidak perlu diulang di sini.
+    crate::design::daftarkan_tipe(symbols, child, &[], &params, &prefix)?;
 
     // Qualify lalu lower statement anak ke dalam design top. `koneksi` sudah
     // memuat `localparam` anak karena `params` di atas sudah memuatnya, jadi
@@ -538,6 +556,7 @@ fn lingkup_lvalue(l: &Lvalue, prefix: &str, koneksi: &KoneksiMap) -> Lvalue {
         Some(slice) => Lvalue::sliced(name, slice, l.span),
     };
     hasil.genvar_index = l.genvar_index.clone();
+    hasil.extra_slices = l.extra_slices.clone();
     hasil
 }
 
@@ -851,6 +870,10 @@ fn lingkup_comb(
                 body: lingkup_comb(body, prefix, koneksi),
                 span: *span,
             },
+            CombinationalStatement::Forever { body, span } => CombinationalStatement::Forever {
+                body: lingkup_comb(body, prefix, koneksi),
+                span: *span,
+            },
             CombinationalStatement::Block { body, span } => CombinationalStatement::Block {
                 body: lingkup_comb(body, prefix, koneksi),
                 span: *span,
@@ -901,6 +924,17 @@ fn lingkup_comb(
                     })
                     .collect(),
                 kind: *kind,
+                span: *span,
+            },
+            CombinationalStatement::ProceduralAssign { lhs, rhs, span } => {
+                CombinationalStatement::ProceduralAssign {
+                    lhs: lingkup_lvalue(lhs, prefix, koneksi),
+                    rhs: lingkup_expr(rhs, prefix, koneksi, *span),
+                    span: *span,
+                }
+            }
+            CombinationalStatement::Deassign { lhs, span } => CombinationalStatement::Deassign {
+                lhs: lingkup_lvalue(lhs, prefix, koneksi),
                 span: *span,
             },
         })
@@ -964,6 +998,21 @@ fn lingkup_seq(i: &SequentialStatement, prefix: &str, koneksi: &KoneksiMap) -> S
         SequentialStatement::SystemTask(task) => {
             SequentialStatement::SystemTask(lingkup_task(task, prefix, koneksi))
         }
+        SequentialStatement::Forever { body, span } => SequentialStatement::Forever {
+            body: lingkup_seq_list(body, prefix, koneksi),
+            span: *span,
+        },
+        SequentialStatement::ProceduralAssign { lhs, rhs, span } => {
+            SequentialStatement::ProceduralAssign {
+                lhs: lingkup_lvalue(lhs, prefix, koneksi),
+                rhs: lingkup_expr(rhs, prefix, koneksi, *span),
+                span: *span,
+            }
+        }
+        SequentialStatement::Deassign { lhs, span } => SequentialStatement::Deassign {
+            lhs: lingkup_lvalue(lhs, prefix, koneksi),
+            span: *span,
+        },
     }
 }
 

@@ -110,7 +110,7 @@ pub fn langkah_simulasi(design: &Design) -> usize {
     };
     // Periode kosong atau nol berarti tidak ada proses waktu dengan delay
     // konstanta; jumlah event tidak bisa dihitung dan langkah dasar tetap dipakai.
-    if periode.is_empty() || periode.iter().any(|p| *p == 0) {
+    if periode.is_empty() || periode.contains(&0) {
         return dasar;
     }
     // Batas atas yang AMAN: setiap proses menyala `terakhir / periode[i]` kali,

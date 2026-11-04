@@ -247,6 +247,38 @@ impl<const N: usize> Bits<N> {
     pub fn is_fully_known(&self) -> bool {
         (0..N).all(|i| self.get(i).is_definite())
     }
+
+    /// Konversi bit pattern ke `f64` (IEEE 754 double). Digunakan untuk tipe
+    /// `real` (LRM §5.5). Biti di atas 64 diabaikan; bit di bawah 64 di-pad
+    /// dengan nol bila `N < 64`. Digit `X`/`Z` diperlakukan sebagai 0.
+    pub fn to_f64(&self) -> f64 {
+        let mut bits: u64 = 0;
+        for i in 0..N.min(64) {
+            if matches!(self.get(i), Logic::One) {
+                bits |= 1u64 << i;
+            }
+        }
+        f64::from_bits(bits)
+    }
+
+    /// Buat `Bits<N>` dari nilai `f64` (IEEE 754 double). Digunakan untuk tipe
+    /// `real` (LRM §5.5). Hanya 64 bit bawah yang diisi; bit di atas 64
+    /// di-set nol. Digunakan oleh setter variabel `real`.
+    pub fn from_f64(value: f64) -> Self {
+        let bits = value.to_bits();
+        let mut out = Self::zero();
+        for i in 0..N.min(64) {
+            out.set(
+                i,
+                if (bits >> i) & 1 == 1 {
+                    Logic::One
+                } else {
+                    Logic::Zero
+                },
+            );
+        }
+        out
+    }
 }
 
 impl<const N: usize> Default for Bits<N> {

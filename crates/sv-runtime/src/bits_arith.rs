@@ -70,10 +70,14 @@ impl<const N: usize> Sub for &Bits<N> {
 /// Perkalian bilangan bulat yang dipangkas ke lebar penyimpanan N.
 ///
 /// Perkalian dihitung pada u128 supaya tidak meluap sebelum dipangkas,
-/// lalu hanya N bit terbawah yang dipertahankan.
+/// lalu hanya N bit terbawah yang dipertahankan. Operand yang bernilai X/Z
+/// membuat seluruh hasil X (LRM §11.4.8).
 impl<const N: usize> Mul for &Bits<N> {
     type Output = Bits<N>;
     fn mul(self, rhs: Self) -> Self::Output {
+        if !self.is_fully_known() || !rhs.is_fully_known() {
+            return Bits::<N>::all(Logic::X);
+        }
         let a = self.to_u64() as u128;
         let b = rhs.to_u64() as u128;
         Bits::from_u64(((a * b) & u64::MAX as u128) as u64)
@@ -248,5 +252,23 @@ mod tests {
     fn geser_kanan_isi_nol() {
         let a = Bits::<8>::from_u64(0b0000_1100);
         assert_eq!((&a >> 2usize).to_u64(), 0b0000_0011);
+    }
+
+    #[test]
+    fn kali_dengan_x_hasil_x() {
+        // LRM: perkalian dengan operand X membuat seluruh hasil X.
+        let a = Bits::<8>::from_logic(Logic::X);
+        let b = Bits::<8>::from_u64(4);
+        assert!(!(&a * &b).is_fully_known());
+        assert_eq!((&a * &b).get(0), Logic::X);
+        assert_eq!((&a * &b).get(7), Logic::X);
+    }
+
+    #[test]
+    fn kali_dengan_z_hasil_x() {
+        let a = Bits::<8>::from_u64(3);
+        let b = Bits::<8>::from_logic(Logic::Z);
+        assert!(!(&a * &b).is_fully_known());
+        assert_eq!((&a * &b).get(3), Logic::X);
     }
 }

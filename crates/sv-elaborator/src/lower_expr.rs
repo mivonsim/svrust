@@ -282,27 +282,28 @@ pub fn lower_expression_dengan_konteks(
                                     symbol
                                         .unpacked
                                         .as_ref()
-                                        .map(|i| i.dim.describe())
+                                        .map(|i| i.dims.describe())
                                         .unwrap_or_default()
                                 ),
                                 *span,
                             ));
                         }
-                        let (msb_bit, lsb_bit) = symbol.elemen(u64::from(*msb)).ok_or_else(|| {
-                            ElaborateError::new(
-                                format!(
-                                    "indeks {} di luar jangkauan array '{}' {}",
-                                    msb,
-                                    name,
-                                    symbol
-                                        .unpacked
-                                        .as_ref()
-                                        .map(|i| i.dim.describe())
-                                        .unwrap_or_default()
-                                ),
-                                *span,
-                            )
-                        })?;
+                        let (msb_bit, lsb_bit) =
+                            symbol.elemen(&[u64::from(*msb)]).ok_or_else(|| {
+                                ElaborateError::new(
+                                    format!(
+                                        "indeks {} di luar jangkauan array '{}' {}",
+                                        msb,
+                                        name,
+                                        symbol
+                                            .unpacked
+                                            .as_ref()
+                                            .map(|i| i.dims.describe())
+                                            .unwrap_or_default()
+                                    ),
+                                    *span,
+                                )
+                            })?;
                         return Ok(Expr::Select {
                             base: Box::new(Expr::signal_ref(
                                 symbol.signal_id,
@@ -645,14 +646,14 @@ fn cek_indeks_konstan(
     span: sv_lexer::span::Span,
 ) -> Result<(), ElaborateError> {
     let valid = match &symbol.unpacked {
-        Some(info) => info.dim.offset(index).is_some(),
+        Some(info) => info.dims.offset(&[index]).is_some(),
         None => index < u64::from(symbol.data_type.width),
     };
     if valid {
         return Ok(());
     }
     let jangkauan = match &symbol.unpacked {
-        Some(info) => info.dim.describe(),
+        Some(info) => info.dims.describe(),
         None => format!("0..{}", symbol.data_type.width.saturating_sub(1)),
     };
     // `konst` menyimpan nilai dalam u64, jadi indeks negatif jadi angka

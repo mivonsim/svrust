@@ -370,8 +370,9 @@ fn enum_modul_anak_tidak_bocor_ke_induk() {
     let e = match sv_elaborator::elaborate_top(
         &{
             let tokens = sv_lexer::lex(src).expect("lex");
-            sv_parser::parse_file(&tokens).expect("parse")
+            sv_parser::parse_file(&tokens).expect("parse").modules
         },
+        &[],
         "top",
     ) {
         Ok(_) => panic!("literal enum anak seharusnya tidak dikenal di induk"),

@@ -2,6 +2,9 @@
 use sv_ast::combinational::{CaseArm, CaseKind, CombinationalStatement, CompoundOp, ForStep};
 use sv_ast::expression::{BinaryOp, Expr};
 use sv_ast::lvalue::Lvalue;
+use sv_ast::statement::{SequentialStatement, Statement};
+use sv_ast::system_task::{SystemArg, SystemTask, SystemTaskKind};
+use sv_ast::time_scale::TimeScale;
 use sv_lexer::span::Span;
 use sv_lexer::spanned::SpannedToken;
 use sv_lexer::token::Token;
@@ -22,6 +25,9 @@ pub fn parse_combinational_statement(
         Token::For => parse_for(tokens),
         Token::While => parse_while(tokens),
         Token::Repeat => parse_repeat(tokens),
+        // LRM §12.8: `forever body` — loop tak berujung; body wajib punya
+        // timing control agar simulator tidak hang.
+        Token::Forever => parse_forever(tokens),
         Token::SystemTask(_) => super::initial::parse_system_task(tokens),
         // LRM §11.2: `#n <stmt>` menunda statement berikut.
         Token::Hash => parse_delay(tokens),
@@ -29,6 +35,42 @@ pub fn parse_combinational_statement(
         Token::At => super::event_control::parse_event_control(tokens),
         // LRM §13.4: `return [expr];` keluar dari function/task.
         Token::Return => super::routine::parse_return(tokens),
+        // LRM §20.4: `assert (condition);` immediate assertion.
+        Token::Assert => parse_assert(tokens),
+        // LRM §14: `assign lhs = rhs;` di dalam blok prosedural adalah
+        // penetapans berkelanjutan prosedural yang override penulangan biasa.
+        Token::Assign => {
+            let span = tokens[0].span;
+            let mut idx = 1; // skip 'assign'
+            let (lhs, consumed) = super::lvalue::parse_lvalue(&tokens[idx..])?;
+            idx += consumed;
+            if idx >= tokens.len() || tokens[idx].token != Token::Eq {
+                return Err("expected '=' setelah 'assign'".to_string());
+            }
+            idx += 1;
+            let (rhs, consumed) = super::expression::parse_expression(&tokens[idx..])?;
+            idx += consumed;
+            if idx >= tokens.len() || tokens[idx].token != Token::Semi {
+                return Err("expected ';' setelah ekspresi 'assign'".to_string());
+            }
+            idx += 1;
+            Ok((
+                CombinationalStatement::ProceduralAssign { lhs, rhs, span },
+                idx,
+            ))
+        }
+        // LRM §14: `deassign lhs;` melepasi penetapans berkelanjutan prosedural.
+        Token::Deassign => {
+            let span = tokens[0].span;
+            let mut idx = 1; // skip 'deassign'
+            let (lhs, consumed) = super::lvalue::parse_lvalue(&tokens[idx..])?;
+            idx += consumed;
+            if idx >= tokens.len() || tokens[idx].token != Token::Semi {
+                return Err("expected ';' setelah 'deassign'".to_string());
+            }
+            idx += 1;
+            Ok((CombinationalStatement::Deassign { lhs, span }, idx))
+        }
         Token::Begin => {
             let (body, mut idx) = parse_combinational_block(&tokens[1..])?;
             if idx >= tokens[1..].len() || tokens[idx + 1].token != Token::End {
@@ -313,6 +355,29 @@ fn parse_while(tokens: &[SpannedToken]) -> Result<(CombinationalStatement, usize
     ))
 }
 
+/// Parse `forever body` (LRM §12.8).
+///
+/// `forever` tidak punya kondisi — loop tak berujung. Body boleh kosong dengan
+/// `;`, selain itu tepat satu statement.
+fn parse_forever(tokens: &[SpannedToken]) -> Result<(CombinationalStatement, usize), String> {
+    let span = tokens[0].span;
+    let mut idx = 1; // skip 'forever'
+
+    if idx >= tokens.len() {
+        return Err("expected forever body".to_string());
+    }
+    let body = if tokens[idx].token == Token::Semi {
+        idx += 1;
+        Vec::new()
+    } else {
+        let (statement, consumed) = parse_combinational_statement(&tokens[idx..])?;
+        idx += consumed;
+        vec![statement]
+    };
+
+    Ok((CombinationalStatement::Forever { body, span }, idx))
+}
+
 /// Parse `for (init; cond; step) body`.
 fn parse_for(tokens: &[SpannedToken]) -> Result<(CombinationalStatement, usize), String> {
     let span = tokens[0].span;
@@ -491,6 +556,109 @@ pub fn parse_combinational_block(
     }
 
     Ok((body, idx))
+}
+
+/// Parse `assert (condition);` (LRM §20.4).
+///
+/// Bentuk sederhana tanpa pesan error dan tanpa opsi `disable iff`.
+pub(super) fn parse_assert(
+    tokens: &[SpannedToken],
+) -> Result<(CombinationalStatement, usize), String> {
+    let span = tokens[0].span;
+    let mut idx = 1; // skip `assert`
+
+    if idx >= tokens.len() || tokens[idx].token != Token::LParen {
+        return Err("expected '(' after assert".to_string());
+    }
+    idx += 1;
+
+    let (condition, consumed) = super::expression::parse_expression(&tokens[idx..])?;
+    idx += consumed;
+
+    if idx >= tokens.len() || tokens[idx].token != Token::RParen {
+        return Err("expected ')' after assert condition".to_string());
+    }
+    idx += 1;
+
+    if idx >= tokens.len() || tokens[idx].token != Token::Semi {
+        return Err("expected ';' after assert".to_string());
+    }
+    idx += 1;
+
+    Ok((
+        CombinationalStatement::SystemTask(SystemTask {
+            kind: SystemTaskKind::Assert,
+            args: vec![SystemArg::Value(condition)],
+            condition: None,
+            time_scale: TimeScale::default(),
+            span,
+        }),
+        idx,
+    ))
+}
+
+/// Parse `assert property (@(posedge clk) cond);` sebagai `Statement::AlwaysFf`.
+///
+/// SVA concurrent assertion dasar (LRM §20/§21): `cond` dicek pada setiap
+/// edge clock. Disetara dengan `always_ff @(posedge clk) assert(cond);`,
+/// jadi ada reused Infrastruktur existing `always_ff` + `assert`.
+pub(super) fn parse_assert_property(tokens: &[SpannedToken]) -> Result<(Statement, usize), String> {
+    let span = tokens[0].span; // span dari `assert`
+    let mut idx = 1; // skip `assert`
+
+    // `assert property ...`
+    if tokens.get(idx).map(|t| &t.token) != Some(&Token::Property) {
+        return Err("expected 'property' after 'assert'".to_string());
+    }
+    idx += 1; // skip `property`
+
+    // `(` buka properti
+    if tokens.get(idx).map(|t| &t.token) != Some(&Token::LParen) {
+        return Err("expected '(' after 'property'".to_string());
+    }
+    idx += 1;
+
+    // `@(posedge clk)` — event control
+    if tokens.get(idx).map(|t| &t.token) != Some(&Token::At) {
+        return Err("expected '@' after '(' dalam assert property".to_string());
+    }
+    // parse_event_items mengharapkan cursor di posisi setelah `@(`
+    // Kita parse manual: `@` lalu `(` lalu event items lalu `)`
+    idx += 1; // skip `@`
+    if tokens.get(idx).map(|t| &t.token) != Some(&Token::LParen) {
+        return Err("expected '(' after '@'".to_string());
+    }
+    idx += 1; // skip `(`
+    let (events, next) = super::event_control::parse_event_items(tokens, idx)?;
+    idx = next;
+
+    // kondisi properti (di dalam kurung property, setelah event control)
+    let (condition, consumed) = super::expression::parse_expression(&tokens[idx..])?;
+    idx += consumed;
+
+    // `)` tutup properti
+    if tokens.get(idx).map(|t| &t.token) != Some(&Token::RParen) {
+        return Err("expected ')' setelah kondisi assert property".to_string());
+    }
+    idx += 1;
+
+    // `;`
+    if tokens.get(idx).map(|t| &t.token) != Some(&Token::Semi) {
+        return Err("expected ';' setelah assert property condition".to_string());
+    }
+    idx += 1;
+
+    // Body: `assert(cond);` sebagai SequentialStatement::SystemTask
+    let assert_task = SystemTask {
+        kind: SystemTaskKind::Assert,
+        args: vec![SystemArg::Value(condition)],
+        condition: None,
+        time_scale: TimeScale::default(),
+        span,
+    };
+    let body = vec![SequentialStatement::SystemTask(assert_task)];
+
+    Ok((Statement::AlwaysFf { events, body, span }, idx))
 }
 
 fn parse_case(
@@ -881,6 +1049,32 @@ mod tests {
                 }
             }
             other => panic!("bukan delay: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn assign_prosedural_dalam_always_comb_diurai() {
+        // LRM §14: `assign x = y;` di dalam blok prosedural = override
+        // kontinu, bukan continuous assign tingkat modul.
+        let stmt = parse("assign x = y;");
+        match &stmt {
+            CombinationalStatement::ProceduralAssign { lhs, rhs, .. } => {
+                assert_eq!(lhs.name, "x");
+                assert!(matches!(rhs, sv_ast::expression::Expr::Ident { name, .. } if name == "y"));
+            }
+            other => panic!("bukan procedural assign: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn deassign_prosedural_dalam_always_comb_diurai() {
+        // LRM §14: `deassign x;` melepasi override kontinu.
+        let stmt = parse("deassign x;");
+        match &stmt {
+            CombinationalStatement::Deassign { lhs, .. } => {
+                assert_eq!(lhs.name, "x");
+            }
+            other => panic!("bukan deassign: {:?}", other),
         }
     }
 }

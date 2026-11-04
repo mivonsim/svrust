@@ -6,11 +6,11 @@ OUT=target/sv/demo
 mkdir -p "$OUT"
 
 echo "=== 1. gate (always_comb statement tunggal) -> VCD ==="
-cargo run -q -p cargo-sv -- sv run --rtl examples/e2e_vcd/rtl/gate.sv --vcd "$OUT/gate.vcd" --steps 8 2>/dev/null
+cargo run -q -p svrust -- run --rtl examples/e2e_vcd/rtl/gate.sv --vcd "$OUT/gate.vcd" --steps 8 2>/dev/null
 echo "   (statement tunggal tanpa begin/end kini valid)"
 
 echo "=== 2. counter (always_ff + NBA) -> VCD ==="
-cargo run -q -p cargo-sv -- sv run --rtl examples/e2e_vcd/rtl/counter.sv --vcd "$OUT/counter.vcd" --steps 12 2>/dev/null
+cargo run -q -p svrust -- run --rtl examples/e2e_vcd/rtl/counter.sv --vcd "$OUT/counter.vcd" --steps 12 2>/dev/null
 
 echo "=== 3. validasi struktur VCD ==="
 for f in gate counter; do
@@ -30,7 +30,7 @@ echo "=== 6. \$dumpfile/\$dumpvars di dalam SV (LRM §23.2) ==="
 # Berkas lama dihapus dulu supaya keberadaannya benar-benar hasil run ini.
 rm -f "$OUT/tb_dump.vcd" "$OUT/cli_iki.vcd"
 # Tanpa --vcd: nama berkas diambil dari $dumpfile pada source SV.
-cargo run -q -p cargo-sv -- sv run --rtl examples/e2e_vcd/rtl/tb_dump.sv --steps 8 2>/dev/null
+cargo run -q -p svrust -- run --rtl examples/e2e_vcd/rtl/tb_dump.sv --steps 8 2>/dev/null
 if [ ! -f "$OUT/tb_dump.vcd" ]; then
   echo "GAGAL: \$dumpfile tidak menghasilkan berkas VCD"
   exit 1
@@ -39,7 +39,7 @@ echo "  var        : $(grep -c '^\$var wire' "$OUT/tb_dump.vcd")"
 echo "  timestamp  : $(grep -c '^#' "$OUT/tb_dump.vcd")"
 echo "  dumpvars   : $(grep -c '^\$dumpvars' "$OUT/tb_dump.vcd")"
 # SV menang atas --vcd: berkas dari CLI tidak boleh dibuat.
-cargo run -q -p cargo-sv -- sv run --rtl examples/e2e_vcd/rtl/tb_dump.sv \
+cargo run -q -p svrust -- run --rtl examples/e2e_vcd/rtl/tb_dump.sv \
   --vcd "$OUT/cli_iki.vcd" --steps 8 2>/dev/null
 if [ -f "$OUT/cli_iki.vcd" ]; then
   echo "GAGAL: --vcd menimpa \$dumpfile dari SV"
@@ -55,7 +55,7 @@ echo "=== 7. timestamp VCD adalah waktu simulasi (LRM §21.8) ==="
 rm -f vcd_waktu.vcd "$OUT/vcd_waktu.vcd"
 # `$dumpfile` tanpa path relatif menulis ke direkt kerja proses simulasi, jadi
 # berk searched di dua tempat.
-cargo run -q -p cargo-sv -- sv run --rtl examples/e2e_vcd/rtl/tb_vcd_waktu.sv \
+cargo run -q -p svrust -- run --rtl examples/e2e_vcd/rtl/tb_vcd_waktu.sv \
   --top tb_vcd_waktu --steps 8 2>/dev/null >/dev/null
 VCD_WAKTU=""
 for kandidat in "$OUT/vcd_waktu.vcd" vcd_waktu.vcd; do

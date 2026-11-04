@@ -42,6 +42,11 @@ pub mod tipe {
                 | Token::ShortInt
                 | Token::LongInt
                 | Token::Time
+                | Token::Real
+                | Token::Supply0
+                | Token::Supply1
+                | Token::Struct
+                | Token::Union
         )
     }
 }
@@ -66,6 +71,20 @@ pub enum Token {
     LongInt,
     /// `time` — waktu simulasi 64-bit unsigned (LRM §6.16, Tabel 6-22).
     Time,
+    /// `real` — floating point 64-bit IEEE 754 (LRM §5.5).
+    Real,
+    /// `supply0` — net konstan bernilai 0 (LRM §6.6).
+    Supply0,
+    /// `supply1` — net konstan bernilai 1 (LRM §6.6).
+    Supply1,
+    /// `struct` — struktur packed (LRM §6.7, §8).
+    Struct,
+    /// `union` — union packed (LRM §6.7, §8).
+    Union,
+    /// `assert` — immediate assertion (LRM §20.4).
+    Assert,
+    /// `property` — deklarasi properti SVA concurrent assertion (LRM §20/§21).
+    Property,
     Signed,
     Unsigned,
     Input,
@@ -75,7 +94,11 @@ pub enum Token {
     /// `localparam` — konstanta lokal modul yang tidak bisa di-override
     /// (LRM §6.20).
     LocalParam,
+    /// `assign` — penetapans berkelanjutan (LRM §10) dan penetapans berkelanjutan
+    /// prosedural di dalam blok prosedural (LRM §14).
     Assign,
+    /// `deassign` — melepasi penetapans berkelanjutan prosedural (LRM §14).
+    Deassign,
     Always,
     AlwaysComb,
     AlwaysFf,
@@ -88,6 +111,10 @@ pub enum Token {
     For,
     While,
     Repeat,
+    /// `forever` — loop tak berujung (LRM §12.8). Setara dengan `for (;;)`;
+    /// body harus mengandung penundaan atau event control agar simulasi tidak
+    /// hang.
+    Forever,
     Initial,
     /// `generate` — pembuka region generate (LRM §27.1).
     Generate,

@@ -142,15 +142,10 @@ fn indeks_negatif_ditolak() {
 }
 
 #[test]
-fn dimensi_unpacked_bertingkat_ditolak_dengan_pesan_jelas() {
-    // Belum ada modelnya; penolakan harus menyebut alasannya, bukan
-    // "expected ';'".
+fn dimensi_unpacked_bertingkat_diterima() {
+    // Multi-dimensional unpacked array sekarang didukung (LRM §7.8).
     let tokens = sv_lexer::lex("module m; logic [7:0] big [0:1][0:3]; endmodule").expect("lex");
-    let err = sv_parser::parse_module(&tokens).expect_err("dua dimensi ditolak");
-    assert!(
-        err.contains("bertingkat"),
-        "pesan tak menjelaskan batasannya: {err}"
-    );
+    sv_parser::parse_module(&tokens).expect("dua dimensi diterima");
 }
 
 #[test]

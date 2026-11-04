@@ -1,5 +1,6 @@
 // Tanggung jawab: implementasi operator pembagian dan modulo SystemVerilog di runtime.
 use crate::bits::Bits;
+use crate::logic::Logic;
 
 /// Masker seluruh bit set pada lebar `n`.
 #[inline]
@@ -16,9 +17,13 @@ fn mask(n: usize) -> u64 {
 /// `a / b` — pembagian integer unsigned pada lebar logis N (LRM §11.4.5).
 ///
 /// Pembagian dengan pembagi nol menghasilkan 0 (engine 2-state; pada 4-state
-/// SV hasilnya `x`). Bit di atas lebar logis N diabaikan.
+/// SV hasilnya `x`). Bit di atas lebar logis N diabaikan. Operand yang
+/// bernilai X/Z pada lebar logis membuat hasil X.
 #[inline]
 pub fn bit_div<const N: usize, const M: usize>(lhs: Bits<M>, rhs: Bits<M>) -> Bits<M> {
+    if !lhs.is_fully_known() || !rhs.is_fully_known() {
+        return Bits::<M>::all(Logic::X);
+    }
     let a = lhs.to_u64() & mask(N);
     let b = rhs.to_u64() & mask(N);
     Bits::from_u64(a.checked_div(b).unwrap_or(0))
@@ -27,9 +32,13 @@ pub fn bit_div<const N: usize, const M: usize>(lhs: Bits<M>, rhs: Bits<M>) -> Bi
 /// `a % b` — sisa pembagian integer unsigned pada lebar logis N (LRM §11.4.6).
 ///
 /// Sisa pembagian dengan pembagi nol menghasilkan 0 (engine 2-state; pada 4-state
-/// SV hasilnya `x`). Bit di atas lebar logis N diabaikan.
+/// SV hasilnya `x`). Bit di atas lebar logis N diabaikan. Operand yang
+/// bernilai X/Z pada lebar logis membuat hasil X.
 #[inline]
 pub fn bit_mod<const N: usize, const M: usize>(lhs: Bits<M>, rhs: Bits<M>) -> Bits<M> {
+    if !lhs.is_fully_known() || !rhs.is_fully_known() {
+        return Bits::<M>::all(Logic::X);
+    }
     let a = lhs.to_u64() & mask(N);
     let b = rhs.to_u64() & mask(N);
     Bits::from_u64(a.checked_rem(b).unwrap_or(0))
@@ -99,5 +108,23 @@ mod tests {
             bit_div::<4, 8>(Bits::from_u64(12), Bits::from_u64(0b1111_0011)).to_u64(),
             4
         );
+    }
+
+    #[test]
+    fn bagi_dengan_x_hasil_x() {
+        let a = Bits::<8>::from_u64(100);
+        let b = Bits::<8>::from_logic(Logic::X);
+        let r = bit_div::<8, 8>(a, b);
+        assert!(!r.is_fully_known());
+        assert_eq!(r.get(0), Logic::X);
+    }
+
+    #[test]
+    fn sisa_dengan_x_hasil_x() {
+        let a = Bits::<8>::from_u64(100);
+        let b = Bits::<8>::from_logic(Logic::Z);
+        let r = bit_mod::<8, 8>(a, b);
+        assert!(!r.is_fully_known());
+        assert_eq!(r.get(0), Logic::X);
     }
 }

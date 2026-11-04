@@ -43,6 +43,8 @@ fn fold_assignment(a: &mut Assignment) -> u32 {
 fn fold_statement(stmt: &mut Statement) -> u32 {
     match stmt {
         Statement::Assign { assignment, .. } => fold_assignment(assignment),
+        Statement::ProceduralAssign { value, .. } => fold_expr(value),
+        Statement::Deassign { .. } => 0,
         Statement::If {
             condition,
             then_branch,
@@ -89,6 +91,7 @@ fn fold_statement(stmt: &mut Statement) -> u32 {
             n += fold_statements(body);
             n
         }
+        Statement::Forever { body, .. } => fold_statements(body),
         Statement::SystemTask {
             args, condition, ..
         } => {

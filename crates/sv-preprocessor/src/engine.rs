@@ -53,6 +53,10 @@ struct Engine {
     macros: HashMap<String, Macro>,
     stack: Vec<Frame>,
     timescale: String,
+    /// Nilai `default_nettype` yang berlaku (`None` = bawaan LRM = `wire`).
+    /// Digunakan untuk mengklasifikasikan deklarasi net tanpa tipe eksplisit
+    /// (LRM §6.5). `Some("none")` berarti deklarasi tanpa tipe ditolak.
+    default_nettype: Option<String>,
     include_stack: Vec<PathBuf>,
     search_dirs: Vec<PathBuf>,
 }
@@ -67,6 +71,7 @@ impl Engine {
             macros: HashMap::new(),
             stack: Vec::new(),
             timescale: String::new(),
+            default_nettype: None,
             include_stack: Vec::new(),
             search_dirs,
         }

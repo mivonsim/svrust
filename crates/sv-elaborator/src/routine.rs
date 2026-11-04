@@ -2,9 +2,9 @@
 use crate::error::ElaborateError;
 use crate::routine_subst::Substitution;
 use std::collections::HashMap;
-use sv_ast::combinational::CombinationalStatement;
+use sv_ast::combinational::{CombinationalStatement, ForStep};
 use sv_ast::declaration::Declaration;
-use sv_ast::expression::Expr;
+use sv_ast::expression::{BinaryOp, Expr, UnaryOp};
 use sv_ast::generate::GenerateItem;
 use sv_ast::lvalue::Lvalue;
 use sv_ast::module::Module;
@@ -153,36 +153,40 @@ impl<'a> Inliner<'a> {
         &mut self,
         stmt: &SequentialStatement,
     ) -> Result<Vec<SequentialStatement>, ElaborateError> {
-        let out = match stmt {
+        let out: Vec<SequentialStatement> = match stmt {
             SequentialStatement::NonBlockingAssign { lhs, rhs, span } => {
-                SequentialStatement::NonBlockingAssign {
+                vec![SequentialStatement::NonBlockingAssign {
                     lhs: self.lvalue(lhs)?,
                     rhs: self.expr(rhs)?,
                     span: *span,
-                }
+                }]
             }
             SequentialStatement::BlockingAssign { lhs, rhs, span } => {
-                SequentialStatement::BlockingAssign {
+                vec![SequentialStatement::BlockingAssign {
                     lhs: self.lvalue(lhs)?,
                     rhs: self.expr(rhs)?,
                     span: *span,
-                }
+                }]
             }
             SequentialStatement::IfElse {
                 condition,
                 then_branch,
                 else_branch,
                 span,
-            } => SequentialStatement::IfElse {
-                condition: self.expr(condition)?,
-                then_branch: self.seq_list(then_branch)?,
-                else_branch: match else_branch {
-                    Some(branch) => Some(self.seq_list(branch)?),
-                    None => None,
-                },
-                span: *span,
-            },
-            SequentialStatement::Decl(decl) => SequentialStatement::Decl(self.deklarasi(decl)?),
+            } => {
+                vec![SequentialStatement::IfElse {
+                    condition: self.expr(condition)?,
+                    then_branch: self.seq_list(then_branch)?,
+                    else_branch: match else_branch {
+                        Some(branch) => Some(self.seq_list(branch)?),
+                        None => None,
+                    },
+                    span: *span,
+                }]
+            }
+            SequentialStatement::Decl(decl) => {
+                vec![SequentialStatement::Decl(self.deklarasi(decl)?)]
+            }
             SequentialStatement::SystemTask(task) => {
                 let mut args = Vec::new();
                 for arg in &task.args {
@@ -195,29 +199,25 @@ impl<'a> Inliner<'a> {
                         }
                     }
                 }
-                SequentialStatement::SystemTask(sv_ast::system_task::SystemTask {
-                    kind: task.kind.clone(),
-                    args,
-                    condition: match &task.condition {
-                        Some(cond) => Some(self.expr(cond)?),
-                        None => None,
+                vec![SequentialStatement::SystemTask(
+                    sv_ast::system_task::SystemTask {
+                        kind: task.kind.clone(),
+                        args,
+                        condition: match &task.condition {
+                            Some(cond) => Some(self.expr(cond)?),
+                            None => None,
+                        },
+                        time_scale: task.time_scale,
+                        span: task.span,
                     },
-                    time_scale: task.time_scale,
-                    span: task.span,
-                })
+                )]
             }
-            // Task di-inline jadi statement di depan titik panggilan. AST
-            // sekuensial belum punya loop/case, jadi task dengan badan
-            // majemuk hanya boleh dipanggil dari konteks combinational.
+            // Task di-inline jadi statement sekuensial di depan titik panggilan
+            // (LRM §13.3). Badan task dikonversi dari `CombinationalStatement`
+            // ke `SequentialStatement` via `comb_to_seq`.
             SequentialStatement::TaskCall(call) => {
-                return Err(ElaborateError::new(
-                    format!(
-                        "task '{}' belum bisa dipanggil di dalam `always_ff`; \
-                         pindahkan ke `always_comb` atau `initial`",
-                        call.name
-                    ),
-                    call.span,
-                ))
+                let body = self.task_body(&call.name, &call.args, call.span)?;
+                self.comb_to_seq_list(&body)?
             }
             SequentialStatement::Return { span, .. } => {
                 return Err(ElaborateError::new(
@@ -225,8 +225,27 @@ impl<'a> Inliner<'a> {
                     *span,
                 ))
             }
+            SequentialStatement::Forever { body, span } => {
+                vec![SequentialStatement::Forever {
+                    body: self.seq_list(body)?,
+                    span: *span,
+                }]
+            }
+            SequentialStatement::ProceduralAssign { lhs, rhs, span } => {
+                vec![SequentialStatement::ProceduralAssign {
+                    lhs: self.lvalue(lhs)?,
+                    rhs: self.expr(rhs)?,
+                    span: *span,
+                }]
+            }
+            SequentialStatement::Deassign { lhs, span } => {
+                vec![SequentialStatement::Deassign {
+                    lhs: self.lvalue(lhs)?,
+                    span: *span,
+                }]
+            }
         };
-        Ok(vec![out])
+        Ok(out)
     }
 
     fn comb_list(
@@ -240,6 +259,153 @@ impl<'a> Inliner<'a> {
         Ok(out)
     }
 
+    /// Konversi satu `CombinationalStatement` (badan task/function) menjadi
+    /// `SequentialStatement` (badan `always_ff`). Varian yang tidak punya
+    /// ekuivalen sekuensial (loop, delay, event control, case) ditolak dengan
+    /// pesan yang jelas karena LRM §13.3 membatasi badan task yang dipanggil
+    /// dari konteks sekuensial.
+    fn comb_to_seq(
+        &mut self,
+        stmt: &CombinationalStatement,
+    ) -> Result<Vec<SequentialStatement>, ElaborateError> {
+        match stmt {
+            CombinationalStatement::Decl(decl) => {
+                Ok(vec![SequentialStatement::Decl(self.deklarasi(decl)?)])
+            }
+            CombinationalStatement::BlockingAssign { lhs, rhs, span } => {
+                Ok(vec![SequentialStatement::BlockingAssign {
+                    lhs: self.lvalue(lhs)?,
+                    rhs: self.expr(rhs)?,
+                    span: *span,
+                }])
+            }
+            // Non-blocking assignment di task yang dipanggil dari `always_ff`
+            // tetap NBA (LRM §10.4).
+            CombinationalStatement::NonBlockingAssign { lhs, rhs, span } => {
+                Ok(vec![SequentialStatement::NonBlockingAssign {
+                    lhs: self.lvalue(lhs)?,
+                    rhs: self.expr(rhs)?,
+                    span: *span,
+                }])
+            }
+            // Compound assignment di dalam task dianggap blocking (LRM §11.3:
+            // `y += a` setara dengan `y = y + a` dievaluasi segera).
+            CombinationalStatement::CompoundAssign { lhs, op, rhs, span } => {
+                let _ = op;
+                Ok(vec![SequentialStatement::BlockingAssign {
+                    lhs: self.lvalue(lhs)?,
+                    rhs: self.expr(rhs)?,
+                    span: *span,
+                }])
+            }
+            CombinationalStatement::IfElse {
+                condition,
+                then_branch,
+                else_branch,
+                span,
+            } => Ok(vec![SequentialStatement::IfElse {
+                condition: self.expr(condition)?,
+                then_branch: self.comb_to_seq_list(then_branch)?,
+                else_branch: match else_branch {
+                    Some(branch) => Some(self.comb_to_seq_list(branch)?),
+                    None => None,
+                },
+                span: *span,
+            }]),
+            CombinationalStatement::Block { body, span: _ } => {
+                // Blok tidak menambah semantik sekuensial; flatten isinya.
+                self.comb_to_seq_list(body)
+            }
+            CombinationalStatement::SystemTask(task) => {
+                let mut args = Vec::new();
+                for arg in &task.args {
+                    match arg {
+                        sv_ast::system_task::SystemArg::Format(t) => {
+                            args.push(sv_ast::system_task::SystemArg::Format(t.clone()))
+                        }
+                        sv_ast::system_task::SystemArg::Value(e) => {
+                            args.push(sv_ast::system_task::SystemArg::Value(self.expr(e)?))
+                        }
+                    }
+                }
+                Ok(vec![SequentialStatement::SystemTask(
+                    sv_ast::system_task::SystemTask {
+                        kind: task.kind.clone(),
+                        args,
+                        condition: match &task.condition {
+                            Some(cond) => Some(self.expr(cond)?),
+                            None => None,
+                        },
+                        time_scale: task.time_scale,
+                        span: task.span,
+                    },
+                )])
+            }
+            CombinationalStatement::TaskCall(call) => {
+                let body = self.task_body(&call.name, &call.args, call.span)?;
+                self.comb_to_seq_list(&body)
+            }
+            CombinationalStatement::Return { span, .. } => Err(ElaborateError::new(
+                "`return` hanya sah di dalam task/function",
+                *span,
+            )),
+            CombinationalStatement::Case { span, .. } => Err(ElaborateError::new(
+                "`case` dalam task tidak bisa dipanggil dari `always_ff`",
+                *span,
+            )),
+            CombinationalStatement::For { span, .. } => Err(ElaborateError::new(
+                "`for` dalam task tidak bisa dipanggil dari `always_ff`",
+                *span,
+            )),
+            CombinationalStatement::While { span, .. } => Err(ElaborateError::new(
+                "`while` dalam task tidak bisa dipanggil dari `always_ff`",
+                *span,
+            )),
+            CombinationalStatement::Forever { span, .. } => Err(ElaborateError::new(
+                "`forever` dalam task tidak bisa dipanggil dari `always_ff`",
+                *span,
+            )),
+            CombinationalStatement::Repeat { span, .. } => Err(ElaborateError::new(
+                "`repeat` dalam task tidak bisa dipanggil dari `always_ff`",
+                *span,
+            )),
+            CombinationalStatement::Delay { span, .. } => Err(ElaborateError::new(
+                "`#delay` dalam task tidak bisa dipanggil dari `always_ff`",
+                *span,
+            )),
+            CombinationalStatement::EventControl { span, .. } => Err(ElaborateError::new(
+                "`@(...)` dalam task tidak bisa dipanggil dari `always_ff`",
+                *span,
+            )),
+            CombinationalStatement::ProceduralAssign { lhs, rhs, span } => {
+                Ok(vec![SequentialStatement::ProceduralAssign {
+                    lhs: self.lvalue(lhs)?,
+                    rhs: self.expr(rhs)?,
+                    span: *span,
+                }])
+            }
+            CombinationalStatement::Deassign { lhs, span } => {
+                Ok(vec![SequentialStatement::Deassign {
+                    lhs: self.lvalue(lhs)?,
+                    span: *span,
+                }])
+            }
+        }
+    }
+
+    /// Konversi daftar `CombinationalStatement` ke `SequentialStatement`.
+    fn comb_to_seq_list(
+        &mut self,
+        body: &[CombinationalStatement],
+    ) -> Result<Vec<SequentialStatement>, ElaborateError> {
+        let mut out = Vec::new();
+        for stmt in body {
+            out.extend(self.comb_to_seq(stmt)?);
+        }
+        Ok(out)
+    }
+
+    /// Turunkan satu statement modul (bisa jadi banyak setelah task di-inline).
     fn comb(
         &mut self,
         stmt: &CombinationalStatement,
@@ -299,6 +465,10 @@ impl<'a> Inliner<'a> {
                 span,
             } => CombinationalStatement::While {
                 condition: self.expr(condition)?,
+                body: self.comb_list(body)?,
+                span: *span,
+            },
+            CombinationalStatement::Forever { body, span } => CombinationalStatement::Forever {
                 body: self.comb_list(body)?,
                 span: *span,
             },
@@ -416,6 +586,17 @@ impl<'a> Inliner<'a> {
                     *span,
                 ))
             }
+            CombinationalStatement::ProceduralAssign { lhs, rhs, span } => {
+                CombinationalStatement::ProceduralAssign {
+                    lhs: self.lvalue(lhs)?,
+                    rhs: self.expr(rhs)?,
+                    span: *span,
+                }
+            }
+            CombinationalStatement::Deassign { lhs, span } => CombinationalStatement::Deassign {
+                lhs: self.lvalue(lhs)?,
+                span: *span,
+            },
         };
         Ok(vec![out])
     }
@@ -505,7 +686,7 @@ impl<'a> Inliner<'a> {
             argumen.push(self.expr(arg)?);
         }
 
-        let nilai = nilai_function(decl, span)?;
+        let nilai = nilai_function(decl, &argumen, span)?;
         let tabel = Substitution::baru(decl.args.iter().map(|a| a.name.clone()).collect(), argumen);
         self.masuk(name, span)?;
         let hasil = self.expr(&tabel.ganti(&nilai));
@@ -648,6 +829,7 @@ impl<'a> Inliner<'a> {
         Ok(Lvalue {
             name: lhs.name.clone(),
             slice: lhs.slice,
+            extra_slices: lhs.extra_slices.clone(),
             genvar_index: lhs.genvar_index.clone(),
             span: lhs.span,
         })
@@ -658,7 +840,13 @@ impl<'a> Inliner<'a> {
 ///
 /// Bentuk yang diterima: satu assignment ke nama function, `return expr;`,
 /// atau `if` yang kedua cabangnya sama-sama mengesahkan nama function.
-fn nilai_function(decl: &RoutineDecl, span: sv_lexer::span::Span) -> Result<Expr, ElaborateError> {
+/// Untuk badan yang lebih kompleks (loop, deklarasi lokal), dievaluasi
+/// secara simbolis melalui `eval_function_body`.
+fn nilai_function(
+    decl: &RoutineDecl,
+    args: &[Expr],
+    span: sv_lexer::span::Span,
+) -> Result<Expr, ElaborateError> {
     if decl.body.len() == 1 {
         if let Some(nilai) = nilai_dari_statement(&decl.body[0], &decl.name) {
             return Ok(nilai);
@@ -696,7 +884,10 @@ fn nilai_function(decl: &RoutineDecl, span: sv_lexer::span::Span) -> Result<Expr
             });
         }
     }
-    Err(badan_function_tidak_terdukung(&decl.name, span))
+    // Fallback: evaluasi simbolis untuk badan function dengan loop,
+    // deklarasi lokal, atau konstruksi lain yang bisa dievaluasi pada
+    // waktu kompilasi.
+    eval_function_body(decl, args, span)
 }
 
 /// Pesan error seragam untuk badan function yang belum bisa di-inline.
@@ -730,6 +921,517 @@ fn satu_nilai(body: &[CombinationalStatement], nama: &str) -> Option<Expr> {
         return None;
     }
     nilai_dari_statement(&body[0], nama)
+}
+
+/// Evaluasi simbolis badan function untuk menghasilkan ekspresi nilai (LRM §13.4).
+///
+/// Digunakan saat function punya loop atau deklarasi lokal yang tidak bisa
+/// direduksi menjadi ekspresi tunggal melalui pola sederhana (`nilai_dari_statement`).
+///
+/// Dieksekusi per iterasi loop konstanta; variabel lokal disimpan sebagai
+/// `Expr` dan argument formal dipetakan ke ekspresi pemanggil.
+/// Hasilnya adalah ekspresi terakhir yang ditugaskan ke nama function.
+fn eval_function_body(
+    decl: &RoutineDecl,
+    args: &[Expr],
+    span: sv_lexer::span::Span,
+) -> Result<Expr, ElaborateError> {
+    use std::collections::HashMap;
+
+    // Peta nama variabel lokal -> ekspresi nilainya.
+    let mut env: HashMap<String, Expr> = HashMap::new();
+
+    // Map argument formal ke ekspresi pemanggil (input only; output/inout
+    // harus berupa nama sinyal dan sudah divalidasi di pemanggil).
+    for (formal, argumen) in decl.args.iter().zip(args.iter()) {
+        if formal.direction == sv_ast::routine::ArgDirection::Input {
+            env.insert(formal.name.clone(), argumen.clone());
+        }
+    }
+
+    // Deklarasi variabel lokal di awal badan function.
+    for stmt in &decl.body {
+        if let CombinationalStatement::Decl(decl_lokal) = stmt {
+            env.insert(decl_lokal.name.clone(), Expr::Number(0));
+        }
+    }
+
+    // Eksekusi statement demi statement.
+    for stmt in &decl.body {
+        eksekusi_stmt_function(stmt, &mut env, &decl.name)?;
+    }
+
+    // Ambil nilai terakhir yang ditugaskan ke nama function.
+    env.get(&decl.name)
+        .cloned()
+        .ok_or_else(|| badan_function_tidak_terdukung(&decl.name, span))
+}
+
+/// Eksekusi satu statement dalam konteks evaluasi function.
+///
+/// Mengembalikan `Err` bila statement mengandung konstruksi yang tidak
+/// bisa dievaluasi secara simbolis (delay, event control, system task,
+/// nested function call yang kompleks, dll).
+fn eksekusi_stmt_function(
+    stmt: &CombinationalStatement,
+    env: &mut HashMap<String, Expr>,
+    nama_fungsi: &str,
+) -> Result<(), ElaborateError> {
+    match stmt {
+        CombinationalStatement::Decl(decl) => {
+            // Variabel lokal sudah diinisialisasi ke 0 di awal; nilai inisial
+            // opsional boleh dievaluasi.
+            if let Some(init) = &decl.init {
+                let nilai = evaluasi_expr_function(init, env)?;
+                env.insert(decl.name.clone(), nilai);
+            }
+        }
+        CombinationalStatement::BlockingAssign { lhs, rhs, span } => {
+            let nilai = evaluasi_expr_function(rhs, env)?;
+            if lhs.name == nama_fungsi {
+                // Assignment ke nama function: simpan sebagai hasil akhir.
+                env.insert(nama_fungsi.to_string(), nilai);
+            } else if let Some(_slice) = &lhs.slice {
+                // Part-select: belum didukung dalam evaluasi simbolis function.
+                return Err(ElaborateError::new(
+                    format!(
+                        "part-select pada variabel lokal '{}' dalam function tidak didukung",
+                        lhs.name
+                    ),
+                    *span,
+                ));
+            } else {
+                env.insert(lhs.name.clone(), nilai);
+            }
+        }
+        CombinationalStatement::NonBlockingAssign { .. } => {
+            // Non-blocking dalam function diperlakukan sebagai blocking.
+        }
+        CombinationalStatement::For {
+            init,
+            condition,
+            step,
+            body,
+            span,
+        } => {
+            // Inisialisasi loop.
+            let ForStep { lhs, rhs, .. } = init;
+            let nilai = evaluasi_expr_function(rhs, env)?;
+            env.insert(lhs.name.clone(), nilai);
+
+            // Jalankan loop sebanyak batas konstanta.
+            for _ in 0..1024 {
+                // Cek kondisi.
+                let lanjut = match evaluasi_expr_function(condition, env)? {
+                    Expr::Number(n) => n != 0,
+                    Expr::Sized { value, .. } => value != 0,
+                    _ => {
+                        return Err(ElaborateError::new(
+                            "kondisi loop function harus konstanta".to_string(),
+                            *span,
+                        ))
+                    }
+                };
+                if !lanjut {
+                    break;
+                }
+
+                // Jalankan body loop.
+                for stmt in body {
+                    eksekusi_stmt_function(stmt, env, nama_fungsi)?;
+                }
+
+                // Step loop.
+                let ForStep { lhs, rhs, .. } = step;
+                let nilai = evaluasi_expr_function(rhs, env)?;
+                env.insert(lhs.name.clone(), nilai);
+            }
+        }
+        CombinationalStatement::IfElse {
+            condition,
+            then_branch,
+            else_branch,
+            span: _,
+        } => {
+            // Hanya evaluasi bila kondisi konstan (angka). Kondisi non-konan
+            // berarti badan function tidak bisa dievaluasi secara simbolis;
+            // abaikan statement ini — pengecekan akhir di `eval_function_body`
+            // akan menghasilkan pesan "harus satu assignment ke namanya".
+            let benar = match evaluasi_expr_function(condition, env)? {
+                Expr::Number(n) => n != 0,
+                _ => return Ok(()),
+            };
+            if benar {
+                for stmt in then_branch {
+                    eksekusi_stmt_function(stmt, env, nama_fungsi)?;
+                }
+            } else if let Some(branch) = else_branch {
+                for stmt in branch {
+                    eksekusi_stmt_function(stmt, env, nama_fungsi)?;
+                }
+            }
+        }
+        CombinationalStatement::Block { body, .. } => {
+            for stmt in body {
+                eksekusi_stmt_function(stmt, env, nama_fungsi)?;
+            }
+        }
+        CombinationalStatement::Return { value, .. } => {
+            if let Some(nilai) = value {
+                let hasil = evaluasi_expr_function(nilai, env)?;
+                env.insert(nama_fungsi.to_string(), hasil);
+            }
+        }
+        CombinationalStatement::SystemTask(_) => {
+            // System task dalam function dievaluasi sebagai no-op (nilai
+            // tidak memengaruhi hasil function).
+        }
+        CombinationalStatement::TaskCall(_) => {
+            // Panggilan task dalam function belum didukung evaluasi simbolis.
+            return Err(ElaborateError::new(
+                "panggilan task dalam badan function tidak didukung".to_string(),
+                span_dummy(),
+            ));
+        }
+        CombinationalStatement::Case { .. }
+        | CombinationalStatement::While { .. }
+        | CombinationalStatement::Repeat { .. }
+        | CombinationalStatement::Forever { .. }
+        | CombinationalStatement::Delay { .. }
+        | CombinationalStatement::EventControl { .. }
+        | CombinationalStatement::CompoundAssign { .. }
+        | CombinationalStatement::ProceduralAssign { .. }
+        | CombinationalStatement::Deassign { .. } => {
+            // Konstruksi lain belum didukung dalam evaluasi simbolis function.
+        }
+    }
+    Ok(())
+}
+
+/// Evaluasi ekspresi dalam konteks function, mengganti nama variabel lokal
+/// dengan ekspresi nilainya.
+fn evaluasi_expr_function(
+    expr: &Expr,
+    env: &HashMap<String, Expr>,
+) -> Result<Expr, ElaborateError> {
+    Ok(match expr {
+        Expr::Ident { name, span: _ } => {
+            if let Some(nilai) = env.get(name) {
+                nilai.clone()
+            } else {
+                expr.clone()
+            }
+        }
+        Expr::Binary { op, lhs, rhs, span } => {
+            let lhs_eval = evaluasi_expr_function(lhs, env)?;
+            let rhs_eval = evaluasi_expr_function(rhs, env)?;
+            match (&lhs_eval, &rhs_eval) {
+                (Expr::Number(a), Expr::Number(b)) => Expr::Number(eval_bin_const(*op, *a, *b, 64)),
+                (
+                    Expr::Sized {
+                        value: a,
+                        width: wa,
+                        ..
+                    },
+                    Expr::Sized {
+                        value: b,
+                        width: wb,
+                        ..
+                    },
+                ) => Expr::Sized {
+                    value: eval_bin_const(*op, *a, *b, (*wa).max(*wb)),
+                    width: (*wa).max(*wb),
+                    signed: false,
+                    unknown_mask: 0,
+                    zmask: 0,
+                },
+                _ => Expr::Binary {
+                    op: *op,
+                    lhs: Box::new(lhs_eval),
+                    rhs: Box::new(rhs_eval),
+                    span: *span,
+                },
+            }
+        }
+        Expr::Unary { op, operand, span } => {
+            let operand_eval = evaluasi_expr_function(operand, env)?;
+            match &operand_eval {
+                Expr::Number(a) => Expr::Number(eval_unary_const(*op, *a, 64)),
+                Expr::Sized {
+                    value: a, width: w, ..
+                } => Expr::Sized {
+                    value: eval_unary_const(*op, *a, *w),
+                    width: *w,
+                    signed: false,
+                    unknown_mask: 0,
+                    zmask: 0,
+                },
+                _ => Expr::Unary {
+                    op: *op,
+                    operand: Box::new(operand_eval),
+                    span: *span,
+                },
+            }
+        }
+        Expr::Ternary {
+            condition,
+            when_true,
+            when_false,
+            span,
+        } => Expr::Ternary {
+            condition: Box::new(evaluasi_expr_function(condition, env)?),
+            when_true: Box::new(evaluasi_expr_function(when_true, env)?),
+            when_false: Box::new(evaluasi_expr_function(when_false, env)?),
+            span: *span,
+        },
+        Expr::Select {
+            base,
+            msb,
+            lsb,
+            span,
+        } => Expr::Select {
+            base: Box::new(evaluasi_expr_function(base, env)?),
+            msb: *msb,
+            lsb: *lsb,
+            span: *span,
+        },
+        Expr::Concat { items, span } => Expr::Concat {
+            items: items
+                .iter()
+                .map(|e| evaluasi_expr_function(e, env))
+                .collect::<Result<Vec<_>, _>>()?,
+            span: *span,
+        },
+        Expr::Replicate { count, value, span } => Expr::Replicate {
+            count: Box::new(evaluasi_expr_function(count, env)?),
+            value: Box::new(evaluasi_expr_function(value, env)?),
+            span: *span,
+        },
+        Expr::Cast {
+            type_name,
+            operand,
+            span,
+        } => Expr::Cast {
+            type_name: type_name.clone(),
+            operand: Box::new(evaluasi_expr_function(operand, env)?),
+            span: *span,
+        },
+        Expr::SignCast {
+            signed,
+            operand,
+            span,
+        } => Expr::SignCast {
+            signed: *signed,
+            operand: Box::new(evaluasi_expr_function(operand, env)?),
+            span: *span,
+        },
+        Expr::SizeCast {
+            width,
+            operand,
+            span,
+        } => Expr::SizeCast {
+            width: *width,
+            operand: Box::new(evaluasi_expr_function(operand, env)?),
+            span: *span,
+        },
+        Expr::FunctionCall { name, args, span } => {
+            // Panggilan function bersarang: evaluasi argumen, lalu inline.
+            // Untuk saat ini, biarkan sebagai FunctionCall (akan di-resolve
+            // oleh pemanggil melalui Substitution).
+            Expr::FunctionCall {
+                name: name.clone(),
+                args: args
+                    .iter()
+                    .map(|e| evaluasi_expr_function(e, env))
+                    .collect::<Result<Vec<_>, _>>()?,
+                span: *span,
+            }
+        }
+        other => other.clone(),
+    })
+}
+
+/// Evaluasi ekspresi biner dengan operand konstanta untuk menghasilkan
+/// konstanta baru. Digunakan dalam evaluasi simbolis badan function.
+fn eval_bin_const(op: BinaryOp, a: u64, b: u64, width: u32) -> u64 {
+    let mask = if width >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << width) - 1
+    };
+    let a = a & mask;
+    let b = b & mask;
+    match op {
+        BinaryOp::Add => a.wrapping_add(b) & mask,
+        BinaryOp::Sub => a.wrapping_sub(b) & mask,
+        BinaryOp::Mul => a.wrapping_mul(b) & mask,
+        BinaryOp::Div => a.checked_div(b).unwrap_or(0) & mask,
+        BinaryOp::Mod => a.checked_rem(b).unwrap_or(0) & mask,
+        BinaryOp::Shl => {
+            if b >= 64 {
+                0
+            } else {
+                a.wrapping_shl(b as u32) & mask
+            }
+        }
+        BinaryOp::Shr => {
+            if b >= 64 {
+                0
+            } else {
+                a.wrapping_shr(b as u32)
+            }
+        }
+        BinaryOp::Sar => {
+            if b >= 64 {
+                if a & (1u64 << (width - 1)) != 0 {
+                    mask
+                } else {
+                    0
+                }
+            } else {
+                (a as i64).wrapping_shr(b as u32) as u64 & mask
+            }
+        }
+        BinaryOp::And => a & b,
+        BinaryOp::Or => a | b,
+        BinaryOp::Xor => a ^ b,
+        BinaryOp::Eq => {
+            if a == b {
+                1
+            } else {
+                0
+            }
+        }
+        BinaryOp::NotEq => {
+            if a != b {
+                1
+            } else {
+                0
+            }
+        }
+        BinaryOp::Lt => {
+            if a < b {
+                1
+            } else {
+                0
+            }
+        }
+        BinaryOp::Gt => {
+            if a > b {
+                1
+            } else {
+                0
+            }
+        }
+        BinaryOp::Le => {
+            if a <= b {
+                1
+            } else {
+                0
+            }
+        }
+        BinaryOp::Ge => {
+            if a >= b {
+                1
+            } else {
+                0
+            }
+        }
+        BinaryOp::LogAnd => {
+            if a != 0 && b != 0 {
+                1
+            } else {
+                0
+            }
+        }
+        BinaryOp::LogOr => {
+            if a != 0 || b != 0 {
+                1
+            } else {
+                0
+            }
+        }
+    }
+}
+
+/// Evaluasi ekspresi unary dengan operand konstanta untuk menghasilkan
+/// konstanta baru.
+fn eval_unary_const(op: UnaryOp, a: u64, width: u32) -> u64 {
+    let mask = if width >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << width) - 1
+    };
+    match op {
+        UnaryOp::BitNot => !a & mask,
+        UnaryOp::LogNot => {
+            if a == 0 {
+                1
+            } else {
+                0
+            }
+        }
+        UnaryOp::BitNeg => (!a).wrapping_add(1) & mask,
+        UnaryOp::RedAnd => {
+            let mut r = 1;
+            for i in 0..width.min(64) {
+                r &= (a >> i) & 1;
+            }
+            r
+        }
+        UnaryOp::RedNand => {
+            let mut r = 1;
+            for i in 0..width.min(64) {
+                r &= (a >> i) & 1;
+            }
+            if r == 1 {
+                0
+            } else {
+                1
+            }
+        }
+        UnaryOp::RedOr => {
+            let mut r = 0;
+            for i in 0..width.min(64) {
+                r |= (a >> i) & 1;
+            }
+            r
+        }
+        UnaryOp::RedNor => {
+            let mut r = 0;
+            for i in 0..width.min(64) {
+                r |= (a >> i) & 1;
+            }
+            if r == 0 {
+                1
+            } else {
+                0
+            }
+        }
+        UnaryOp::RedXor => {
+            let mut r = 0;
+            for i in 0..width.min(64) {
+                r ^= (a >> i) & 1;
+            }
+            r
+        }
+        UnaryOp::RedXnor => {
+            let mut r = 0;
+            for i in 0..width.min(64) {
+                r ^= (a >> i) & 1;
+            }
+            if r == 0 {
+                1
+            } else {
+                0
+            }
+        }
+    }
+}
+
+/// Span dummy untuk error yang tidak punya lokasi spesifik.
+fn span_dummy() -> sv_lexer::span::Span {
+    sv_lexer::span::Span::dummy()
 }
 
 /// Validasi jumlah argumen pemanggilan terhadap daftar formal (LRM §13.3).
@@ -784,10 +1486,12 @@ fn expand_item(
         GenerateItem::If(g) => GenerateItem::If(Box::new(sv_ast::generate::IfGenerate {
             condition: inliner.expr(&g.condition)?,
             then_branch: expand_items_with(inliner, &g.then_branch)?,
+            then_label: g.then_label.clone(),
             else_branch: match &g.else_branch {
                 Some(branch) => Some(expand_items_with(inliner, branch)?),
                 None => None,
             },
+            else_label: g.else_label.clone(),
             span: g.span,
         })),
         GenerateItem::Case(g) => GenerateItem::Case(Box::new(sv_ast::generate::CaseGenerate {
@@ -802,6 +1506,7 @@ fn expand_item(
                             .iter()
                             .map(|l| inliner.expr(l))
                             .collect::<Result<Vec<_>, ElaborateError>>()?,
+                        label: arm.label.clone(),
                         body: expand_items_with(inliner, &arm.body)?,
                         is_default: arm.is_default,
                         span: arm.span,
@@ -812,11 +1517,10 @@ fn expand_item(
         })),
         GenerateItem::Instance(inst) => GenerateItem::Instance(inst.clone()),
         GenerateItem::Decl(decls) => GenerateItem::Decl(decls.clone()),
-        GenerateItem::Assign { lhs, rhs, span } => GenerateItem::Assign {
-            lhs: lhs.clone(),
-            rhs: inliner.expr(rhs)?,
-            span: *span,
-        },
+        GenerateItem::Assign(inner) => {
+            let (lhs, rhs, span) = &**inner;
+            GenerateItem::Assign(Box::new((lhs.clone(), inliner.expr(rhs)?, *span)))
+        }
         GenerateItem::Process(stmt) => {
             let statement = inliner.statement(stmt)?;
             let [satu] = <[Statement; 1]>::try_from(statement).map_err(|_| {
@@ -857,4 +1561,100 @@ fn expand_statement(
     routines: &HashMap<String, RoutineDecl>,
 ) -> Result<Vec<Statement>, ElaborateError> {
     Inliner::baru(routines).statement(statement)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sv_ast::combinational::CombinationalStatement;
+    use sv_ast::declaration::Declaration;
+    use sv_ast::expression::Expr;
+    use sv_ast::lvalue::Lvalue;
+    use sv_ast::routine::{RoutineDecl, RoutineKind};
+    use sv_lexer::span::Span;
+
+    #[test]
+    fn eval_function_body_loop_konstanta() {
+        // function automatic [7:0] lima_kali_dua() { logic [7:0] acc; acc = 0; for (i=0; i<5; i=i+1) acc = acc + 2; lima_kali_dua = acc; }
+        let decl = RoutineDecl {
+            kind: RoutineKind::Function,
+            name: "f".to_string(),
+            return_width: Some(sv_ast::width::WidthExpr::Literal(8)),
+            return_signed: false,
+            args: vec![],
+            body: vec![
+                CombinationalStatement::Decl(Declaration {
+                    name: "acc".to_string(),
+                    width: sv_ast::width::WidthExpr::Literal(8),
+                    signed: false,
+                    init: Some(Expr::Number(0)),
+                    type_name: None,
+                    unpacked: None,
+                    struct_fields: None,
+                    span: Span::dummy(),
+                }),
+                CombinationalStatement::BlockingAssign {
+                    lhs: Lvalue::simple("acc", Span::dummy()),
+                    rhs: Expr::Number(0),
+                    span: Span::dummy(),
+                },
+                CombinationalStatement::For {
+                    init: sv_ast::combinational::ForStep {
+                        lhs: Lvalue::simple("i", Span::dummy()),
+                        rhs: Expr::Number(0),
+                        span: Span::dummy(),
+                    },
+                    condition: Expr::Binary {
+                        op: sv_ast::expression::BinaryOp::Lt,
+                        lhs: Box::new(Expr::Ident {
+                            name: "i".to_string(),
+                            span: Span::dummy(),
+                        }),
+                        rhs: Box::new(Expr::Number(5)),
+                        span: Span::dummy(),
+                    },
+                    step: sv_ast::combinational::ForStep {
+                        lhs: Lvalue::simple("i", Span::dummy()),
+                        rhs: Expr::Binary {
+                            op: sv_ast::expression::BinaryOp::Add,
+                            lhs: Box::new(Expr::Ident {
+                                name: "i".to_string(),
+                                span: Span::dummy(),
+                            }),
+                            rhs: Box::new(Expr::Number(1)),
+                            span: Span::dummy(),
+                        },
+                        span: Span::dummy(),
+                    },
+                    body: vec![CombinationalStatement::BlockingAssign {
+                        lhs: Lvalue::simple("acc", Span::dummy()),
+                        rhs: Expr::Binary {
+                            op: sv_ast::expression::BinaryOp::Add,
+                            lhs: Box::new(Expr::Ident {
+                                name: "acc".to_string(),
+                                span: Span::dummy(),
+                            }),
+                            rhs: Box::new(Expr::Number(2)),
+                            span: Span::dummy(),
+                        },
+                        span: Span::dummy(),
+                    }],
+                    span: Span::dummy(),
+                },
+                CombinationalStatement::BlockingAssign {
+                    lhs: Lvalue::simple("f", Span::dummy()),
+                    rhs: Expr::Ident {
+                        name: "acc".to_string(),
+                        span: Span::dummy(),
+                    },
+                    span: Span::dummy(),
+                },
+            ],
+            automatic: false,
+            span: Span::dummy(),
+        };
+
+        let nilai = eval_function_body(&decl, &[], Span::dummy()).unwrap();
+        assert_eq!(nilai, Expr::Number(10), "5 iterasi × 2 = 10");
+    }
 }

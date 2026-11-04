@@ -32,7 +32,7 @@ Dilarang: file yang berisi beberapa konsep tidak terkait.
 | `sv-codegen-rust` | IR → Rust source |
 | `sv-runtime` | scheduler, event, signal, time, trace |
 | `sv-trace` | VCD / waveform output |
-| `cargo-sv` | CLI binary |
+| `svrust` | CLI binary |
 
 Tidak boleh crate mengakses internal crate lain secara langsung. Gunakan pub API.
 

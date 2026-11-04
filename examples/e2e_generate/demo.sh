@@ -2,7 +2,7 @@
 # Tanggung jawab: demo e2e generate for (LRM §27) dengan instans berindeks genvar.
 set -e
 cd "$(dirname "$0")/../.."
-SV="cargo run -q -p cargo-sv -- sv"
+SV="cargo run -q -p svrust --"
 RTL="examples/e2e_generate/rtl/tb_gen.sv"
 
 # Cek satu baris keluaran persis seperti ekspektasi.
@@ -24,7 +24,7 @@ $SV inspect --rtl $RTL --top tb_gen 2>/dev/null | sed 's/^/  /'
 
 echo "=== 3. codegen: tiap iterasi jadi masker bit sendiri ==="
 $SV codegen --rtl $RTL --top tb_gen >/dev/null 2>&1
-GEN=target/sv/generated/tb_gen.rs
+GEN=target/sv/generated/sv_design_tb_gen.rs
 # Bit 0 sudah berada di posisi benar; bit 1..3 digeser sesuai indeks genvar.
 # Masker dihitung saat runtime dari (lsb, lebar) — bukan literal `u64`, karena
 # irisan pada sinyal lebih dari 64 bit tidak bisa diwakili `u64` (`1u64 << 120`
@@ -179,7 +179,7 @@ $SV check --rtl $RTL_FF --rtl $RTL_FFT --top tb_ff_wrap
 # `logic tmp;` di dalam loop wajib jadi empat sinyal terpisah (satu per
 # iterasi), kalau tidak maka saling menimpa satu sama lain.
 $SV codegen --rtl $RTL_FF --rtl $RTL_FFT --top tb_ff_wrap >/dev/null 2>&1
-GENFF=target/sv/generated/tb_ff_wrap.rs
+GENFF=target/sv/generated/sv_design_tb_ff_wrap.rs
 tmp_total=$(grep -c 'pub fn g_[0-9]_tmp' "$GENFF")
 if [ "$tmp_total" -ne 4 ]; then
   echo "GAGAL: '$tmp_total' sinyal tmp per-iterasi, seharusnya 4"
@@ -207,7 +207,7 @@ for masker in "PendingWrite::new_masked(2, _v2, sv_runtime::range_mask::<MAX_WID
     exit 1
   fi
 done
-comb_total=$(grep -c '// always_comb' "$GENFF")
+comb_total=$(awk '/pub fn eval_comb/,/^    }/' "$GENFF" | grep -c '// always_comb')
 if [ "$comb_total" -ne 4 ]; then
   echo "GAGAL: '$comb_total' always_comb per iterasi, seharusnya 4"
   exit 1
@@ -377,7 +377,7 @@ echo "  \$display dan \$finish di always_ff diterima parser OK"
 # Codegen: `$display` ikut dikodekan, `$finish` menandai flag lalu keluar
 # dari proses (LRM §20.3).
 $SV codegen --rtl $RTL_TSK --rtl $RTL_TSKT --top tb_task_wrap >/dev/null 2>&1
-GEN_TSK=target/sv/generated/tb_task_wrap.rs
+GEN_TSK=target/sv/generated/sv_design_tb_task_wrap.rs
 for cuplikan in "sv_format_args(\"task a q=%b din=%b\"" \
                 "self.finished = true;"; do
   if ! grep -qF "$cuplikan" "$GEN_TSK"; then
@@ -427,7 +427,7 @@ endmodule
 SV
 $SV check --rtl /tmp/sv_task_nofin.sv --top bad
 $SV codegen --rtl /tmp/sv_task_nofin.sv --top bad >/dev/null 2>&1
-GEN_NOFIN=target/sv/generated/bad.rs
+GEN_NOFIN=target/sv/generated/sv_design_bad.rs
 for cuplikan in "finished: bool," "finished: false," "pub fn is_finished(&self) -> bool"; do
   if ! grep -qF "$cuplikan" "$GEN_NOFIN"; then
     echo "GAGAL: '$cuplikan' tidak ditemukan pada design tanpa initial"

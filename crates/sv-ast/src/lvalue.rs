@@ -16,11 +16,17 @@ impl Slice {
 }
 
 /// Sisi kiri assignment: nama sinyal dengan irisan bit opsional.
+///
+/// Boleh beririsan bertingkat, misal `y[i][0]` (genvar i, lalu bit 0).
+/// `slice` adalah irisan PERTAMA (terluar), `extra_slices` adalah irisan
+/// berikutnya dari luar ke dalam.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Lvalue {
     pub name: String,
     /// `None` berarti seluruh sinyal, atau indeks genvar yang belum selesai.
     pub slice: Option<Slice>,
+    /// Irisan tambahan untuk seleksi bertingkat, misal `[0]` pada `y[i][0]`.
+    pub extra_slices: Vec<Slice>,
     /// Nama genvar pada `nama[genvar]`, misal `y[i]` di dalam loop generate.
     ///
     /// Nilai genvar baru diketahui saat elaborasi, sehingga irisan disimpan
@@ -35,6 +41,7 @@ impl Lvalue {
         Self {
             name: name.into(),
             slice: None,
+            extra_slices: Vec::new(),
             genvar_index: None,
             span,
         }
@@ -45,6 +52,7 @@ impl Lvalue {
         Self {
             name: name.into(),
             slice: Some(slice),
+            extra_slices: Vec::new(),
             genvar_index: None,
             span,
         }
@@ -55,6 +63,7 @@ impl Lvalue {
         Self {
             name: name.into(),
             slice: None,
+            extra_slices: Vec::new(),
             genvar_index: Some(genvar.into()),
             span,
         }

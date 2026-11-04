@@ -112,6 +112,21 @@ fn seq(
             value: value.as_ref().map(|v| table.ganti_literal(v)),
             span: *span,
         },
+        SequentialStatement::Forever { body, span } => SequentialStatement::Forever {
+            body: seq_list(body, table)?,
+            span: *span,
+        },
+        SequentialStatement::ProceduralAssign { lhs, rhs, span } => {
+            SequentialStatement::ProceduralAssign {
+                lhs: lhs.clone(),
+                rhs: table.ganti_literal(rhs),
+                span: *span,
+            }
+        }
+        SequentialStatement::Deassign { lhs, span } => SequentialStatement::Deassign {
+            lhs: lhs.clone(),
+            span: *span,
+        },
     })
 }
 
@@ -182,6 +197,10 @@ fn comb(
             span,
         } => CombinationalStatement::While {
             condition: table.ganti_literal(condition),
+            body: comb_list(body, table)?,
+            span: *span,
+        },
+        CombinationalStatement::Forever { body, span } => CombinationalStatement::Forever {
             body: comb_list(body, table)?,
             span: *span,
         },
@@ -259,6 +278,17 @@ fn comb(
         }
         CombinationalStatement::Return { value, span } => CombinationalStatement::Return {
             value: value.as_ref().map(|v| table.ganti_literal(v)),
+            span: *span,
+        },
+        CombinationalStatement::ProceduralAssign { lhs, rhs, span } => {
+            CombinationalStatement::ProceduralAssign {
+                lhs: lhs.clone(),
+                rhs: table.ganti_literal(rhs),
+                span: *span,
+            }
+        }
+        CombinationalStatement::Deassign { lhs, span } => CombinationalStatement::Deassign {
+            lhs: lhs.clone(),
             span: *span,
         },
     })

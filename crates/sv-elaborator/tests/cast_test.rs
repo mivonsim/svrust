@@ -691,8 +691,9 @@ module top(input [15:0] a, output [7:0] y);
   child u0(.a(a), .y(y));
 endmodule";
     let tokens = sv_lexer::lex(src).expect("lex");
-    let modules = sv_parser::parse_file(&tokens).expect("parse");
-    let err = sv_elaborator::elaborate_top(&modules, "top").expect_err("harus gagal");
+    let parsed = sv_parser::parse_file(&tokens).expect("parse");
+    let err = sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, "top")
+        .expect_err("harus gagal");
     assert!(
         err.to_string().contains("undefined type"),
         "pesan tak menolak typedef asing: {err}"

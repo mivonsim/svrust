@@ -99,6 +99,16 @@ pub enum CombinationalStatement {
         body: Vec<CombinationalStatement>,
         span: Span,
     },
+    /// Loop `forever body` (LRM §12.8).
+    ///
+    /// Loop tak berujung; body wajib mengandung penundaan (`#delay`) atau
+    /// event control (`@(...)`) agar simulasi tidak hang. Tanpa timing
+    /// control, `forever` di-loop selamanya dan simulator tidak akan pernah
+    /// melangkah ke tahap berikutnya.
+    Forever {
+        body: Vec<CombinationalStatement>,
+        span: Span,
+    },
     Case {
         selector: Expr,
         arms: Vec<CaseArm>,
@@ -137,6 +147,19 @@ pub enum CombinationalStatement {
     /// dalam task, `value` harus `None` karena task tidak mengembalikan nilai.
     Return {
         value: Option<Expr>,
+        span: Span,
+    },
+    /// Penetapans berkelanjutan prosedural `assign lhs = rhs;` di dalam blok
+    /// prosedural (LRM §14). Menetapkan `lhs` secara terus-menerus hingga
+    /// dilepaskan dengan `deassign`, menangkal penulangan prosedural biasa.
+    ProceduralAssign {
+        lhs: Lvalue,
+        rhs: Expr,
+        span: Span,
+    },
+    /// Melepasi penetapans berkelanjutan prosedural `deassign lhs;` (LRM §14).
+    Deassign {
+        lhs: Lvalue,
         span: Span,
     },
 }

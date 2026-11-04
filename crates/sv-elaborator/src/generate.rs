@@ -153,15 +153,11 @@ fn nama_lokal_item(items: &[GenerateItem]) -> Vec<String> {
 /// Label blok untuk cabang `if`/`case`.
 ///
 /// LRM §27.4 memberi hierarki nama per blok berlabel; dipakai sebagai prefix
-/// supaya deklarasi di dalam cabang tidak bentrok dengan信号的 di luar
+/// supaya deklarasi di dalam cabang tidak bentrok dengan sinyal di luar
 /// cabang. Tanpa label, prefix kosong tapi `lokal` tetap mendaftarkan namanya
 /// sehingga lookup tetap benar.
-fn label_cabang(items: &[GenerateItem]) -> String {
-    // Label disimpan di `ForGenerate`/blok berlabel; untuk cabang `if`/`case`
-    // yang tidak berlabel, prefix kosong sudah cukup karena hanya satu cabang
-    // yang dielaborasi.
-    let _ = items;
-    String::new()
+fn label_cabang_opt(label: &Option<String>) -> String {
+    label.clone().unwrap_or_default()
 }
 
 /// Elaborate seluruh region generate milik satu module.
@@ -259,7 +255,8 @@ fn lower_item(
                 // LRM §27.4: tiap iterasi menjadi blok hierarki tersendiri,
                 // jadi sinyal lokalnya harus berbeda antar iterasi.
                 let env_anak = env.anak(&for_gen.var, nilai);
-                let scope_anak = scope.anak(&for_gen.label, nilai, lokal.clone());
+                let label = for_gen.label.as_deref().unwrap_or("");
+                let scope_anak = scope.anak(label, nilai, lokal.clone());
                 for item_anak in &for_gen.body {
                     lower_item(
                         design,
@@ -279,7 +276,7 @@ fn lower_item(
             // sinyal di cabang lain tidak muncul di design.
             let syarat = crate::konst::konst(&if_gen.condition, env, params, if_gen.span)?;
             if syarat != 0 {
-                let label = label_cabang(&if_gen.then_branch);
+                let label = label_cabang_opt(&if_gen.then_label);
                 let lokal = nama_lokal_item(&if_gen.then_branch);
                 let scope_anak = scope.cabang(&label, lokal);
                 for item_anak in &if_gen.then_branch {
@@ -294,7 +291,7 @@ fn lower_item(
                     )?;
                 }
             } else if let Some(else_branch) = &if_gen.else_branch {
-                let label = label_cabang(else_branch);
+                let label = label_cabang_opt(&if_gen.else_label);
                 let lokal = nama_lokal_item(else_branch);
                 let scope_anak = scope.cabang(&label, lokal);
                 for item_anak in else_branch {
@@ -334,7 +331,8 @@ fn lower_item(
                     case_gen.span,
                 ));
             };
-            let scope_anak = scope.cabang(&label_cabang(&arm.body), nama_lokal_item(&arm.body));
+            let label = label_cabang_opt(&arm.label);
+            let scope_anak = scope.cabang(&label, nama_lokal_item(&arm.body));
             for item_anak in &arm.body {
                 lower_item(
                     design,
@@ -349,7 +347,7 @@ fn lower_item(
             Ok(())
         }
         GenerateItem::Decl(decls) => {
-            for decl in decls {
+            for decl in decls.iter() {
                 let bit = params.lebar(&decl.width, decl.span)?;
                 let tipe = DataType::logic(bit as u32).with_signed(decl.signed);
                 let nama = format!("{}{}", scope.prefix, decl.name);
@@ -371,7 +369,8 @@ fn lower_item(
             }
             Ok(())
         }
-        GenerateItem::Assign { lhs, rhs, span } => {
+        GenerateItem::Assign(inner) => {
+            let (lhs, rhs, span) = &**inner;
             let stmt = AstStatement::ContinuousAssign {
                 lhs: qualify_lvalue(lhs, scope, env)?,
                 rhs: subst_expr(rhs, env, scope),
@@ -802,6 +801,7 @@ mod tests {
             width: sv_ast::width::WidthExpr::Literal(1),
             signed: false,
             unpacked: None,
+            struct_fields: None,
             span: sv_lexer::span::Span::dummy(),
             init: None,
             type_name: None,
@@ -812,8 +812,8 @@ mod tests {
             bound: 2,
             compare: sv_ast::generate::CompareOp::Lt,
             step: 1,
-            label: "g".to_string(),
-            body: vec![GenerateItem::Decl(vec![decl.clone()])],
+            label: Some("g".to_string()),
+            body: vec![GenerateItem::Decl(Box::new(vec![decl.clone()]))],
             span: sv_lexer::span::Span::dummy(),
         };
         assert_eq!(nama_lokal(&loop_gen), vec!["t".to_string()]);
@@ -833,7 +833,7 @@ mod tests {
             bound,
             compare,
             step,
-            label: "blk".to_string(),
+            label: Some("blk".to_string()),
             body: Vec::new(),
             span: sv_lexer::span::Span::dummy(),
         }

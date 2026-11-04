@@ -26,9 +26,9 @@ pub enum GenerateItem {
     /// Instansiasi module di dalam generate.
     Instance(Box<Instance>),
     /// Deklarasi net atau variabel di dalam generate.
-    Decl(Vec<Declaration>),
+    Decl(Box<Vec<Declaration>>),
     /// `assign` di dalam generate.
-    Assign { lhs: Lvalue, rhs: Expr, span: Span },
+    Assign(Box<(Lvalue, Expr, Span)>),
     /// `always_ff`/`always_comb`/`initial` di dalam generate.
     Process(Box<Statement>),
 }
@@ -37,12 +37,15 @@ pub enum GenerateItem {
 ///
 /// Kondisi harus konstanta pada waktu elaborasi; cabang yang tidak diambil
 /// tidak pernah dielaborasi sehingga sinyalnya tidak muncul di design.
+/// Label opsional untuk nama hierarki (LRM §27.3 menganjurkan label).
 #[derive(Debug, Clone, PartialEq)]
 pub struct IfGenerate {
     pub condition: Expr,
     pub then_branch: Vec<GenerateItem>,
+    pub then_label: Option<String>,
     /// `None` bila tidak ada `else`.
     pub else_branch: Option<Vec<GenerateItem>>,
+    pub else_label: Option<String>,
     pub span: Span,
 }
 
@@ -51,6 +54,8 @@ pub struct IfGenerate {
 pub struct GenerateCaseArm {
     /// Label konstanta; boleh kosong bila `is_default`.
     pub labels: Vec<Expr>,
+    /// Label blok `begin : nama` untuk nama hierarki (LRM §27.3 menganjurkan).
+    pub label: Option<String>,
     pub body: Vec<GenerateItem>,
     pub is_default: bool,
     pub span: Span,
@@ -76,7 +81,8 @@ pub struct ForGenerate {
     /// Kenaikan per iterasi; negatif untuk iterasi menurun.
     pub step: i64,
     /// Label blok `begin : nama`; menentukan nama hierarki tiap iterasi.
-    pub label: String,
+    /// `None` bila blok tidak berlabel (LRM §27.3 menganjurkan label).
+    pub label: Option<String>,
     pub body: Vec<GenerateItem>,
     pub span: Span,
 }
@@ -133,7 +139,9 @@ mod sel_tests {
         let item = GenerateItem::If(Box::new(IfGenerate {
             condition: ident("P"),
             then_branch: Vec::new(),
+            then_label: None,
             else_branch: Some(Vec::new()),
+            else_label: None,
             span: Span::dummy(),
         }));
         match item {
@@ -148,6 +156,7 @@ mod sel_tests {
             selector: ident("SEL"),
             arms: vec![GenerateCaseArm {
                 labels: Vec::new(),
+                label: None,
                 body: Vec::new(),
                 is_default: true,
                 span: Span::dummy(),

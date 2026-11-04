@@ -19,10 +19,10 @@ pub struct Symbol {
 ///
 /// Dipisah dari `Symbol` supaya field baru tidak mengubah setiap call site:
 /// mayoritas sinyal bukan array, dan constructor standarnya tetap berlaku.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnpackedInfo {
-    pub dim: sv_ast::declaration::UnpackedDim,
-    /// Lebar satu elemen. Sinyal disimpan rata selebar `elem_width * size`.
+    pub dims: sv_ast::declaration::UnpackedDims,
+    /// Lebar satu elemen. Sinyal disimpan rata selebar `elem_width × size_1 × size_2 × ...`.
     pub elem_width: u32,
 }
 
@@ -48,10 +48,10 @@ impl Symbol {
     /// Tandai simbol sebagai array unpacked (LRM §7.8).
     pub fn dengan_unpacked(
         mut self,
-        dim: sv_ast::declaration::UnpackedDim,
+        dims: sv_ast::declaration::UnpackedDims,
         elem_width: u32,
     ) -> Self {
-        self.unpacked = Some(UnpackedInfo { dim, elem_width });
+        self.unpacked = Some(UnpackedInfo { dims, elem_width });
         self
     }
 
@@ -64,13 +64,15 @@ impl Symbol {
         }
     }
 
-    /// Rentang bit elemen `index` pada sinyal rata, kalau sinyal ini array
-    /// unpacked dan indeksnya dalam jangkauan.
-    pub fn elemen(&self, index: u64) -> Option<(u32, u32)> {
+    /// Rentang bit elemen pada indeks multi-tingkat, misal `mem[i][j]`,
+    /// pada sinyal rata, kalau sinyal ini array unpacked dan indeksnya
+    /// dalam jangkauan.
+    pub fn elemen(&self, indices: &[u64]) -> Option<(u32, u32)> {
         let info = self.unpacked.as_ref()?;
-        let jarak = info.dim.offset(index)?;
+        let jarak = info.dims.offset(indices)?;
         let w = info.elem_width;
-        Some(((jarak as u32 + 1) * w - 1, (jarak as u32) * w))
+        let start = (jarak as u32) * w;
+        Some((start + w - 1, start))
     }
 }
 

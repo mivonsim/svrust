@@ -30,6 +30,8 @@ pub enum SystemTaskKind {
     DumpFile,
     /// `$dumpvars` — aktifkan pencatatan waveform (LRM §23.2).
     DumpVars,
+    /// `assert (condition);` — immediate assertion (LRM §20.4).
+    Assert,
 }
 
 /// Panggilan system task beserta argumennya.

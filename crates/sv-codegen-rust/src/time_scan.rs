@@ -94,8 +94,12 @@ pub fn kumpulkan_monitor_stmt(
         Statement::For { body, .. }
         | Statement::Repeat { body, .. }
         | Statement::While { body, .. }
-        | Statement::Block { body, .. } => kumpulkan_task(body, jenis, hasil),
-        Statement::Assign { .. } | Statement::Noop { .. } => {}
+        | Statement::Block { body, .. }
+        | Statement::Forever { body, .. } => kumpulkan_task(body, jenis, hasil),
+        Statement::Assign { .. }
+        | Statement::Noop { .. }
+        | Statement::ProceduralAssign { .. }
+        | Statement::Deassign { .. } => {}
     }
 }
 
@@ -115,6 +119,8 @@ pub fn statement_uses_time(statement: &Statement) -> bool {
             dari_argumen || condition.as_ref().is_some_and(expr_uses_time)
         }
         Statement::Assign { assignment, .. } => expr_uses_time(&assignment.value),
+        Statement::ProceduralAssign { value, .. } => expr_uses_time(value),
+        Statement::Deassign { .. } => false,
         Statement::If {
             condition,
             then_branch,
@@ -150,6 +156,7 @@ pub fn statement_uses_time(statement: &Statement) -> bool {
         Statement::While {
             condition, body, ..
         } => expr_uses_time(condition) || body.iter().any(statement_uses_time),
+        Statement::Forever { body, .. } => body.iter().any(statement_uses_time),
         Statement::Block { body, .. } => body.iter().any(statement_uses_time),
         Statement::EventControl { body, .. } => body.iter().any(statement_uses_time),
         Statement::Noop { .. } => false,

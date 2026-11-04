@@ -2,7 +2,7 @@
 # Tanggung jawab: demo e2e makro function-like, default arg, dan bersarang.
 set -e
 cd "$(dirname "$0")/../.."
-SV="cargo run -q -p cargo-sv -- sv"
+SV="cargo run -q -p svrust --"
 
 # Cek satu baris keluaran persis seperti ekspektasi.
 cek() {

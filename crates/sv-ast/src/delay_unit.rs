@@ -109,6 +109,8 @@ fn statement_sekuensial(statement: &mut SequentialStatement, scale: TimeScale) {
         }
         SequentialStatement::NonBlockingAssign { rhs, .. }
         | SequentialStatement::BlockingAssign { rhs, .. } => ekspresi(rhs, scale),
+        SequentialStatement::ProceduralAssign { rhs, .. } => ekspresi(rhs, scale),
+        SequentialStatement::Deassign { .. } => {}
         SequentialStatement::Decl(decl) => deklarasi(decl, scale),
         SequentialStatement::SystemTask(task) => system_task(task, scale),
         SequentialStatement::TaskCall(call) => {
@@ -119,6 +121,11 @@ fn statement_sekuensial(statement: &mut SequentialStatement, scale: TimeScale) {
         SequentialStatement::Return { value, .. } => {
             if let Some(value) = value {
                 ekspresi(value, scale);
+            }
+        }
+        SequentialStatement::Forever { body, .. } => {
+            for stmt in body {
+                statement_sekuensial(stmt, scale);
             }
         }
     }
@@ -201,7 +208,9 @@ fn statement_kombinasional(statement: &mut CombinationalStatement, scale: TimeSc
         }
         CombinationalStatement::BlockingAssign { rhs, .. }
         | CombinationalStatement::NonBlockingAssign { rhs, .. }
-        | CombinationalStatement::CompoundAssign { rhs, .. } => ekspresi(rhs, scale),
+        | CombinationalStatement::CompoundAssign { rhs, .. }
+        | CombinationalStatement::ProceduralAssign { rhs, .. } => ekspresi(rhs, scale),
+        CombinationalStatement::Deassign { .. } => {}
         CombinationalStatement::Decl(decl) => deklarasi(decl, scale),
         CombinationalStatement::SystemTask(task) => system_task(task, scale),
         CombinationalStatement::TaskCall(call) => {
@@ -212,6 +221,11 @@ fn statement_kombinasional(statement: &mut CombinationalStatement, scale: TimeSc
         CombinationalStatement::Return { value, .. } => {
             if let Some(value) = value {
                 ekspresi(value, scale);
+            }
+        }
+        CombinationalStatement::Forever { body, .. } => {
+            for stmt in body {
+                statement_kombinasional(stmt, scale);
             }
         }
     }
@@ -285,7 +299,7 @@ fn item_generate(item: &mut GenerateItem, scale: TimeScale) {
             }
         }
         GenerateItem::Process(p) => statement_modul(p, scale),
-        GenerateItem::Instance(_) | GenerateItem::Decl(_) | GenerateItem::Assign { .. } => {}
+        GenerateItem::Instance(_) | GenerateItem::Decl(_) | GenerateItem::Assign(_) => {}
     }
 }
 

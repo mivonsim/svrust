@@ -37,7 +37,7 @@ pub(crate) fn kumpulkan_deklarasi(items: &[GenerateItem]) -> Vec<Declaration> {
                     out.extend(kumpulkan_deklarasi(&arm.body));
                 }
             }
-            GenerateItem::Assign { .. } | GenerateItem::Instance(_) => {}
+            GenerateItem::Assign(_) | GenerateItem::Instance(_) => {}
         }
     }
     out
@@ -67,12 +67,15 @@ fn kumpulan_comb(body: &[CombinationalStatement], out: &mut Vec<Declaration>) {
             | CombinationalStatement::SystemTask(_)
             | CombinationalStatement::Delay { .. }
             | CombinationalStatement::TaskCall(_)
-            | CombinationalStatement::Return { .. } => {}
+            | CombinationalStatement::Return { .. }
+            | CombinationalStatement::ProceduralAssign { .. }
+            | CombinationalStatement::Deassign { .. } => {}
             // Variabel loop `for` tidak dikumpulkan sebagai deklarasi, sama seperti
             // `local_decl` pada modul biasa.
             CombinationalStatement::For { body, .. } => kumpulan_comb(body, out),
             CombinationalStatement::Repeat { body, .. } => kumpulan_comb(body, out),
             CombinationalStatement::While { body, .. } => kumpulan_comb(body, out),
+            CombinationalStatement::Forever { body, .. } => kumpulan_comb(body, out),
             CombinationalStatement::EventControl { body, .. } => kumpulan_comb(body, out),
             CombinationalStatement::IfElse {
                 then_branch,
@@ -102,7 +105,9 @@ fn kumpulan_seq(body: &[SequentialStatement], out: &mut Vec<Declaration>) {
             | SequentialStatement::BlockingAssign { .. }
             | SequentialStatement::SystemTask(_)
             | SequentialStatement::TaskCall(_)
-            | SequentialStatement::Return { .. } => {}
+            | SequentialStatement::Return { .. }
+            | SequentialStatement::ProceduralAssign { .. }
+            | SequentialStatement::Deassign { .. } => {}
             SequentialStatement::IfElse {
                 then_branch,
                 else_branch,
@@ -113,6 +118,7 @@ fn kumpulan_seq(body: &[SequentialStatement], out: &mut Vec<Declaration>) {
                     kumpulan_seq(branch, out);
                 }
             }
+            SequentialStatement::Forever { body, .. } => kumpulan_seq(body, out),
         }
     }
 }
@@ -450,6 +456,10 @@ pub(crate) fn subst_comb(
                 body: subst_comb(body, env, scope),
                 span: *span,
             },
+            CombinationalStatement::Forever { body, span } => CombinationalStatement::Forever {
+                body: subst_comb(body, env, scope),
+                span: *span,
+            },
             CombinationalStatement::Block { body, span } => CombinationalStatement::Block {
                 body: subst_comb(body, env, scope),
                 span: *span,
@@ -496,6 +506,17 @@ pub(crate) fn subst_comb(
                     })
                     .collect(),
                 kind: *kind,
+                span: *span,
+            },
+            CombinationalStatement::ProceduralAssign { lhs, rhs, span } => {
+                CombinationalStatement::ProceduralAssign {
+                    lhs: subst_lvalue(lhs, scope, env),
+                    rhs: subst_expr(rhs, env, scope),
+                    span: *span,
+                }
+            }
+            CombinationalStatement::Deassign { lhs, span } => CombinationalStatement::Deassign {
+                lhs: subst_lvalue(lhs, scope, env),
                 span: *span,
             },
         })
@@ -558,6 +579,21 @@ pub(crate) fn subst_seq(
             SequentialStatement::SystemTask(task) => {
                 SequentialStatement::SystemTask(subst_task(task, env, scope))
             }
+            SequentialStatement::Forever { body, span } => SequentialStatement::Forever {
+                body: subst_seq(body, env, scope),
+                span: *span,
+            },
+            SequentialStatement::ProceduralAssign { lhs, rhs, span } => {
+                SequentialStatement::ProceduralAssign {
+                    lhs: subst_lvalue(lhs, scope, env),
+                    rhs: subst_expr(rhs, env, scope),
+                    span: *span,
+                }
+            }
+            SequentialStatement::Deassign { lhs, span } => SequentialStatement::Deassign {
+                lhs: subst_lvalue(lhs, scope, env),
+                span: *span,
+            },
         })
         .collect()
 }

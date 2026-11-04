@@ -318,6 +318,10 @@ pub fn format_args<const M: usize>(
                 | 'S'
                 | 'm'
                 | 'M'
+                | 'f'
+                | 'F'
+                | 'r'
+                | 'R'
         ) {
             let _ = write!(out, "%{}{}", if nol { "0" } else { "" }, spec);
             continue;
@@ -421,6 +425,10 @@ pub fn format_args<const M: usize>(
             }
             // `%s` dan `%m` tidak punya sumber nilai di engine ini.
             's' | 'S' | 'm' | 'M' => String::new(),
+            // LRM §20.4: `%f`/`%r` menampilkan nilai `real` (floating point
+            // 64-bit IEEE 754). Nilai diambil sebagai bit pattern dan
+            // dikonversi ke `f64` via `to_f64()`.
+            'f' | 'F' | 'r' | 'R' => pad_arah(&arg.value.to_f64().to_string(), nol, lebar, kiri),
             _ => {
                 let _ = write!(out, "%{}", spec);
                 continue;

@@ -78,6 +78,17 @@ impl Engine {
                 let name = self.directive_arg(rest, word, file, line)?;
                 self.macros.remove(&name);
             }
+            "undefineall" => {
+                self.macros.clear();
+            }
+            "default_nettype" => {
+                let nilai = rest["default_nettype".len()..].trim();
+                self.default_nettype = if nilai.is_empty() || nilai == "wire" {
+                    None
+                } else {
+                    Some(nilai.to_string())
+                };
+            }
             "include" => {
                 let path = self.include_arg(rest, file, line)?;
                 self.do_include(&path, file, out)?;
@@ -91,8 +102,7 @@ impl Engine {
                 out.push_str(&format!("`timescale {}\n", self.timescale));
             }
             // Direktif yang diterima namun tidak mengubah semantik di level ini.
-            "default_nettype"
-            | "resetall"
+            "resetall"
             | "celldefine"
             | "endcelldefine"
             | "nounconnected_drive"

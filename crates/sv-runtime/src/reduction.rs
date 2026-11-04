@@ -1,6 +1,7 @@
 // Tanggung jawab: implementasi unary dan reduction operator SystemVerilog di runtime.
 /// Nilai selalu dimask ke lebar `N` agar bit di luar lebar operand tidak bocor.
 use crate::bits::Bits;
+use crate::logic::Logic;
 
 /// Masker seluruh bit set pada lebar `N`.
 #[inline]
@@ -17,9 +18,24 @@ fn mask(n: usize) -> u64 {
 /// `~a` — nolkan tiap bit pada lebar logis N (LRM §11.4.3).
 ///
 /// Lebar logis `N` boleh lebih kecil dari lebar penyimpanan `M`; bit di atas
-/// `N` diabaikan agar tepat `N` bit yang dibalik, sesuai semantik SV.
+/// `N` diabaikan agar tepat `N` bit yang dibalik, sesuai semantik SV. Digit
+/// X/Z pada input menjadi X pada output.
 #[inline]
 pub fn bit_not<const N: usize, const M: usize>(value: Bits<M>) -> Bits<M> {
+    if !value.is_fully_known() {
+        // Hanya periksa bit di dalam lebar logis N; X di luar lebar logis
+        // tidak relevan.
+        let mut ada_tidak_diketahui = false;
+        for i in 0..N.min(M) {
+            if matches!(value.get(i), Logic::X | Logic::Z) {
+                ada_tidak_diketahui = true;
+                break;
+            }
+        }
+        if ada_tidak_diketahui {
+            return Bits::<M>::all(Logic::X);
+        }
+    }
     Bits::from_u64(!value.to_u64() & mask(N))
 }
 
@@ -27,48 +43,144 @@ pub fn bit_not<const N: usize, const M: usize>(value: Bits<M>) -> Bits<M> {
 ///
 /// Dua's complement adalah `2^N - x`, jadi basisnya `2^N` (bukan `2^N - 1`
 /// seperti `mask`). `wrapping_neg` pada lebar u64 diikuti mask menghasilkan
-/// hasil yang benar untuk semua N <= 64.
+/// hasil yang benar untuk semua N <= 64. Operand X/Z membuat hasil X.
 #[inline]
 pub fn bit_neg<const N: usize, const M: usize>(value: Bits<M>) -> Bits<M> {
+    if !value.is_fully_known() {
+        let mut ada_tidak_diketahui = false;
+        for i in 0..N.min(M) {
+            if matches!(value.get(i), Logic::X | Logic::Z) {
+                ada_tidak_diketahui = true;
+                break;
+            }
+        }
+        if ada_tidak_diketahui {
+            return Bits::<M>::all(Logic::X);
+        }
+    }
     Bits::from_u64((value.to_u64() & mask(N)).wrapping_neg() & mask(N))
 }
 
 /// `&a` — reduksi AND: 1 bila semua dari N bit bernilai 1 (LRM §11.4.9).
+///
+/// Digit X/Z membuat hasil X (AND dengan X adalah X).
 #[inline]
 pub fn reduce_and<const N: usize, const M: usize>(value: Bits<M>) -> Bits<1> {
-    Bits::from_u64(u64::from((value.to_u64() & mask(N)) == mask(N)))
+    let mut ada_x = false;
+    let mut semua_satu = true;
+    for i in 0..N.min(M) {
+        match value.get(i) {
+            Logic::One => {}
+            Logic::Zero => semua_satu = false,
+            Logic::X | Logic::Z => ada_x = true,
+        }
+    }
+    if ada_x {
+        Bits::from_logic(Logic::X)
+    } else {
+        Bits::from_u64(u64::from(semua_satu))
+    }
 }
 
 /// `~&a` — reduksi NAND.
 #[inline]
 pub fn reduce_nand<const N: usize, const M: usize>(value: Bits<M>) -> Bits<1> {
-    Bits::from_u64(u64::from((value.to_u64() & mask(N)) != mask(N)))
+    let mut ada_x = false;
+    let mut semua_satu = true;
+    for i in 0..N.min(M) {
+        match value.get(i) {
+            Logic::One => {}
+            Logic::Zero => semua_satu = false,
+            Logic::X | Logic::Z => ada_x = true,
+        }
+    }
+    if ada_x {
+        Bits::from_logic(Logic::X)
+    } else {
+        Bits::from_u64(u64::from(!semua_satu))
+    }
 }
 
 /// `|a` — reduksi OR: 1 bila ada bit 1 pada N bit pertama.
+///
+/// Digit X/Z membuat hasil X bila tidak ada bit 1 yang pasti.
 #[inline]
 pub fn reduce_or<const N: usize, const M: usize>(value: Bits<M>) -> Bits<1> {
-    Bits::from_u64(u64::from((value.to_u64() & mask(N)) != 0))
+    let mut ada_x = false;
+    let mut ada_satu = false;
+    for i in 0..N.min(M) {
+        match value.get(i) {
+            Logic::One => ada_satu = true,
+            Logic::Zero => {}
+            Logic::X | Logic::Z => ada_x = true,
+        }
+    }
+    if ada_x && !ada_satu {
+        Bits::from_logic(Logic::X)
+    } else {
+        Bits::from_u64(u64::from(ada_satu))
+    }
 }
 
 /// `~|a` — reduksi NOR.
 #[inline]
 pub fn reduce_nor<const N: usize, const M: usize>(value: Bits<M>) -> Bits<1> {
-    Bits::from_u64(u64::from((value.to_u64() & mask(N)) == 0))
+    let mut ada_x = false;
+    let mut ada_satu = false;
+    for i in 0..N.min(M) {
+        match value.get(i) {
+            Logic::One => ada_satu = true,
+            Logic::Zero => {}
+            Logic::X | Logic::Z => ada_x = true,
+        }
+    }
+    if ada_x && !ada_satu {
+        Bits::from_logic(Logic::X)
+    } else {
+        Bits::from_u64(u64::from(!ada_satu))
+    }
 }
 
 /// `^a` — reduksi XOR: paritas N bit pertama.
+///
+/// Digit X/Z membuat hasil X.
 #[inline]
 pub fn reduce_xor<const N: usize, const M: usize>(value: Bits<M>) -> Bits<1> {
-    let paritas = (value.to_u64() & mask(N)).count_ones() % 2;
-    Bits::from_u64(u64::from(paritas))
+    let mut ada_x = false;
+    let mut paritas = 0u32;
+    for i in 0..N.min(M) {
+        match value.get(i) {
+            Logic::One => paritas += 1,
+            Logic::Zero => {}
+            Logic::X | Logic::Z => ada_x = true,
+        }
+    }
+    if ada_x {
+        Bits::from_logic(Logic::X)
+    } else {
+        Bits::from_u64(u64::from(paritas % 2))
+    }
 }
 
 /// `~^a` — reduksi XNOR: kebalikan paritas.
+///
+/// Digit X/Z membuat hasil X.
 #[inline]
 pub fn reduce_xnor<const N: usize, const M: usize>(value: Bits<M>) -> Bits<1> {
-    let paritas = (value.to_u64() & mask(N)).count_ones() % 2;
-    Bits::from_u64(u64::from(paritas == 0))
+    let mut ada_x = false;
+    let mut paritas = 0u32;
+    for i in 0..N.min(M) {
+        match value.get(i) {
+            Logic::One => paritas += 1,
+            Logic::Zero => {}
+            Logic::X | Logic::Z => ada_x = true,
+        }
+    }
+    if ada_x {
+        Bits::from_logic(Logic::X)
+    } else {
+        Bits::from_u64(u64::from(paritas % 2 == 0))
+    }
 }
 
 #[cfg(test)]
@@ -187,5 +299,62 @@ mod tests {
     fn bit_not_dengan_lebar_simpan_lebih_besar() {
         // N=4 logis: ~0000_0000 pada 4 bit = 0000_1111, bukan 1111_1111.
         assert_eq!(bit_not::<4, 8>(Bits::from_u64(0)).to_u64(), 0b0000_1111);
+    }
+
+    #[test]
+    fn bit_not_dengan_x_hasil_x() {
+        let mut v = Bits::<8>::zero();
+        v.set(2, Logic::X);
+        let r = bit_not::<8, 8>(v);
+        assert!(!r.is_fully_known());
+        assert_eq!(r.get(2), Logic::X);
+    }
+
+    #[test]
+    fn bit_neg_dengan_x_hasil_x() {
+        let mut v = Bits::<8>::zero();
+        v.set(3, Logic::Z);
+        let r = bit_neg::<8, 8>(v);
+        assert!(!r.is_fully_known());
+        assert_eq!(r.get(0), Logic::X);
+    }
+
+    #[test]
+    fn reduce_and_dengan_x_hasil_x() {
+        let mut v = Bits::<8>::zero();
+        v.set(0, Logic::One);
+        v.set(1, Logic::X);
+        assert_eq!(reduce_and::<8, 8>(v).get(0), Logic::X);
+    }
+
+    #[test]
+    fn reduce_or_dengan_x_tanpa_satu_hasil_x() {
+        let mut v = Bits::<8>::zero();
+        v.set(0, Logic::X);
+        assert_eq!(reduce_or::<8, 8>(v).get(0), Logic::X);
+    }
+
+    #[test]
+    fn reduce_or_dengan_x_dan_satu_hasil_satu() {
+        let mut v = Bits::<8>::zero();
+        v.set(0, Logic::X);
+        v.set(1, Logic::One);
+        assert_eq!(reduce_or::<8, 8>(v).get(0), Logic::One);
+    }
+
+    #[test]
+    fn reduce_xor_dengan_x_hasil_x() {
+        let mut v = Bits::<8>::zero();
+        v.set(0, Logic::One);
+        v.set(1, Logic::X);
+        assert_eq!(reduce_xor::<8, 8>(v).get(0), Logic::X);
+    }
+
+    #[test]
+    fn reduce_xnor_dengan_x_hasil_x() {
+        let mut v = Bits::<8>::zero();
+        v.set(0, Logic::Zero);
+        v.set(1, Logic::X);
+        assert_eq!(reduce_xnor::<8, 8>(v).get(0), Logic::X);
     }
 }

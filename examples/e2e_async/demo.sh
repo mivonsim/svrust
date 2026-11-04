@@ -2,7 +2,7 @@
 # Tanggung jawab: demo e2e async reset event gabungan dan keyword `always` polos.
 set -e
 cd "$(dirname "$0")/../.."
-SV="cargo run -q -p cargo-sv -- sv"
+SV="cargo run -q -p svrust --"
 
 # Cek satu baris keluaran persis seperti ekspektasi.
 cek() {
@@ -20,7 +20,7 @@ echo "check OK"
 
 echo "=== 2. codegen: edge test event gabungan muncil di generated ==="
 $SV codegen --rtl examples/e2e_async/rtl/tb_async.sv
-GEN=target/sv/generated/tb_async.rs
+GEN=target/sv/generated/sv_design_tb_async.rs
 if grep -q "edge_prev\[" "$GEN" && grep -q "sample_edge" "$GEN"; then
   echo "  edge_prev + sample_edge ada di generated"
 else

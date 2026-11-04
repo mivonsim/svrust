@@ -86,6 +86,10 @@ pub struct Assignment {
     pub target: crate::expr::SignalId,
     /// `None` berarti seluruh sinyal; `Some` berarti hanya irisan bit.
     pub slice: Option<Slice>,
+    /// Irisan bertingkat untuk target seperti `y[3:0][1]`. Setiap slice
+    /// diterapkan berturut-turut: offset absolut = lsb slice pertama +
+    /// jumlah lsb semua extra, width = width extra terakhir.
+    pub extra_slices: Vec<Slice>,
     pub value: Expr,
     pub style: AssignStyle,
 }
@@ -168,6 +172,31 @@ pub enum Statement {
     },
     Block {
         body: Vec<Statement>,
+        span: Span,
+    },
+    /// Loop `forever body` (LRM §12.8).
+    ///
+    /// Loop tak berujung. Body diharapkan mengandung penundaan atau event
+    /// control; codegen memeriksa `is_finished()` setiap iterasi agar
+    /// simulator tidak hang bila `$finish` dipanggil di dalam loop.
+    Forever {
+        body: Vec<Statement>,
+        span: Span,
+    },
+    /// `assign lhs = rhs;` di dalam blok prosedural (LRM §14). Override
+    /// kontinu yang menangkal penulangan prosedural biasa hingga `deassign`.
+    ProceduralAssign {
+        target: crate::expr::SignalId,
+        /// `None` berarti seluruh sinyal; `Some` berarti hanya irisan bit.
+        slice: Option<Slice>,
+        /// Irisan bertingkat untuk target seperti `y[3:0][1]`.
+        extra_slices: Vec<Slice>,
+        value: Expr,
+        span: Span,
+    },
+    /// `deassign lhs;` — lepas override kontinu (LRM §14).
+    Deassign {
+        target: crate::expr::SignalId,
         span: Span,
     },
     Noop {

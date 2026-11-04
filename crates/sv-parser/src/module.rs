@@ -316,6 +316,16 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                 routines.push(decl);
                 idx += next;
             }
+            // LRM §20/§21: `assert property (@(posedge clk) cond);` — concurrent
+            // assertion. Disetara dengan `always_ff @(posedge clk) assert(cond);`.
+            Token::Assert => {
+                if tokens.get(idx + 1).map(|t| &t.token) != Some(&Token::Property) {
+                    return Err("expected 'property' after 'assert' at module level".to_string());
+                }
+                let (stmt, next) = super::combinational::parse_assert_property(&tokens[idx..])?;
+                statements.push(stmt);
+                idx += next;
+            }
             Token::Ident(_) => {
                 // `nama_tipe var;` adalah deklarasi bertipe hasil typedef,
                 // sedangkan `nama inst(...)` adalah instansiasi modul. Keduanya
@@ -731,7 +741,8 @@ mod tests {
         let module = parse_module(&lex(src).unwrap()).unwrap();
         match &module.generates[0].items[0] {
             sv_ast::generate::GenerateItem::For(f) => match &f.body[0] {
-                sv_ast::generate::GenerateItem::Assign { lhs, .. } => {
+                sv_ast::generate::GenerateItem::Assign(inner) => {
+                    let (lhs, _, _) = inner.as_ref();
                     assert_eq!(lhs.name, "y");
                     assert_eq!(lhs.genvar_index.as_deref(), Some("i"));
                     assert!(lhs.slice.is_none());

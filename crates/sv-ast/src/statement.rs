@@ -83,4 +83,24 @@ pub enum SequentialStatement {
         value: Option<Expr>,
         span: Span,
     },
+    /// Loop `forever body` (LRM §12.8).
+    ///
+    /// Loop tak berujung; body wajib mengandung penundaan atau event control
+    /// agar simulasi tidak hang.
+    Forever {
+        body: Vec<SequentialStatement>,
+        span: Span,
+    },
+    /// Penetapans berkelanjutan prosedural `assign lhs = rhs;` di dalam blok
+    /// prosedural (LRM §14).
+    ProceduralAssign {
+        lhs: Lvalue,
+        rhs: Expr,
+        span: Span,
+    },
+    /// Melepasi penetapans berkelanjutan prosedural `deassign lhs;` (LRM §14).
+    Deassign {
+        lhs: Lvalue,
+        span: Span,
+    },
 }

@@ -143,6 +143,13 @@ fn jalan_comb(stmt: &mut CombinationalStatement, ctx: &mut Ctx) {
             }
             ctx.keluar();
         }
+        CombinationalStatement::Forever { body, .. } => {
+            ctx.masuk();
+            for s in body {
+                jalan_comb(s, ctx);
+            }
+            ctx.keluar();
+        }
         CombinationalStatement::For {
             init,
             condition,
@@ -192,6 +199,14 @@ fn jalan_comb(stmt: &mut CombinationalStatement, ctx: &mut Ctx) {
             if let Some(expr) = value.as_mut() {
                 nama_expr(expr, ctx);
             }
+        }
+        // LRM §14: `assign lhs = rhs;` dan `deassign lhs;` merujuk sinyal.
+        CombinationalStatement::ProceduralAssign { lhs, rhs, .. } => {
+            nama_lvalue(lhs, ctx);
+            nama_expr(rhs, ctx);
+        }
+        CombinationalStatement::Deassign { lhs, .. } => {
+            nama_lvalue(lhs, ctx);
         }
     }
 }
@@ -247,6 +262,21 @@ fn jalan_seq(stmt: &mut SequentialStatement, ctx: &mut Ctx) {
             if let Some(expr) = value.as_mut() {
                 nama_expr(expr, ctx);
             }
+        }
+        SequentialStatement::Forever { body, .. } => {
+            ctx.masuk();
+            for s in body {
+                jalan_seq(s, ctx);
+            }
+            ctx.keluar();
+        }
+        // LRM §14: `assign lhs = rhs;` dan `deassign lhs;` merujuk sinyal.
+        SequentialStatement::ProceduralAssign { lhs, rhs, .. } => {
+            nama_lvalue(lhs, ctx);
+            nama_expr(rhs, ctx);
+        }
+        SequentialStatement::Deassign { lhs, .. } => {
+            nama_lvalue(lhs, ctx);
         }
     }
 }

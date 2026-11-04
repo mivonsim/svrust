@@ -101,7 +101,7 @@ fn parse_generate_item(
 
     if is_decl_type(token) {
         let (decls, consumed) = super::declaration::parse_declaration(&tokens[start..])?;
-        return Ok((GenerateItem::Decl(decls), start + consumed));
+        return Ok((GenerateItem::Decl(Box::new(decls)), start + consumed));
     }
 
     if *token == Token::Assign {
@@ -109,7 +109,10 @@ fn parse_generate_item(
         // `assign` disimpan sebagai Statement; di dalam generate LHS dan RHS
         // diambil keluar supaya bisa dielaborasi per iterasi.
         if let sv_ast::statement::Statement::ContinuousAssign { lhs, rhs, span } = stmt {
-            return Ok((GenerateItem::Assign { lhs, rhs, span }, start + consumed));
+            return Ok((
+                GenerateItem::Assign(Box::new((lhs, rhs, span))),
+                start + consumed,
+            ));
         }
         return Err("expected continuous assign".to_string());
     }
@@ -158,22 +161,26 @@ fn parse_if_generate(
     expect(tokens, idx, Token::RParen, "expected ')' pada if-generate")?;
     idx += 1;
 
-    let (_then_label, then_branch, baru) = parse_generate_body(tokens, idx, genvar_luar)?;
+    let (then_label, then_branch, baru) = parse_generate_body(tokens, idx, genvar_luar)?;
     idx = baru;
 
     // `else` opsional.
     let mut else_branch = None;
+    let mut else_label = None;
     if tokens.get(idx).map(|t| &t.token) == Some(&Token::Else) {
-        let (_else_label, body, baru) = parse_generate_body(tokens, idx + 1, genvar_luar)?;
+        let (el, body, baru) = parse_generate_body(tokens, idx + 1, genvar_luar)?;
         idx = baru;
         else_branch = Some(body);
+        else_label = el;
     }
 
     Ok((
         IfGenerate {
             condition,
             then_branch,
+            then_label,
             else_branch,
+            else_label,
             span,
         },
         idx - start,
@@ -239,10 +246,11 @@ fn parse_case_generate(
             "expected ':' pada lengan case-generate",
         )?;
         idx += 1;
-        let (_label, body, baru) = parse_generate_body(tokens, idx, genvar_luar)?;
+        let (label, body, baru) = parse_generate_body(tokens, idx, genvar_luar)?;
         idx = baru;
         arms.push(GenerateCaseArm {
             labels,
+            label,
             body,
             is_default,
             span: arm_span,
@@ -454,33 +462,30 @@ fn parse_genvar_step(
 
 /// Parse badan loop generate: `begin : label ... end` atau satu item langsung.
 ///
-/// Tanpa label, nama hierarki setiap iterasi tidak dapat dibedakan, jadi
-/// bentuk `begin` wajib berlabel (LRM §27.3).
+/// Label opsional (LRM §27.3 menganjurkan label untuk nama hierarki).
+/// Tanpa label, prefix iterasi menggunakan indeks numerik saja.
 fn parse_generate_body(
     tokens: &[SpannedToken],
     start: usize,
     genvar_luar: &[String],
-) -> Result<(String, Vec<GenerateItem>, usize), String> {
+) -> Result<(Option<String>, Vec<GenerateItem>, usize), String> {
     if tokens.get(start).map(|t| &t.token) != Some(&Token::Begin) {
         let mut genvars = Vec::new();
         let (item, setelah) = parse_generate_item(tokens, start, &mut genvars, genvar_luar)?;
-        return Ok((String::new(), vec![item], setelah));
+        return Ok((None, vec![item], setelah));
     }
 
     let mut idx = start + 1;
-    let mut label = String::new();
+    let mut label = None;
     if tokens.get(idx).map(|t| &t.token) == Some(&Token::Colon) {
         idx += 1;
         match tokens.get(idx).map(|t| &t.token) {
             Some(Token::Ident(nama)) => {
-                label = nama.clone();
+                label = Some(nama.clone());
                 idx += 1;
             }
             _ => return Err("expected label setelah ':' pada blok generate".to_string()),
         }
-    }
-    if label.is_empty() {
-        return Err("blok generate wajib berlabel, mis. `begin : g`".to_string());
     }
 
     let mut genvars = genvar_luar.to_vec();
@@ -571,7 +576,7 @@ mod tests {
                 assert_eq!(f.bound, 4);
                 assert_eq!(f.compare, CompareOp::Lt);
                 assert_eq!(f.step, 1);
-                assert_eq!(f.label, "blk");
+                assert_eq!(f.label.as_deref(), Some("blk"));
                 assert!(matches!(f.body[0], GenerateItem::Decl(_)));
             }
             other => panic!("harus for-generate, dapat {:?}", other),
@@ -626,10 +631,13 @@ mod tests {
     }
 
     #[test]
-    fn blk_tanpa_label_ditolak() {
-        let tokens = lex("generate for (g = 0; g < 4; g = g + 1) begin end endgenerate").unwrap();
-        let err = parse_generate_region(&tokens, 0, &[]).unwrap_err();
-        assert!(err.contains("label"), "{}", err);
+    fn blk_tanpa_label_diterima_dengan_label_none() {
+        // Blok generate tanpa label opsional diterima; labelnya None.
+        let r = region("generate for (genvar g = 0; g < 4; g = g + 1) begin end endgenerate");
+        match &r.items[0] {
+            GenerateItem::For(f) => assert!(f.label.is_none()),
+            other => panic!("harus for-generate, dapat {:?}", other),
+        }
     }
 
     #[test]

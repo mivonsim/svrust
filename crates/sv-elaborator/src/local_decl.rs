@@ -72,6 +72,7 @@ fn kumpulkan_comb(body: &[CombinationalStatement]) -> Vec<&Declaration> {
             CombinationalStatement::For { body, .. }
             | CombinationalStatement::While { body, .. }
             | CombinationalStatement::Repeat { body, .. }
+            | CombinationalStatement::Forever { body, .. }
             | CombinationalStatement::EventControl { body, .. } => out.extend(kumpulkan_comb(body)),
             CombinationalStatement::Delay { body, .. } => {
                 out.extend(kumpulkan_comb(std::slice::from_ref(body.as_ref())))
@@ -88,7 +89,9 @@ fn kumpulkan_comb(body: &[CombinationalStatement]) -> Vec<&Declaration> {
             | CombinationalStatement::CompoundAssign { .. }
             | CombinationalStatement::SystemTask(_)
             | CombinationalStatement::TaskCall(_)
-            | CombinationalStatement::Return { .. } => {}
+            | CombinationalStatement::Return { .. }
+            | CombinationalStatement::ProceduralAssign { .. }
+            | CombinationalStatement::Deassign { .. } => {}
         }
     }
     out
@@ -115,7 +118,10 @@ fn kumpulkan_seq(body: &[SequentialStatement]) -> Vec<&Declaration> {
             | SequentialStatement::BlockingAssign { .. }
             | SequentialStatement::SystemTask(_)
             | SequentialStatement::TaskCall(_)
-            | SequentialStatement::Return { .. } => {}
+            | SequentialStatement::Return { .. }
+            | SequentialStatement::Forever { .. }
+            | SequentialStatement::ProceduralAssign { .. }
+            | SequentialStatement::Deassign { .. } => {}
         }
     }
     out

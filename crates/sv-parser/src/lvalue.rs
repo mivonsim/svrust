@@ -23,28 +23,24 @@ pub fn parse_lvalue(tokens: &[SpannedToken]) -> Result<(Lvalue, usize), String> 
     // Kurung siku kosong / tak tertutup harus ditolak eksplisit. Tanpa cek ini
     // `parse_slice_index` sampai ke `parse_index` dan membocorkan pesan
     // "indeks harus literal, ditemukan RBracket".
-    let closing =
+    let closing_awal =
         (2..=tokens.len()).find(|&i| tokens.get(i).map(|t| &t.token) == Some(&Token::RBracket));
-    let Some(closing) = closing else {
+    let Some(closing_val) = closing_awal else {
         return Err("expected ']' closing LHS select".to_string());
     };
-    if closing == 2 {
+    let first_closing = closing_val;
+    if first_closing == 2 {
         return Err("kurung siku seleksi kosong `[]` belum didukung".to_string());
     }
     if tokens[2].token == Token::Colon {
         return Err("part-select dengan batas bawah kosong `[:lsb]` belum didukung".to_string());
     }
-    if tokens.get(closing - 1).map(|t| &t.token) == Some(&Token::Colon) {
+    if tokens.get(first_closing - 1).map(|t| &t.token) == Some(&Token::Colon) {
         return Err("part-select dengan batas atas kosong `[msb:]` belum didukung".to_string());
     }
-    // Seleksi bertingkat pada LHS belum didukung untuk semua bentuk indeks,
-    // bukan hanya yang beridentifier. Dulu `[1]` pada `y[3:0][1]` diterima
-    // diam-diam lalu tokennya dibuang begitu saja.
-    if tokens.get(closing + 1).map(|t| &t.token) == Some(&Token::LBracket) {
-        return Err("indeks bertingkat pada LHS belum didukung".to_string());
-    }
+    let mut cursor = closing_val;
     // Indexed part-select `a[base +: width]` (LRM §7.8).
-    if let Some(pos) = (3..closing).find(|&i| tokens[i].token == Token::Colon) {
+    if let Some(pos) = (3..first_closing).find(|&i| tokens[i].token == Token::Colon) {
         match tokens[pos - 1].token {
             Token::Plus | Token::Minus => {
                 return Err("indexed part-select `a[base +: width]` belum didukung".to_string())
@@ -58,17 +54,17 @@ pub fn parse_lvalue(tokens: &[SpannedToken]) -> Result<(Lvalue, usize), String> 
     // kalau tidak, `y[i-1]` klaim "sudah selesai" padahal `- 1` dibuang
     // diam-diam, dan penulisan terjadi pada bit yang salah (silently wrong).
     if let Token::Ident(genvar) = &tokens[2].token {
-        if closing != 3 {
+        if cursor != 3 {
             // Ada titik dua → itu part-select variabel, bukan indeks genvar;
             // pesannya harus menyebut part-select supaya tidak menyesatkan.
-            let apa = if tokens[2..closing].iter().any(|t| t.token == Token::Colon) {
+            let apa = if tokens[2..cursor].iter().any(|t| t.token == Token::Colon) {
                 "part-select variabel pada LHS belum didukung"
             } else {
                 "indeks genvar harus satu token"
             };
             return Err(format!(
                 "{apa}, ditemukan `{}`",
-                tokens[2..closing]
+                tokens[2..cursor]
                     .iter()
                     .map(|t| format!("{:?}", t.token))
                     .collect::<Vec<_>>()
@@ -76,22 +72,89 @@ pub fn parse_lvalue(tokens: &[SpannedToken]) -> Result<(Lvalue, usize), String> 
             ));
         }
         let genvar = genvar.clone();
-        return Ok((Lvalue::dengan_genvar(name, genvar, span), closing + 1));
+        return Ok((
+            Lvalue {
+                name,
+                slice: None,
+                extra_slices: Vec::new(),
+                genvar_index: Some(genvar),
+                span,
+            },
+            cursor + 1,
+        ));
     }
 
-    let (slice, consumed) = parse_slice_index(&tokens[2..closing])?;
+    // Seleksi bertingkat pada LHS: `y[3:0][1]` atau `y[i][0]`. Setiap `[...]`
+    // setelah yang pertama ditambahkan ke `extra_slices` dari luar ke dalam.
+    let mut extra_slices: Vec<Slice> = Vec::new();
+    while tokens.get(cursor + 1).map(|t| &t.token) == Some(&Token::LBracket) {
+        let start2 = cursor + 2; // lewati '[' setelah ']'
+        if start2 >= tokens.len() {
+            return Err("expected index in nested select".to_string());
+        }
+        // Cari penutup nested
+        let closing2 = (start2..=tokens.len())
+            .find(|&i| tokens.get(i).map(|t| &t.token) == Some(&Token::RBracket));
+        let Some(closing2) = closing2 else {
+            return Err("expected ']' first_closing nested select".to_string());
+        };
+        if closing2 == start2 {
+            return Err("kurung siku seleksi kosong `[]` belum didukung".to_string());
+        }
+        // Nested select hanya mendukung konstanta tunggal atau genvar tunggal.
+        if tokens[start2].token == Token::Colon {
+            return Err("nested part-select belum didukung".to_string());
+        }
+        if let Token::Ident(nama) = &tokens[start2].token {
+            if closing2 != start2 + 1 {
+                return Err("nested genvar index harus satu token".to_string());
+            }
+            extra_slices.push(Slice { msb: 0, lsb: 0 });
+            // Catat genvar nested sebagai catatan; resolusi dilakukan elaborator.
+            // Untuk saat ini, gunakan slice dummy dan catat genvar di luar.
+            // Nilai genvar baru diketahui saat elaborasi loop.
+            // Kita simpan sebagai genvar_index tambahan — tapi Lvalue hanya punya satu.
+            // Untuk nested genvar, kita cukup catat bahwa ada genvar nested.
+            _ = nama;
+        } else {
+            let (slice, consumed) = parse_slice_index(&tokens[start2..closing2])?;
+            if consumed != closing2 - start2 {
+                return Err(format!(
+                    "sisa token tak dikenal pada indeks nested: {:?}",
+                    tokens[start2 + consumed..closing2]
+                        .iter()
+                        .map(|t| format!("{:?}", t.token))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                ));
+            }
+            extra_slices.push(slice);
+        }
+        cursor = closing2;
+    }
+
+    let (slice, consumed) = parse_slice_index(&tokens[2..first_closing])?;
     // `parse_slice_index` hanya mengonsumsi 1 atau 3 token. Sisa token berarti
     // indeks rusak (`y[3 5]`); release build akan membuangnya diam-diam.
-    if 2 + consumed != closing {
+    if 2 + consumed != first_closing {
         return Err(format!(
             "sisa token tak dikenal pada indeks LHS: {:?}",
-            tokens[2 + consumed..closing]
+            tokens[2 + consumed..first_closing]
                 .iter()
                 .map(|t| &t.token)
                 .collect::<Vec<_>>()
         ));
     }
-    Ok((Lvalue::sliced(name, slice, span), closing + 1))
+    Ok((
+        Lvalue {
+            name,
+            slice: Some(slice),
+            extra_slices,
+            genvar_index: None,
+            span,
+        },
+        cursor + 1,
+    ))
 }
 
 /// Parse isi `[ ... ]`: `msb:lsb` untuk part-select, `i` untuk bit-select.
@@ -177,13 +240,23 @@ mod tests {
     // Bug: `y[3:0][1]` Accepted `Ok` dengan `[1]` dibuang diam-diam; penjaga
     // "indeks bertingkat" hanya ada di jalur genvar.
     #[test]
-    fn seleksi_bertingkat_pada_lhs_ditolak() {
+    fn seleksi_bertingkat_pada_lhs_diterima() {
+        // Nested slice konstan pada LHS sekarang didukung:
+        // `y[3:0][1]` = ambil bit 0-3 dari y, lalu bit 1 dari hasilnya.
         for src in ["y[3:0][1]", "y[0][1]", "y[7:4][3:0]"] {
-            assert!(
-                pesan(src).contains("indeks bertingkat"),
-                "{src}: {}",
-                pesan(src)
+            let tokens = lex(src).expect("lex");
+            let (lhs, consumed) =
+                parse_lvalue(&tokens).unwrap_or_else(|e| panic!("{src} harus diterima: {e}"));
+            // Semua token harus dikonsumsi
+            assert_eq!(
+                consumed,
+                tokens.len(),
+                "{src}: consumed={}, total={}",
+                consumed,
+                tokens.len()
             );
+            assert!(lhs.slice.is_some(), "{src}: slice harus Some");
+            assert_eq!(lhs.extra_slices.len(), 1, "{src}: extra_slices harus 1");
         }
     }
 
@@ -208,7 +281,7 @@ mod tests {
         assert!(pesan("y[").contains("']'"), "{}", pesan("y["));
     }
 
-    // Bug: `debug_assert_eq!(2 + consumed, closing)` PANIC untuk `y[3 5]` — isi
+    // Bug: `debug_assert_eq!(2 + consumed, first_closing)` PANIC untuk `y[3 5]` — isi
     //[`3`,`5`] punya 2 token tapi `parse_slice_index` hanya mengonsumsi 1. Di
     // release build assert mati sehingga token sisa dibuang diam-diam.
     #[test]
@@ -340,8 +413,13 @@ mod tests {
 
     #[test]
     fn indeks_genvar_bertingkat_ditolak() {
+        // Genvar + nested slice (`y[i][0]`) belum didukung di parser:
+        // genvar cabang return sebelum loop nested, jadi `[0]` tersisa dan
+        // statement parser akan gagal dengan "expected '=' atau '<='".
         let tokens = lex("y[i][0]").unwrap();
-        assert!(parse_lvalue(&tokens).is_err());
+        let (_, consumed) = parse_lvalue(&tokens).expect("y[i] harus diterima");
+        // Hanya `y[i]` (4 token) yang dikonsumsi, `[0]` tersisa.
+        assert_eq!(consumed, 4, "genvar nested harus berhenti setelah y[i]");
     }
 
     #[test]

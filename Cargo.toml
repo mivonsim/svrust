@@ -11,7 +11,7 @@ members = [
   "crates/sv-runtime",
   "crates/sv-codegen-rust",
   "crates/sv-trace",
-  "crates/cargo-sv",
+  "crates/svrust",
   "tests",
 ]
 

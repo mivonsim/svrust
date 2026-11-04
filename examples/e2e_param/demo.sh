@@ -4,7 +4,7 @@ set -e
 cd "$(dirname "$0")/../.."
 
 RTL_DIR=examples/e2e_param/rtl
-SV="cargo run -q -p cargo-sv -- sv"
+SV="cargo run -q -p svrust --"
 
 # Cek bahwa satu baris keluaran bernilai persis seperti yang diharapkan.
 cek() {
@@ -42,7 +42,7 @@ $SV inspect --rtl $RTL_DIR/adder.sv 2>/dev/null
 
 echo "=== 3. codegen (MAX_WIDTH harus 8) ==="
 $SV codegen --rtl $RTL_DIR/adder.sv 2>/dev/null
-grep "MAX_WIDTH: usize = 8" target/sv/generated/adder.rs
+grep "MAX_WIDTH: usize = 8" target/sv/generated/sv_design_adder.rs
 
 echo "=== 4. run (input nol -> y=00, zero=1) ==="
 $SV run --rtl $RTL_DIR/adder.sv --steps 8 2>/dev/null

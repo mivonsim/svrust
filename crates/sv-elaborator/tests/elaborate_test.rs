@@ -164,8 +164,8 @@ fn always_comb_sensitivity_collects_all_reads() {
 
 fn build_top(source: &str, top: &str) -> sv_ir::Design {
     let tokens = sv_lexer::lex(source).expect("lex");
-    let modules = sv_parser::parse_file(&tokens).expect("parse");
-    sv_elaborator::elaborate_top(&modules, top).expect("elaborate")
+    let parsed = sv_parser::parse_file(&tokens).expect("parse");
+    sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, top).expect("elaborate")
 }
 
 #[test]
@@ -204,8 +204,8 @@ fn koneksi_lebar_beda_ditolak() {
          endmodule",
     )
     .expect("lex");
-    let modules = sv_parser::parse_file(&tokens).expect("parse");
-    assert!(sv_elaborator::elaborate_top(&modules, "top").is_err());
+    let parsed = sv_parser::parse_file(&tokens).expect("parse");
+    assert!(sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, "top").is_err());
 }
 
 #[test]
@@ -215,8 +215,8 @@ fn port_tak_tersambung_ditolak() {
          module top(input x, output s); halfadd u0 (.a(x), .s(s)); endmodule",
     )
     .expect("lex");
-    let modules = sv_parser::parse_file(&tokens).expect("parse");
-    assert!(sv_elaborator::elaborate_top(&modules, "top").is_err());
+    let parsed = sv_parser::parse_file(&tokens).expect("parse");
+    assert!(sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, "top").is_err());
 }
 
 #[test]

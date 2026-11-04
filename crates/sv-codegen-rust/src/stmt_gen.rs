@@ -9,6 +9,7 @@ use sv_ir::process::{AssignStyle, Assignment, CaseArm, CaseKind, Statement};
 /// LRM §12.5: bit yang ditulis `z`/`?` (`casez`) atau `x`/`z`/`?` (`casex`) pada
 /// label tidak ikut dibandingkan, sehingga dicoret dengan `!mask`.
 fn write_case_wildcard(
+    design: &sv_ir::Design,
     selector: &sv_ir::Expr,
     arms: &[CaseArm],
     kind: CaseKind,
@@ -85,7 +86,7 @@ fn write_case_wildcard(
                 (None, true) => unreachable!("default pertama tidak membuka blok"),
             });
         }
-        write_statements(branch.body, out, &indent.child());
+        write_statements(design, branch.body, out, &indent.child());
         // Hanya cabang terakhir yang menutup, karena cabang sebelumnya sudah
         // ditutup oleh awalan `} else` dari cabang berikutnya.
         if terakhir && membuka_blok {
@@ -147,15 +148,62 @@ fn label_bits(label: &sv_ir::Expr) -> Option<(u64, u64, u64)> {
 }
 
 /// Tulis rangkaian statement IR.
-pub fn write_statements(statements: &[Statement], out: &mut String, indent: &Indent) {
+pub fn write_statements(
+    design: &sv_ir::Design,
+    statements: &[Statement],
+    out: &mut String,
+    indent: &Indent,
+) {
     for statement in statements {
-        write_statement(statement, out, indent);
+        write_statement(design, statement, out, indent);
     }
 }
 
-fn write_statement(statement: &Statement, out: &mut String, indent: &Indent) {
+fn write_statement(
+    design: &sv_ir::Design,
+    statement: &Statement,
+    out: &mut String,
+    indent: &Indent,
+) {
     match statement {
-        Statement::Assign { assignment, .. } => write_assignment(assignment, out, indent),
+        Statement::Assign { assignment, .. } => write_assignment(design, assignment, out, indent),
+        // LRM §14: `assign lhs = rhs;` di dalam blok prosedural — override
+        // kontinu yang tetap menang di `read()` hingga `deassign`.
+        Statement::ProceduralAssign {
+            target,
+            slice,
+            extra_slices: _,
+            value,
+            ..
+        } => {
+            let temp = format!("_v{}", target);
+            indent.push(out);
+            out.push_str(&format!("let {} = ", temp));
+            write_expr(value, out, indent);
+            out.push_str(";\n");
+            let mask = match slice {
+                None => "Bits::<MAX_WIDTH>::satu()".to_string(),
+                Some(s) => {
+                    let (lsb, width) = s.mask_range();
+                    format!("sv_runtime::range_mask::<MAX_WIDTH>({lsb}, {width})")
+                }
+            };
+            let seluruh = slice.is_none();
+            let nilai = match slice {
+                Some(s) if s.lsb > 0 && seluruh => format!("({} << {})", temp, s.lsb),
+                _ => temp.clone(),
+            };
+            indent.push(out);
+            out.push_str(&format!(
+                "self.signals[{}].apply_override_masked({}, {});\n",
+                target, nilai, mask
+            ));
+        }
+        // LRM §14: `deassign lhs;` lepas override kontinu pada `lhs`.
+        Statement::Deassign { target, .. } => {
+            indent.push(out);
+            out.push_str(&format!("self.signals[{}].clear_override();\n", target));
+        }
         Statement::If {
             condition,
             then_branch,
@@ -168,13 +216,13 @@ fn write_statement(statement: &Statement, out: &mut String, indent: &Indent) {
             out.push_str("if ");
             write_truthy(condition, out, indent);
             out.push_str(" {\n");
-            write_statements(then_branch, out, &indent.child());
+            write_statements(design, then_branch, out, &indent.child());
             indent.push(out);
             if else_branch.is_empty() {
                 out.push_str("}\n");
             } else {
                 out.push_str("} else {\n");
-                write_statements(else_branch, out, &indent.child());
+                write_statements(design, else_branch, out, &indent.child());
                 indent.push(out);
                 out.push_str("}\n");
             }
@@ -187,7 +235,7 @@ fn write_statement(statement: &Statement, out: &mut String, indent: &Indent) {
             ..
         } => {
             // LRM §12.7.1: init dievaluasi sekali sebelum loop.
-            write_assignment(init, out, indent);
+            write_assignment(design, init, out, indent);
             indent.push(out);
             out.push_str("loop {\n");
             let inner = indent.child();
@@ -201,8 +249,8 @@ fn write_statement(statement: &Statement, out: &mut String, indent: &Indent) {
             out.push_str("break;\n");
             inner.push(out);
             out.push_str("}\n");
-            write_statements(body, out, &inner);
-            write_assignment(step, out, &inner);
+            write_statements(design, body, out, &inner);
+            write_assignment(design, step, out, &inner);
             indent.push(out);
             out.push_str("}\n");
         }
@@ -215,7 +263,25 @@ fn write_statement(statement: &Statement, out: &mut String, indent: &Indent) {
             out.push_str(".to_u64();\n");
             out.push_str("for _ in 0..__sv_repeat_n {\n");
             let inner = indent.child();
-            write_statements(body, out, &inner);
+            write_statements(design, body, out, &inner);
+            indent.push(out);
+            out.push_str("}\n");
+        }
+        // LRM §12.8: `forever body` — loop tak berujung. Setiap iterasi
+        // memeriksa `is_finished()` agar `$finish` di dalam loop dapat
+        // menghentikan simulasi.
+        Statement::Forever { body, .. } => {
+            indent.push(out);
+            out.push_str("loop {\n");
+            let inner = indent.child();
+            inner.push(out);
+            out.push_str("if self.is_finished() {\n");
+            let guard = inner.child();
+            guard.push(out);
+            out.push_str("break;\n");
+            inner.push(out);
+            out.push_str("}\n");
+            write_statements(design, body, out, &inner);
             indent.push(out);
             out.push_str("}\n");
         }
@@ -235,7 +301,7 @@ fn write_statement(statement: &Statement, out: &mut String, indent: &Indent) {
             out.push_str("break;\n");
             inner.push(out);
             out.push_str("}\n");
-            write_statements(body, out, &inner);
+            write_statements(design, body, out, &inner);
             indent.push(out);
             out.push_str("}\n");
         }
@@ -244,11 +310,11 @@ fn write_statement(statement: &Statement, out: &mut String, indent: &Indent) {
             arms,
             kind,
             ..
-        } => write_case(selector, arms, *kind, out, indent),
+        } => write_case(design, selector, arms, *kind, out, indent),
         Statement::Block { body, .. } => {
             indent.push(out);
             out.push_str("{\n");
-            write_statements(body, out, &indent.child());
+            write_statements(design, body, out, &indent.child());
             indent.push(out);
             out.push_str("}\n");
         }
@@ -275,11 +341,11 @@ fn write_statement(statement: &Statement, out: &mut String, indent: &Indent) {
                 "self.time_now = self.time_now.saturating_add({});\n",
                 time_step(*unit, &langkah)
             ));
-            write_statement(body, out, indent);
+            write_statement(design, body, out, indent);
         }
         // LRM §9.7: statement event control ditangani oleh driver yang memanggil
         // `eval_initial`; di sini hanya bodynya yang ditulis.
-        Statement::EventControl { body, .. } => write_statements(body, out, indent),
+        Statement::EventControl { body, .. } => write_statements(design, body, out, indent),
         Statement::Noop { .. } => {}
     }
 }
@@ -311,7 +377,16 @@ fn time_step(unit: sv_ir::TimeUnit, kode_nilai: &str) -> String {
 /// dua borrow `self.signals` sekaligus pada ekspresi yang sama.
 /// LRM: hasil perbandingan/logika adalah 1-bit; konversi ke Bits agar
 /// `write()`/`PendingWrite` terima tipe yang sama.
-fn write_assignment(assignment: &Assignment, out: &mut String, indent: &Indent) {
+///
+/// `design` dibutuhkan untuk mengetahui tipe target: bila target bertipe
+/// `real`, nilai harus disimpan lewat `from_f64()` bukan `from_u64()`
+/// (LRM §5.5).
+fn write_assignment(
+    design: &sv_ir::Design,
+    assignment: &Assignment,
+    out: &mut String,
+    indent: &Indent,
+) {
     let temp = format!("_v{}", assignment.target);
 
     indent.push(out);
@@ -341,19 +416,38 @@ fn write_assignment(assignment: &Assignment, out: &mut String, indent: &Indent) 
         Some(slice) if slice.lsb > 0 => format!("({} << {})", temp, slice.lsb),
         _ => temp,
     };
+    // Tentukan apakah target bertipe real (LRM §5.5). Bila ya, nilai harus
+    // disimpan lewat `from_f64()` agar bit pattern IEEE 754 benar, bukan
+    // `from_u64()` yang hanya menyalin bit mentah integer.
+    let target_is_real = design
+        .variables
+        .iter()
+        .find(|v| v.signal_id == assignment.target)
+        .map(|v| v.data_type.kind == sv_ir::datatype::ValueKind::Real)
+        .unwrap_or(false);
+    let konstruktor = if target_is_real {
+        // Integer harus dikonversi ke float terlebih dahulu: `(x as i64 as f64).to_bits()`
+        // menghasilkan bit pattern IEEE 754 untuk nilai float x.
+        format!(
+            "sv_runtime::Bits::<MAX_WIDTH>::from_f64({}.to_u64() as i64 as f64)",
+            nilai
+        )
+    } else {
+        nilai.clone()
+    };
     match assignment.style {
         AssignStyle::Blocking => {
             indent.push(out);
             if seluruh {
                 out.push_str(&format!(
                     "self.signals[{}].write({});\n",
-                    assignment.target, nilai
+                    assignment.target, konstruktor
                 ));
             } else {
                 // LRM §10.10.1: hanya bit di dalam irisan yang berubah.
                 out.push_str(&format!(
                     "self.signals[{}].write_masked({}, {});\n",
-                    assignment.target, nilai, mask
+                    assignment.target, konstruktor, mask
                 ));
             }
         }
@@ -362,12 +456,12 @@ fn write_assignment(assignment: &Assignment, out: &mut String, indent: &Indent) 
             if seluruh {
                 out.push_str(&format!(
                     "self.pending.push(PendingWrite::new({}, {}));\n",
-                    assignment.target, nilai
+                    assignment.target, konstruktor
                 ));
             } else {
                 out.push_str(&format!(
                     "self.pending.push(PendingWrite::new_masked({}, {}, {}));\n",
-                    assignment.target, nilai, mask
+                    assignment.target, konstruktor, mask
                 ));
             }
         }
@@ -375,6 +469,7 @@ fn write_assignment(assignment: &Assignment, out: &mut String, indent: &Indent) 
 }
 
 fn write_case(
+    design: &sv_ir::Design,
     selector: &sv_ir::Expr,
     arms: &[CaseArm],
     kind: CaseKind,
@@ -383,7 +478,7 @@ fn write_case(
 ) {
     // Wildcard butuh perbandingan bermasker; `match` tidak bisa Calculus itu.
     if kind.is_wildcard() {
-        write_case_wildcard(selector, arms, kind, out, indent);
+        write_case_wildcard(design, selector, arms, kind, out, indent);
         return;
     }
 
@@ -448,7 +543,7 @@ fn write_case(
                 (None, true) => unreachable!("default pertama tidak membuka blok"),
             });
         }
-        write_statements(body, out, &indent.child());
+        write_statements(design, body, out, &indent.child());
         if i + 1 == cabang.len() {
             // Cabang terakhir menutup kurung yang dibuka semua cabang
             // sebelumnya.

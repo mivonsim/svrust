@@ -5,8 +5,8 @@ use sv_parser::parse_file;
 
 fn desain(src: &str, top: &str) -> Result<sv_ir::Design, String> {
     let tokens = lex(src).map_err(|e| e.to_string())?;
-    let modules = parse_file(&tokens)?;
-    elaborate_top(&modules, top).map_err(|e| e.to_string())
+    let modules = parse_file(&tokens)?.modules;
+    elaborate_top(&modules, &[], top).map_err(|e| e.to_string())
 }
 
 // BUG: `always_ff` di dalam loop generate ditolak parser karena genvar belum

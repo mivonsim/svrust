@@ -113,7 +113,8 @@ fn statement_memuat_delay(stmt: &CombinationalStatement) -> bool {
         }
         CombinationalStatement::For { body, .. }
         | CombinationalStatement::Repeat { body, .. }
-        | CombinationalStatement::While { body, .. } => mengandung_delay(body),
+        | CombinationalStatement::While { body, .. }
+        | CombinationalStatement::Forever { body, .. } => mengandung_delay(body),
         // `@(posedge clk)` di dalam body MENYUSPENSIKAN proses, tapi tidak
         // menggeser waktu simulasi — jadi BUKAN proses waktu. Menganggapnya sebagai
         // proses waktu membuat jam simulasi diam-diam ikut berjalan dan blok
@@ -132,6 +133,8 @@ fn statement_memuat_delay(stmt: &CombinationalStatement) -> bool {
         | CombinationalStatement::CompoundAssign { .. }
         | CombinationalStatement::SystemTask(_)
         | CombinationalStatement::TaskCall(_)
-        | CombinationalStatement::Return { .. } => false,
+        | CombinationalStatement::Return { .. }
+        | CombinationalStatement::ProceduralAssign { .. }
+        | CombinationalStatement::Deassign { .. } => false,
     }
 }

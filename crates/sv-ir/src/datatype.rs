@@ -5,11 +5,18 @@ pub enum ValueKind {
     Bit,
     /// 4-state: 0, 1, X, Z.
     Logic,
+    /// Floating point 64-bit IEEE 754 (LRM §5.5 `real`).
+    Real,
 }
 
 impl ValueKind {
     pub fn is_four_state(self) -> bool {
         matches!(self, ValueKind::Logic)
+    }
+
+    /// True bila tipe adalah floating point `real` (64-bit IEEE 754).
+    pub fn is_real(self) -> bool {
+        matches!(self, ValueKind::Real)
     }
 }
 
@@ -45,6 +52,14 @@ impl DataType {
         }
     }
 
+    pub fn real() -> Self {
+        Self {
+            kind: ValueKind::Real,
+            width: 64,
+            signed: false,
+        }
+    }
+
     pub fn with_width(self, width: u32) -> Self {
         Self { width, ..self }
     }
@@ -57,6 +72,7 @@ impl DataType {
         let base = match self.kind {
             ValueKind::Bit => "Bit",
             ValueKind::Logic => "Logic",
+            ValueKind::Real => return "Real".to_string(),
         };
         if self.signed {
             format!("Signed<{}>", self.width)
@@ -85,5 +101,12 @@ mod tests {
     fn type_name_includes_width() {
         assert_eq!(DataType::logic(32).type_name(), "Logic<32>");
         assert_eq!(DataType::signed(8).type_name(), "Signed<8>");
+    }
+
+    #[test]
+    fn real_type_name() {
+        assert_eq!(DataType::real().type_name(), "Real");
+        assert!(DataType::real().kind.is_real());
+        assert!(!DataType::real().kind.is_four_state());
     }
 }

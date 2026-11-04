@@ -40,7 +40,8 @@ pub fn generate_module(design: &Design) -> String {
     // sekuensial/combinational yang memanggil `$finish`. Gate hanya pada
     // `has_initial` membuat `$finish` di dalam `always_ff` pada design tanpa
     // `initial` tidak punya field untuk ditugaskan.
-    let perlu_finish = has_initial(design) || crate::system_task_gen::has_finish(design);
+    let perlu_finish =
+        has_initial(design) || crate::system_task_gen::has_finish(design) || has_forever(design);
     if perlu_finish {
         field_indent.push(&mut out);
         out.push_str("finished: bool,\n");
@@ -115,6 +116,8 @@ pub fn generate_module(design: &Design) -> String {
         out.push_str("dump_on: bool,\n");
         field_indent.push(&mut out);
         out.push_str("dump_path: &'static str,\n");
+        field_indent.push(&mut out);
+        out.push_str("dump_level: Option<u32>,\n");
     }
     indent.push(&mut out);
     out.push_str("}\n\n");
@@ -276,6 +279,8 @@ fn write_new(design: &Design, struct_name: &str, inner: &Indent, out: &mut Strin
         out.push_str("dump_on: false,\n");
         fields.push(out);
         out.push_str("dump_path: \"\",\n");
+        fields.push(out);
+        out.push_str("dump_level: None,\n");
     }
     if design.variables.iter().any(|v| v.initial.is_some()) {
         out.push_str("};\n");
@@ -316,31 +321,55 @@ fn write_new(design: &Design, struct_name: &str, inner: &Indent, out: &mut Strin
 
 fn write_accessors(design: &Design, inner: &Indent, out: &mut String) {
     for var in &design.variables {
-        let width = var.data_type.width;
         let field = var.name.to_lowercase();
 
         inner.push(out);
-        out.push_str(&format!("pub fn {}(&self) -> Bits<{}> {{\n", field, width));
-        inner.child().push(out);
-        out.push_str(&format!(
-            "self.signals[{}].read().resize::<{}>()\n",
-            var.signal_id, width
-        ));
-        inner.push(out);
-        out.push_str("}\n\n");
+        match var.data_type.kind {
+            sv_ir::datatype::ValueKind::Real => {
+                out.push_str(&format!("pub fn {}(&self) -> f64 {{\n", field));
+                inner.child().push(out);
+                out.push_str(&format!(
+                    "self.signals[{}].read().to_f64()\n",
+                    var.signal_id
+                ));
+                inner.push(out);
+                out.push_str("}\n\n");
 
-        inner.push(out);
-        out.push_str(&format!(
-            "pub fn set_{}(&mut self, value: Bits<{}>) {{\n",
-            field, width
-        ));
-        inner.child().push(out);
-        out.push_str(&format!(
-            "self.signals[{}].write(value.widen::<MAX_WIDTH>());\n",
-            var.signal_id
-        ));
-        inner.push(out);
-        out.push_str("}\n\n");
+                inner.push(out);
+                out.push_str(&format!("pub fn set_{}(&mut self, value: f64) {{\n", field));
+                inner.child().push(out);
+                out.push_str(&format!(
+                    "self.signals[{}].write(sv_runtime::Bits::<MAX_WIDTH>::from_f64(value));\n",
+                    var.signal_id
+                ));
+                inner.push(out);
+                out.push_str("}\n\n");
+            }
+            _ => {
+                let width = var.data_type.width;
+                out.push_str(&format!("pub fn {}(&self) -> Bits<{}> {{\n", field, width));
+                inner.child().push(out);
+                out.push_str(&format!(
+                    "self.signals[{}].read().resize::<{}>()\n",
+                    var.signal_id, width
+                ));
+                inner.push(out);
+                out.push_str("}\n\n");
+
+                inner.push(out);
+                out.push_str(&format!(
+                    "pub fn set_{}(&mut self, value: Bits<{}>) {{\n",
+                    field, width
+                ));
+                inner.child().push(out);
+                out.push_str(&format!(
+                    "self.signals[{}].write(value.widen::<MAX_WIDTH>());\n",
+                    var.signal_id
+                ));
+                inner.push(out);
+                out.push_str("}\n\n");
+            }
+        }
     }
 }
 
@@ -359,7 +388,7 @@ fn write_eval_comb(design: &Design, inner: &Indent, out: &mut String) {
         // LRM §20.3: setelah `$finish`, statement berikutnya tidak jalan lagi.
         // Penjaga hanya 필요 kalau design memang punya `$finish`; tanpa itu
         // field `finished` tidak dibangkitkan dan rujukan akan gagal compile.
-        write_statements(&process.body, out, &body);
+        write_statements(design, &process.body, out, &body);
     }
     inner.push(out);
     out.push_str("}\n\n");
@@ -444,7 +473,7 @@ fn write_eval_timed(design: &Design, inner: &Indent, out: &mut String) {
                 let lengan = arm.child();
                 lengan.push(out);
                 out.push_str(&format!("self.time_now = self.timed_time[{index}];\n"));
-                write_statements(&process.body, out, &lengan.child());
+                write_statements(design, &process.body, out, &lengan.child());
                 lengan.push(out);
                 out.push_str(&format!("self.timed_time[{index}] = self.time_now;\n"));
                 lengan.push(out);
@@ -464,7 +493,7 @@ fn write_eval_timed(design: &Design, inner: &Indent, out: &mut String) {
                 // Tiap proses berangkat dari waktu bangun sendiri (LRM §4.4).
                 arm.push(out);
                 out.push_str(&format!("self.time_now = self.timed_time[{index}];\n"));
-                write_statements(&process.body, out, &arm.child());
+                write_statements(design, &process.body, out, &arm.child());
                 arm.push(out);
                 out.push_str(&format!("self.timed_time[{index}] = self.time_now;\n"));
                 arm.push(out);
@@ -563,7 +592,7 @@ fn write_eval_seq(design: &Design, inner: &Indent, out: &mut String) {
         };
         out.push_str(&format!("if {} {{\n", syarat));
         body.push(out);
-        write_statements(&process.body, out, &body.child());
+        write_statements(design, &process.body, out, &body.child());
         body.push(out);
         out.push_str("}\n");
     }
@@ -734,6 +763,11 @@ fn write_dump_accessors(design: &Design, inner: &Indent, out: &mut String) {
     out.push_str("pub fn dump_path(&self) -> &'static str {\n");
     out.push_str("    self.dump_path\n");
     out.push_str("}\n\n");
+    inner.push(out);
+    out.push_str("/// Level hierarki dari `$dumpvars(n, ...)`; `None` bila tidak ditentukan.\n");
+    out.push_str("pub fn dump_level(&self) -> Option<u32> {\n");
+    out.push_str("    self.dump_level\n");
+    out.push_str("}\n\n");
 }
 
 /// Tulis method `eval_initial` bila ada blok `initial`.
@@ -873,7 +907,7 @@ fn write_eval_initial(design: &Design, inner: &Indent, out: &mut String) {
                     // dari seluruh `eval_initial` dan mematikan proses lain.
                     arm.push(out);
                     out.push_str("(|| {\n");
-                    write_statements(statements, out, &arm.child());
+                    write_statements(design, statements, out, &arm.child());
                     arm.push(out);
                     out.push_str("})();\n");
                 }
@@ -935,7 +969,7 @@ fn write_eval_initial(design: &Design, inner: &Indent, out: &mut String) {
                 // closure menjaga proses lain tetap jalan.
                 arm.push(out);
                 out.push_str("        (|| {\n");
-                write_statements(segment, out, &arm.child());
+                write_statements(design, segment, out, &arm.child());
                 arm.push(out);
                 out.push_str("        })();\n");
             }
@@ -979,9 +1013,9 @@ fn wake_gate(wake_plan: Option<&[Vec<Option<u64>>]>, index: usize, urut: usize) 
 }
 
 /// Tulis method `is_finished` bila design punya blok `initial` atau memanggil
-/// `$finish` pada proses mana pun (LRM §20.3).
+/// `$finish` pada proses mana pun, atau punya statement `forever` (LRM §20.3).
 fn write_is_finished(design: &Design, inner: &Indent, out: &mut String) {
-    if !has_initial(design) && !crate::system_task_gen::has_finish(design) {
+    if !has_initial(design) && !crate::system_task_gen::has_finish(design) && !has_forever(design) {
         return;
     }
     inner.push(out);
@@ -1115,6 +1149,52 @@ pub fn has_sequential(design: &Design) -> bool {
         .any(|p| p.kind == ProcessKind::Sequential)
 }
 
+/// True bila design punya setidaknya satu statement `forever`.
+///
+/// Digunakan untuk memutuskan apakah field `finished` dan method
+/// `is_finished()` perlu dibangkitkan — `forever` memeriksa `is_finished()`
+/// setiap iterasi agar `$finish` di dalam loop dapat menghentikan simulasi.
+///
+/// `forever` boleh muncul di dalam `initial`, `always_ff`, atau `always_comb`,
+/// yang semuanya direpresentasikan sebagai `Process` dengan `body` yang
+/// berisi statement `forever`. Pengecekan rekursif melalui seluruh hierarki
+/// statement dalam `process.body`.
+pub fn has_forever(design: &Design) -> bool {
+    design
+        .processes
+        .iter()
+        .any(|p| p.body.iter().any(stmt_mengandung_forever))
+}
+
+/// True bila satu statement IR atau turunannya mengandung `forever`.
+fn stmt_mengandung_forever(stmt: &Statement) -> bool {
+    match stmt {
+        Statement::Forever { .. } => true,
+        Statement::Block { body, .. } => body.iter().any(stmt_mengandung_forever),
+        Statement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            then_branch.iter().any(stmt_mengandung_forever)
+                || else_branch.iter().any(stmt_mengandung_forever)
+        }
+        Statement::Case { arms, .. } => arms
+            .iter()
+            .any(|arm| arm.body.iter().any(stmt_mengandung_forever)),
+        Statement::For { body, .. } => body.iter().any(stmt_mengandung_forever),
+        Statement::While { body, .. } => body.iter().any(stmt_mengandung_forever),
+        Statement::Repeat { body, .. } => body.iter().any(stmt_mengandung_forever),
+        Statement::Delay { body, .. } => stmt_mengandung_forever(body),
+        Statement::EventControl { body, .. } => body.iter().any(stmt_mengandung_forever),
+        Statement::Assign { .. }
+        | Statement::SystemTask { .. }
+        | Statement::Noop { .. }
+        | Statement::ProceduralAssign { .. }
+        | Statement::Deassign { .. } => false,
+    }
+}
+
 fn write_commit_pending(inner: &Indent, out: &mut String) {
     inner.push(out);
     out.push_str("pub fn commit_pending(&mut self) {\n");
@@ -1151,13 +1231,16 @@ fn write_step_scheduler(design: &Design, inner: &Indent, out: &mut String) {
         out.push_str(&format!("// {}\n", process.name));
         match process.kind {
             sv_ir::process::ProcessKind::Combinational => {
+                // Combinational process dievaluasi oleh driver melalui
+                // `eval_comb()` setiap langkah, bukan di-reschedule otomatis
+                // di scheduler. Reschedule otomatis tanpa pemeriksaan "sinyal
+                // berubah" menyebabkan infinite loop (step_scheduler selalu
+                // true karena event Active di waktu yang sama tidak pernah
+                // habis). Delta-cycle semantics lengkap (re-eval bila sinyal
+                // berubah dalam delta cycle yang sama) ditangguhkan ke fase
+                // berikutnya.
                 proc_body.push(out);
-                out.push_str("self.eval_comb();\n");
-                proc_body.push(out);
-                out.push_str("self.commit_pending();\n");
-                // Reschedule combinational process for next delta cycle if any signal changed
-                proc_body.push(out);
-                out.push_str(&format!("self.scheduler.schedule_at(self.time_now, ::sv_runtime::Region::Active, ::sv_runtime::EventKind::Process({pid}));\n"));
+                out.push_str("// Combinational: dievaluasi oleh driver via eval_comb()\n");
             }
             sv_ir::process::ProcessKind::Sequential => {
                 // Sequential processes are triggered by edge detection in driver
@@ -1273,6 +1356,10 @@ fn kumpulkan_argumen(stmt: &Statement, lebar: &mut u32) {
         Statement::Assign { assignment, .. } => {
             *lebar = (*lebar).max(lebar_logis_penuh(&assignment.value));
         }
+        Statement::ProceduralAssign { value, .. } => {
+            *lebar = (*lebar).max(lebar_logis_penuh(value));
+        }
+        Statement::Deassign { .. } => {}
         Statement::If {
             condition,
             then_branch,
@@ -1332,6 +1419,11 @@ fn kumpulkan_argumen(stmt: &Statement, lebar: &mut u32) {
         Statement::Delay { amount, body, .. } => {
             *lebar = (*lebar).max(lebar_logis_penuh(amount));
             kumpulkan_argumen(body, lebar);
+        }
+        Statement::Forever { body, .. } => {
+            for s in body {
+                kumpulkan_argumen(s, lebar);
+            }
         }
         Statement::Noop { .. } => {}
     }
@@ -1408,6 +1500,10 @@ fn kumpulkan_stmt(stmt: &Statement, out: &mut Vec<Expr>) {
         Statement::Assign { assignment, .. } => {
             out.push(assignment.value.clone());
         }
+        Statement::ProceduralAssign { value, .. } => {
+            out.push(value.clone());
+        }
+        Statement::Deassign { .. } => {}
         Statement::Case { selector, arms, .. } => {
             out.push(selector.clone());
             for arm in arms {
@@ -1470,6 +1566,7 @@ fn kumpulkan_stmt(stmt: &Statement, out: &mut Vec<Expr>) {
             out.push(amount.clone());
             kumpulkan_stmt(body, out);
         }
+        Statement::Forever { body, .. } => kumpulkan_list(body, out),
         Statement::Noop { .. } => {}
     }
 }
@@ -1503,4 +1600,51 @@ pub fn to_struct_name(name: &str) -> String {
 /// [`crate::module_name`] untuk versi yang aman dipakai sebagai `mod`.
 pub fn to_module_name(name: &str) -> String {
     crate::module_name::module_name(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sv_ir::datatype::DataType;
+    use sv_ir::process::{Process, ProcessKind, Span, Statement};
+    use sv_ir::Design;
+
+    fn kom(v: u64, w: u32) -> sv_ir::Expr {
+        sv_ir::Expr::constant(v, DataType::logic(w))
+    }
+
+    /// Bug Fase 1: combinational process di-reschedule otomatis di
+    /// `step_scheduler` tanpa memeriksa "sinyal berubah", sehingga
+    /// `step_scheduler` selalu `true` → infinite loop. Setelah perbaikan,
+    /// design yang HANYA punya proses combinational tidak boleh menghasilkan
+    /// `schedule_at` di `step_scheduler`.
+    #[test]
+    fn combinational_tidak_reschedule_otomatis_di_step_scheduler() {
+        let mut design = Design::new("m");
+        design.processes.push(Process {
+            name: "p_comb".to_string(),
+            kind: ProcessKind::Combinational,
+            sensitivity: Vec::new(),
+            body: vec![Statement::Assign {
+                assignment: sv_ir::process::Assignment {
+                    target: 1,
+                    slice: None,
+                    extra_slices: Vec::new(),
+                    value: kom(5, 8),
+                    style: sv_ir::process::AssignStyle::Blocking,
+                },
+                span: Span::default(),
+            }],
+            span: Span::default(),
+        });
+        let kode = generate_module(&design);
+        let Some(awal) = kode.find("pub fn step_scheduler") else {
+            panic!("step_scheduler harus ada: {kode}");
+        };
+        let sched = &kode[awal..];
+        assert!(
+            !sched.contains("schedule_at"),
+            "design tanpa proses timed tidak boleh schedule_at di step_scheduler:\n{kode}"
+        );
+    }
 }

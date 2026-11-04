@@ -1,7 +1,15 @@
-// Tanggung jawab: belah token berkas menjadi daftar module.
+// Tanggung jawab: belah token berkas menjadi daftar module dan typedef global.
 use sv_ast::module::Module;
+use sv_ast::typedef::TypeDefDecl;
 use sv_lexer::spanned::SpannedToken;
 use sv_lexer::token::Token;
+
+/// Hasil parse satu berkas: daftar module beserta `typedef` di luar module
+/// (compilation-unit scope, LRM §8.20).
+pub struct ParseResult {
+    pub modules: Vec<Module>,
+    pub typedefs_global: Vec<TypeDefDecl>,
+}
 
 /// Parse seluruh token berkas menjadi daftar module.
 /// Setiap irisan `module...endmodule` diparse terpisah.
@@ -9,8 +17,12 @@ use sv_lexer::token::Token;
 /// Direktif `timescale` yang ditemukan di antara modul diterapkan ke
 /// menyusulnya (LRM §21.8): satu direktif boleh berlaku untuk beberapa modul
 /// dan bisa berubah di tengah berkas.
-pub fn parse_file(tokens: &[SpannedToken]) -> Result<Vec<Module>, String> {
+///
+/// `typedef` di luar module (antara modul atau sebelum modul pertama) dikumpulkan
+/// sebagai compilation-unit scope (LRM §8.20) dan tersedia untuk semua module.
+pub fn parse_file(tokens: &[SpannedToken]) -> Result<ParseResult, String> {
     let mut out = Vec::new();
+    let mut typedefs_global = Vec::new();
     let mut idx = 0;
     let mut time_scale = sv_ast::time_scale::TimeScale::default();
     while idx < tokens.len() {
@@ -22,6 +34,13 @@ pub fn parse_file(tokens: &[SpannedToken]) -> Result<Vec<Module>, String> {
                 idx += 1 + eaten;
                 continue;
             }
+        }
+        // `typedef` di luar module — compilation-unit scope (LRM §8.20).
+        if tokens[idx].token == Token::Typedef {
+            let (decl, next) = super::typedef::parse_typedef(&tokens[idx..])?;
+            typedefs_global.push(decl);
+            idx += next;
+            continue;
         }
         if tokens[idx].token != Token::Module {
             return Err(format!("expected 'module', dapat {:?}", tokens[idx].token));
@@ -51,7 +70,10 @@ pub fn parse_file(tokens: &[SpannedToken]) -> Result<Vec<Module>, String> {
     if out.is_empty() {
         return Err("berkas kosong: tidak ada module".to_string());
     }
-    Ok(out)
+    Ok(ParseResult {
+        modules: out,
+        typedefs_global,
+    })
 }
 
 /// Parse argumen `timescale` setelah token direktif: `1us/1ps`.

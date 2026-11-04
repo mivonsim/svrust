@@ -87,15 +87,15 @@ Semantics: active → NBA → postponed, per delta cycle.
 ## CLI
 
 ```
-cargo sv check      // parse + elaborate semua modul root
-cargo sv build      // SV → Rust → native binary
-cargo sv run        // build + execute
-cargo sv elaborate  // statistik + daftar proses tiap modul root
-cargo sv codegen    // Rust source saja (satu berkas per design)
-cargo sv inspect    // statistik design
-cargo sv clean      // clean target/sv/
-cargo sv help       // bantuan
-cargo sv version    // versi
+svrust check      // parse + elaborate semua modul root
+svrust build      // SV → Rust → native binary
+svrust run        // build + execute
+svrust elaborate  // statistik + daftar proses tiap modul root
+svrust codegen    // Rust source saja (satu berkas per design)
+svrust  inspect    // statistik design
+svrust clean      // clean target/sv/
+svrust help       // bantuan
+svrust  version    // versi
 ```
 
 Opsi: `--rtl <BERKAS>` (boleh diulang), `--top <NAMA>` (batasi modul top),

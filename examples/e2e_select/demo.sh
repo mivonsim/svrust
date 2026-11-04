@@ -4,7 +4,7 @@ set -e
 cd "$(dirname "$0")/../.."
 
 RTL_DIR=examples/e2e_select/rtl
-SV="cargo run -q -p cargo-sv -- sv"
+SV="cargo run -q -p svrust --"
 
 # Cek bahwa satu baris keluaran bernilai persis seperti yang diharapkan.
 cek() {
@@ -92,15 +92,30 @@ echo "=== 5. range select pada array unpacked ditolak eksplisit ==="
 gagal=$($SV check --rtl $RTL_DIR/tb_select_unpacked_range.sv --top tb_select_unpacked_range 2>&1 || true)
 cek_gagal "unpacked" "range select" "$gagal"
 
-echo "=== 6. indeks bertingkat pada LHS ditolak ==="
-# Dulu `y[3:0][1] = 1'b1` Accepted lalu token `[1]` dibuang diam-diam.
-gagal=$($SV check --rtl $RTL_DIR/tb_select_lhs_nested.sv --top tb_select_lhs_nested 2>&1 || true)
-cek_gagal "lhs_nested" "indeks bertingkat" "$gagal"
+echo "=== 6. indeks bertingkat pada LHS didukung ==="
+# `y[3:0][1] = 1'b1` sekarang diterima dan dielaborasi dengan benar.
+keluaran=$($SV run --rtl $RTL_DIR/tb_select_lhs_nested.sv --top tb_select_lhs_nested --steps 2 2>/dev/null)
+cek "lhs_nested" "y=2" "$(echo "$keluaran" | grep '^y=')"
 
 echo "=== 7. indeks genvar berpola aritmetika ditolak ==="
 # `r[i - 1]` di dalam generate dulu dipakai penuh padahal `- 1` dibuang,
 # sehingga tulisannya jatuh pada bit yang salah.
 gagal=$($SV check --rtl $RTL_DIR/tb_select_genvar_arit.sv --top tb_select_genvar_arit 2>&1 || true)
 cek_gagal "genvar" "satu token" "$gagal"
+
+echo "=== 8. indeks genvar bertingkat ditolak ==="
+# `y[i][0]` (genvar + nested slice) belum didukung di parser.
+cat > /tmp/sv_nested_genvar.sv <<'SV'
+module tb;
+  logic [7:0] y;
+  generate
+    for (genvar i = 0; i < 1; i = i + 1) begin : g
+      assign y[i][0] = 1'b1;
+    end
+  endgenerate
+endmodule
+SV
+gagal=$($SV check --rtl /tmp/sv_nested_genvar.sv --top tb 2>&1 || true)
+cek_gagal "nested_genvar" "expected '='" "$gagal"
 
 echo "DEMO OK"

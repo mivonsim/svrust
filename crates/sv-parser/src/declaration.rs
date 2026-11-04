@@ -1,6 +1,7 @@
 // Tanggung jawab: parse deklarasi signal (logic/wire/reg/bit).
 use sv_ast::declaration::Declaration;
 use sv_ast::width::WidthExpr;
+use sv_lexer::span::Span;
 use sv_lexer::spanned::SpannedToken;
 use sv_lexer::token::Token;
 
@@ -8,60 +9,64 @@ use sv_lexer::token::Token;
 ///
 /// `logic [7:0] a, b, c;` mendeklarasikan tiga signal yang berbagi tipe,
 /// lebar, dan signedness yang sama (LRM §6.2), jadi hasilnya berupa vektor.
-/// Parse satu dimensi unpacked (LRM §7.8) pada `idx`.
+/// Parse satu atau lebih dimensi unpacked (LRM §7.8) pada `idx`.
 ///
 /// Bentuk yang diterima: `[N]` (`size = N`, indeks mulai 0 menaik) dan
-/// `[MSB:LSB]` dengan kedua batas literal.
+/// `[MSB:LSB]` dengan kedua batas literal. Beberapa dimensi boleh ditulis
+/// berturut-turut, misal `mem [0:3][0:15]`.
 fn parse_unpacked(
     tokens: &[SpannedToken],
     idx: usize,
-) -> Result<(Option<sv_ast::declaration::UnpackedDim>, usize), String> {
-    if tokens.get(idx).map(|t| &t.token) != Some(&Token::LBracket) {
-        return Ok((None, 0));
-    }
-    let angka = |at: usize| -> Result<u64, String> {
-        match tokens.get(at).map(|t| &t.token) {
-            Some(Token::Number(n)) => Ok(*n),
-            _ => Err(format!(
-                "batas dimensi unpacked harus literal, ditemukan {:?}",
-                tokens.get(at).map(|t| &t.token)
-            )),
-        }
-    };
-    let msb = angka(idx + 1)?;
-    let mut cursor = idx + 2;
-    if tokens.get(cursor).map(|t| &t.token) == Some(&Token::Colon) {
-        let lsb = angka(cursor + 1)?;
-        cursor += 2;
-        if tokens.get(cursor).map(|t| &t.token) != Some(&Token::RBracket) {
-            return Err("expected ']' pada dimensi unpacked".to_string());
-        }
-        cursor += 1;
-        let size = msb.abs_diff(lsb) + 1;
-        // `[left:right]`: `left` selalu indeks PERTAMA yang tertulis.
-        // `left >= right` berarti menurun (`[3:0]`), selain itu menaik
-        // (`[0:3]`).
-        let descending = msb >= lsb;
-        return Ok((
-            Some(sv_ast::declaration::UnpackedDim {
+) -> Result<(Option<sv_ast::declaration::UnpackedDims>, usize), String> {
+    let mut cursor = idx;
+    let mut dims = Vec::new();
+    while tokens.get(cursor).map(|t| &t.token) == Some(&Token::LBracket) {
+        let angka = |at: usize| -> Result<u64, String> {
+            match tokens.get(at).map(|t| &t.token) {
+                Some(Token::Number(n)) => Ok(*n),
+                _ => Err(format!(
+                    "batas dimensi unpacked harus literal, ditemukan {:?}",
+                    tokens.get(at).map(|t| &t.token)
+                )),
+            }
+        };
+        let msb = angka(cursor + 1)?;
+        let mut c = cursor + 2;
+        if tokens.get(c).map(|t| &t.token) == Some(&Token::Colon) {
+            let lsb = angka(c + 1)?;
+            c += 2;
+            if tokens.get(c).map(|t| &t.token) != Some(&Token::RBracket) {
+                return Err("expected ']' pada dimensi unpacked".to_string());
+            }
+            c += 1;
+            let size = msb.abs_diff(lsb) + 1;
+            // `[left:right]`: `left` selalu indeks PERTAMA yang tertulis.
+            // `left >= right` berarti menurun (`[3:0]`), selain itu menaik
+            // (`[0:3]`).
+            let descending = msb >= lsb;
+            dims.push(sv_ast::declaration::UnpackedDim {
                 size,
                 first: msb,
                 descending,
-            }),
-            cursor - idx,
-        ));
+            });
+        } else if tokens.get(c).map(|t| &t.token) == Some(&Token::RBracket) {
+            c += 1;
+            // `[N]` berarti N elemen dengan indeks 0..N-1 menaik.
+            dims.push(sv_ast::declaration::UnpackedDim {
+                size: msb,
+                first: 0,
+                descending: false,
+            });
+        } else {
+            return Err("expected ']' pada dimensi unpacked".to_string());
+        }
+        cursor = c;
     }
-    if tokens.get(cursor).map(|t| &t.token) != Some(&Token::RBracket) {
-        return Err("expected ']' pada dimensi unpacked".to_string());
+    if dims.is_empty() {
+        return Ok((None, 0));
     }
-    cursor += 1;
-    // `[N]` berarti N elemen dengan indeks 0..N-1 menaik.
     Ok((
-        Some(sv_ast::declaration::UnpackedDim {
-            size: msb,
-            first: 0,
-            descending: false,
-        }),
+        Some(sv_ast::declaration::UnpackedDims { dims }),
         cursor - idx,
     ))
 }
@@ -73,6 +78,12 @@ pub fn parse_declaration(tokens: &[SpannedToken]) -> Result<(Vec<Declaration>, u
 
     let span = tokens[0].span;
     let mut idx = 1; // skip type keyword
+
+    // `struct` / `union` packed (LRM §6.7, §8): body berisi daftar field
+    // di antara kurung kurawal, diikuti nama variabel dan ';'.
+    if matches!(tokens[0].token, Token::Struct | Token::Union) {
+        return parse_struct_union(tokens, span);
+    }
 
     // LRM §6.16 Tabel 6-22: tipe integer atom punya lebar dan signedness tetap
     // sehingga tidak memerlukan packed dimension. `integer`/`int` 32-bit
@@ -88,6 +99,9 @@ pub fn parse_declaration(tokens: &[SpannedToken]) -> Result<(Vec<Declaration>, u
         Token::ShortInt => Some((16, true)),
         Token::LongInt => Some((64, true)),
         Token::Time => Some((64, false)),
+        Token::Real => Some((64, false)),
+        Token::Supply0 => Some((1, false)),
+        Token::Supply1 => Some((1, false)),
         _ => None,
     };
     let lebar_bulat = tipe_bulat.map(|(w, _)| w);
@@ -114,6 +128,15 @@ pub fn parse_declaration(tokens: &[SpannedToken]) -> Result<(Vec<Declaration>, u
         None => lebar_tertulis,
     };
 
+    // Nama tipe eksplisit untuk tipe non-bit-vector (mis. `real`) yang
+    // dipakai oleh elaborator untuk membangun `DataType` yang benar.
+    let type_nama = match tokens[0].token {
+        Token::Real => Some("real".to_string()),
+        Token::Supply0 => Some("supply0".to_string()),
+        Token::Supply1 => Some("supply1".to_string()),
+        _ => None,
+    };
+
     // Daftar deklarator dipisahkan koma dan berbagi tipe yang sama.
     let mut declarations = Vec::new();
     loop {
@@ -127,13 +150,11 @@ pub fn parse_declaration(tokens: &[SpannedToken]) -> Result<(Vec<Declaration>, u
         idx += 1;
 
         // LRM §7.8: dimensi unpacked menyusul nama deklarator, misal
-        // `logic [7:0] mem [0:15];` — bukan setelah packed dimension.
+        // `logic [7:0] mem [0:15];` atau `logic [7:0] mem [0:3][0:15];` —
+        // bukan setelah packed dimension.
         let (unpacked, dim_pakai) = parse_unpacked(tokens, idx)?;
         if unpacked.is_some() {
             idx += dim_pakai;
-            if matches!(tokens.get(idx).map(|t| &t.token), Some(Token::LBracket)) {
-                return Err("dimensi unpacked bertingkat belum didukung".to_string());
-            }
         }
 
         // Inisialisasi opsional per deklarator: `logic a = 1, b = 2;`
@@ -152,8 +173,9 @@ pub fn parse_declaration(tokens: &[SpannedToken]) -> Result<(Vec<Declaration>, u
             width: width.clone(),
             signed,
             init,
-            type_name: None,
+            type_name: type_nama.clone(),
             unpacked,
+            struct_fields: None,
             span,
         });
 
@@ -173,6 +195,130 @@ pub fn parse_declaration(tokens: &[SpannedToken]) -> Result<(Vec<Declaration>, u
     idx += 1;
 
     Ok((declarations, idx))
+}
+
+/// Parse `struct` / `union` packed (LRM §6.7, §8).
+///
+/// Bentuk: `struct { tipe nama [, tipe nama, ...] } nama_variabel;`
+/// atau `union { ... } nama_variabel;`
+///
+/// Setiap field dipisah koma, dengan format `tipe [lebar] nama` atau
+/// `nama : tipe [lebar]`.
+fn parse_struct_union(
+    tokens: &[SpannedToken],
+    span: Span,
+) -> Result<(Vec<Declaration>, usize), String> {
+    let is_struct = matches!(tokens[0].token, Token::Struct);
+    let jenis = if is_struct { "struct" } else { "union" };
+    let mut idx = 1; // skip `struct`/`union`
+
+    // Expect `{`
+    if tokens.get(idx).map(|t| &t.token) != Some(&Token::LBrace) {
+        return Err(format!("expected '{{' after {}", jenis));
+    }
+    idx += 1;
+
+    let mut fields: Vec<sv_ast::declaration::StructField> = Vec::new();
+    loop {
+        if tokens.get(idx).map(|t| &t.token) == Some(&Token::RBrace) {
+            idx += 1;
+            break;
+        }
+        if idx >= tokens.len() {
+            return Err(format!("unterminated {}", jenis));
+        }
+
+        // Baca tipe field (bisa berupa keyword tipe atau ident untuk typedef)
+        let tipe_token = tokens[idx].token.clone();
+        let _tipe_nama = match &tipe_token {
+            Token::Ident(n) => n.clone(),
+            t => {
+                // Konversi token keyword menjadi string nama
+                match t {
+                    Token::Logic => "logic".to_string(),
+                    Token::Bit => "bit".to_string(),
+                    Token::Wire => "wire".to_string(),
+                    Token::Reg => "reg".to_string(),
+                    Token::Integer => "integer".to_string(),
+                    Token::Int => "int".to_string(),
+                    Token::Byte => "byte".to_string(),
+                    Token::ShortInt => "shortint".to_string(),
+                    Token::LongInt => "longint".to_string(),
+                    Token::Time => "time".to_string(),
+                    Token::Real => "real".to_string(),
+                    _ => return Err(format!("tipe field tidak dikenal: {:?}", t)),
+                }
+            }
+        };
+        idx += 1;
+
+        // Opsional packed dimension [msb:lsb]
+        let (lebar_opt, consumed) = super::dimension::parse_dimension(tokens, idx)?;
+        idx += consumed;
+        let lebar = lebar_opt;
+
+        // Field name: ident setelah tipe, atau `nama :` jika formatnya `nama : tipe`
+        let field_nama = match &tokens[idx].token {
+            Token::Ident(n) => n.clone(),
+            _ => return Err(format!("expected field name in {}", jenis)),
+        };
+        idx += 1;
+
+        fields.push(sv_ast::declaration::StructField {
+            name: field_nama,
+            width: lebar,
+            signed: false,
+        });
+
+        // Koma atau }
+        match tokens.get(idx).map(|t| &t.token) {
+            Some(&Token::Comma) => {
+                idx += 1;
+            }
+            Some(&Token::RBrace) => {
+                // Akan ditangani di iterasi berikutnya
+            }
+            _ => return Err(format!("expected ',' or '{{' in {}", jenis)),
+        }
+    }
+
+    // Expect nama variabel setelah `}`
+    if idx >= tokens.len() {
+        return Err(format!("expected variable name after {}", jenis));
+    }
+    let var_nama = match &tokens[idx].token {
+        Token::Ident(n) => n.clone(),
+        _ => return Err("expected variable name".to_string()),
+    };
+    idx += 1;
+
+    // Expect `;`
+    if idx >= tokens.len() || tokens[idx].token != Token::Semi {
+        return Err("expected ';'".to_string());
+    }
+    idx += 1;
+
+    let lebar_total = fields
+        .iter()
+        .map(|f| match f.width {
+            WidthExpr::Literal(w) => w,
+            _ => 0,
+        })
+        .sum();
+
+    Ok((
+        vec![Declaration {
+            name: var_nama,
+            width: WidthExpr::Literal(lebar_total),
+            signed: false,
+            init: None,
+            type_name: Some(jenis.to_string()),
+            unpacked: None,
+            struct_fields: Some(fields),
+            span,
+        }],
+        idx,
+    ))
 }
 
 #[cfg(test)]
@@ -253,5 +399,61 @@ mod tests {
         let decls = parse("logic signed [15:0] hi, lo;");
         assert_eq!(decls.len(), 2);
         assert!(decls.iter().all(|d| d.signed));
+    }
+
+    #[test]
+    fn deklarasi_real() {
+        // LRM §5.5: `real` adalah floating point 64-bit.
+        let d = parse_one("real r;");
+        assert_eq!(d.name, "r");
+        assert_eq!(d.width, WidthExpr::Literal(64));
+        assert!(!d.signed);
+        assert_eq!(d.type_name.as_deref(), Some("real"));
+    }
+
+    #[test]
+    fn deklarasi_supply0_supply1() {
+        // LRM §6.6: `supply0`/`supply1` adalah net konstan 1-bit.
+        let d0 = parse_one("supply0 z;");
+        assert_eq!(d0.name, "z");
+        assert_eq!(d0.width, WidthExpr::Literal(1));
+        assert!(!d0.signed);
+        assert_eq!(d0.type_name.as_deref(), Some("supply0"));
+
+        let d1 = parse_one("supply1 o;");
+        assert_eq!(d1.name, "o");
+        assert_eq!(d1.width, WidthExpr::Literal(1));
+        assert!(!d1.signed);
+        assert_eq!(d1.type_name.as_deref(), Some("supply1"));
+    }
+
+    #[test]
+    fn deklarasi_struct_union() {
+        // LRM §6.7, §8: `struct` dan `union` packed.
+        let d = parse_one("struct { logic [7:0] a, logic [3:0] b } s;");
+        assert_eq!(d.name, "s");
+        assert_eq!(d.type_name.as_deref(), Some("struct"));
+        assert_eq!(d.struct_fields.as_ref().unwrap().len(), 2);
+        assert_eq!(
+            d.struct_fields.as_ref().unwrap()[0],
+            sv_ast::declaration::StructField {
+                name: "a".to_string(),
+                width: WidthExpr::Literal(8),
+                signed: false,
+            }
+        );
+        assert_eq!(
+            d.struct_fields.as_ref().unwrap()[1],
+            sv_ast::declaration::StructField {
+                name: "b".to_string(),
+                width: WidthExpr::Literal(4),
+                signed: false,
+            }
+        );
+
+        let u = parse_one("union { logic [7:0] x, logic [7:0] y } u;");
+        assert_eq!(u.name, "u");
+        assert_eq!(u.type_name.as_deref(), Some("union"));
+        assert_eq!(u.struct_fields.as_ref().unwrap().len(), 2);
     }
 }

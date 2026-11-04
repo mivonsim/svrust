@@ -6,8 +6,9 @@ use sv_elaborator::ElaborateError;
 /// Parse multi-file lalu elabore dengan `top` yang diberikan.
 fn err_top(sumber: &str, top: &str) -> ElaborateError {
     let tokens = sv_lexer::lex(sumber).expect("lex");
-    let modules = sv_parser::parse_file(&tokens).expect("parse");
-    sv_elaborator::elaborate_top(&modules, top).expect_err("elaborate harus gagal")
+    let parsed = sv_parser::parse_file(&tokens).expect("parse");
+    sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, top)
+        .expect_err("elaborate harus gagal")
 }
 
 // BUG (ditemukan fuzzing): `a` menginstans `b` dan `b` menginstans `a` membuat
@@ -59,8 +60,9 @@ fn hierarki_legitimate_berhasil_dielaborasi() {
         ));
     }
     let tokens = sv_lexer::lex(&sumber).expect("lex");
-    let modules = sv_parser::parse_file(&tokens).expect("parse");
-    sv_elaborator::elaborate_top(&modules, "m7").expect("hierarki 8 tingkat harus sah");
+    let parsed = sv_parser::parse_file(&tokens).expect("parse");
+    sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, "m7")
+        .expect("hierarki 8 tingkat harus sah");
 }
 
 #[test]
@@ -71,8 +73,9 @@ fn instansiasi_langsung_tidak_menghapus_modul_induk() {
                   module mid(input a, output y); leaf u0(.a(a), .y(y)); endmodule\n\
                   module top(input a, output y); mid u0(.a(a), .y(y)); endmodule\n";
     let tokens = sv_lexer::lex(sumber).expect("lex");
-    let modules = sv_parser::parse_file(&tokens).expect("parse");
-    let design = sv_elaborator::elaborate_top(&modules, "top").expect("elaborate");
+    let parsed = sv_parser::parse_file(&tokens).expect("parse");
+    let design = sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, "top")
+        .expect("elaborate");
     // Sinyal `y` top harus tetap ada.
     assert!(
         design.variables.iter().any(|v| v.name == "y"),
