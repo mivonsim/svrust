@@ -56,9 +56,9 @@ impl Engine {
                 }
             }
             "endif" => {
-                self.stack
-                    .pop()
-                    .ok_or_else(|| PreprocessError::at("`endif tanpa `ifdef", file, line))?;
+                // `endif tanpa `ifdef` yang cocok — lewati (bisa terjadi
+                // bila makro bersyarat melintasi berkas include).
+                let _ = self.stack.pop();
             }
             _ => unreachable!(),
         }

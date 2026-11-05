@@ -66,6 +66,10 @@ pub fn parse_file(tokens: &[SpannedToken]) -> Result<ParseResult, String> {
         }
         out.push(modul);
         idx = akhir + 1;
+        // `endmodule : label` bentuk labeled endmodule (LRM §12.9).
+        if idx < tokens.len() && tokens[idx].token == Token::Colon {
+            idx += 2; // skip ':' and label name
+        }
     }
     if out.is_empty() {
         return Err("berkas kosong: tidak ada module".to_string());

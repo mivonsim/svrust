@@ -459,6 +459,10 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
     if idx >= tokens.len() {
         return Err("expected 'endmodule'".to_string());
     }
+    // `endmodule : name` bentuk labeled endmodule (LRM §12.9).
+    if idx + 1 < tokens.len() && tokens[idx + 1].token == Token::Colon {
+        idx += 2; // skip ':' and label name
+    }
 
     // Deklarasi lokal di dalam blok prosedural diberi nama unik per module,
     // sekaligus rujukannya ditulis ulang mengikuti scope blok.

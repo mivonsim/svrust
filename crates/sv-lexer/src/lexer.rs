@@ -24,6 +24,18 @@ pub fn lex(source: &str) -> Result<Vec<SpannedToken>, LexError> {
             Some(&c) => c,
             None => break,
         };
+        // Line continuation: `\` di akhir baris digabung dengan baris berikutnya
+        // (LRM §3.3.2: backslash-newline dihapus sebelum pemrosesan lebih lanjut).
+        if ch == '\\' && chars.peek() == Some(&'\n') {
+            chars.next(); // consume '\'
+            byte_offset += 1;
+            chars.next(); // consume '\n'
+            byte_offset += 1;
+            col = 0;
+            line += 1;
+            continue;
+        }
+        let start_line = line;
         let start_line = line;
         let start_col = col;
         let start_offset = byte_offset;

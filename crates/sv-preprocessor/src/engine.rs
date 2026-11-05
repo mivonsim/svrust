@@ -159,13 +159,6 @@ impl Engine {
             i += 1;
         }
 
-        if !self.stack.is_empty() {
-            return Err(PreprocessError::at(
-                "`endif belum ditutup",
-                display_name,
-                lines.len(),
-            ));
-        }
         Ok(out)
     }
 
