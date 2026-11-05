@@ -1,5 +1,6 @@
 // Tanggung jawab: node AST untuk deklarasi task/function SystemVerilog.
 use crate::combinational::CombinationalStatement;
+use crate::declaration::UnpackedDims;
 use crate::expression::Expr;
 use crate::width::WidthExpr;
 use sv_lexer::span::Span;
@@ -18,6 +19,9 @@ pub struct RoutineArg {
     pub name: String,
     pub direction: ArgDirection,
     pub width: WidthExpr,
+    /// Dimensi unpacked setelah nama, misal `input logic [7:0] a [0:1]`.
+    /// `None` berarti skalar atau packed array tunggal.
+    pub unpacked: Option<UnpackedDims>,
     pub signed: bool,
     pub span: Span,
 }

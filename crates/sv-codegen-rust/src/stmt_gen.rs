@@ -398,23 +398,55 @@ fn write_assignment(
     write_expr(&assignment.value, out, indent);
     out.push_str(";\n");
 
-    let mask = match assignment.slice {
-        None => "Bits::<MAX_WIDTH>::satu()".to_string(),
-        // Masker dihitung saat runtime (`range_mask`) bukan jadi literal `u64`:
-        // irisan pada sinyal lebih dari 64 bit tidak bisa diwakili `u64` —
-        // `1u64 << lsb` panic di debug dan wrap diam-diam di release.
-        Some(slice) => {
-            let (lsb, width) = slice.mask_range();
-            format!("sv_runtime::range_mask::<MAX_WIDTH>({lsb}, {width})")
+    // Deteksi penulisan elemen penuh array unpacked, misal `mem[k] = ...`.
+    // Nilai ditulis ke seluruh elemen pada posisi elemennya (bukan write_masked
+    // 1-bit), karena `mem[k]` adalah elemen utuh lebar elemen.
+    let unpacked_elemen = design
+        .variables
+        .iter()
+        .find(|v| v.signal_id == assignment.target)
+        .and_then(|v| design.unpacked_dims(v.signal_id))
+        .filter(|_| matches!(assignment.slice, Some(s) if s.msb == s.lsb))
+        .map(|dims| {
+            let idx = assignment.slice.unwrap().msb as usize;
+            let mut perkalian: u64 = dims.iter().map(|(_, size, _)| *size).product();
+            let mut offset: u64 = 0;
+            for (first, size, descending) in dims {
+                perkalian /= size;
+                let d = if *descending {
+                    first - idx as u64
+                } else {
+                    idx as u64 - first
+                };
+                offset += d * perkalian;
+            }
+            let elem_width = design
+                .variables
+                .iter()
+                .find(|v| v.signal_id == assignment.target)
+                .map(|v| v.data_type.width)
+                .unwrap_or(1);
+            (offset, elem_width)
+        });
+    let mask = match unpacked_elemen {
+        Some((offset, elem_width)) => {
+            format!("sv_runtime::range_mask::<MAX_WIDTH>({offset}, {elem_width})")
         }
+        None => match assignment.slice {
+            None => "Bits::<MAX_WIDTH>::satu()".to_string(),
+            Some(slice) => {
+                let (lsb, width) = slice.mask_range();
+                format!("sv_runtime::range_mask::<MAX_WIDTH>({lsb}, {width})")
+            }
+        },
     };
     let seluruh = assignment.slice.is_none();
-    // LRM §10.10.1: nilai harus berada pada posisi bit yang dituju irisan,
-    // bukan di bit terendah. Tanpa pergeseran ini `y[3] = b` menulis ke bit 0
-    // dan bukan ke bit 3.
-    let nilai = match assignment.slice {
-        Some(slice) if slice.lsb > 0 => format!("({} << {})", temp, slice.lsb),
-        _ => temp,
+    let nilai = match unpacked_elemen {
+        Some((offset, _)) => format!("({} << {offset})", temp),
+        None => match assignment.slice {
+            Some(slice) if slice.lsb > 0 => format!("({} << {})", temp, slice.lsb),
+            _ => temp,
+        },
     };
     // Tentukan apakah target bertipe real (LRM §5.5). Bila ya, nilai harus
     // disimpan lewat `from_f64()` agar bit pattern IEEE 754 benar, bukan

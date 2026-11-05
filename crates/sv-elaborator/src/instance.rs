@@ -394,6 +394,15 @@ fn lower_instance_body(
             symbol = symbol.dengan_unpacked(dims.clone(), bit);
         }
         let id = symbols.insert(symbol)?;
+        if let Some(dims) = &d.unpacked {
+            design.unpacked_dims.push((
+                id,
+                dims.dims
+                    .iter()
+                    .map(|d| (d.first, d.size, d.descending))
+                    .collect(),
+            ));
+        }
         design.add_variable(VarDecl::new(
             nama.clone(),
             ScopePath::root().child(nama),
@@ -444,6 +453,15 @@ fn lower_instance_body(
             symbol = symbol.dengan_unpacked(dims.clone(), bit as u32);
         }
         let id = symbols.insert(symbol)?;
+        if let Some(dims) = &d.unpacked {
+            design.unpacked_dims.push((
+                id,
+                dims.dims
+                    .iter()
+                    .map(|d| (d.first, d.size, d.descending))
+                    .collect(),
+            ));
+        }
         design.add_variable(VarDecl::new(
             nama.clone(),
             ScopePath::root().child(nama),

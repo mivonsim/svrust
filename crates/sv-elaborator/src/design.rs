@@ -346,10 +346,20 @@ fn isi_body(
             unpacked: None,
             span: decl.span,
         };
+        let mut pending_unpacked: Option<Vec<(u64, u64, bool)>> = None;
         if let Some(dim) = unpacked {
-            symbol = symbol.dengan_unpacked(dim, bit);
+            pending_unpacked = Some(
+                dim.dims
+                    .iter()
+                    .map(|d| (d.first, d.size, d.descending))
+                    .collect(),
+            );
+            symbol = symbol.dengan_unpacked(dim.clone(), bit);
         }
         let id = symbols.insert(symbol)?;
+        if let Some(dims_vec) = pending_unpacked {
+            design.unpacked_dims.push((id, dims_vec));
+        }
 
         design.add_variable(VarDecl::new(
             decl.name.clone(),

@@ -1,4 +1,6 @@
 // Tanggung jawab: parse packed dimension menjadi ekspresi lebar.
+use sv_ast::declaration::{UnpackedDim, UnpackedDims};
+use sv_ast::expression::Expr;
 use sv_ast::width::WidthExpr;
 use sv_lexer::spanned::SpannedToken;
 use sv_lexer::token::Token;
@@ -140,6 +142,60 @@ pub fn parse_dimension(
         },
         cursor - start,
     ))
+}
+
+/// Parse urutan dimensi unpacked `[msb:lsb][...]` setelah nama (LRM §7.8).
+///
+/// Mengembalikan `None` bila tidak ada dimensi unpacked. Setiap dimensi
+/// dicatat sebagai `UnpackedDim { size, first, descending }` dari luar ke
+/// dalam, selaras dengan `UnpackedDims::offset`.
+pub fn parse_unpacked_dims(
+    tokens: &[SpannedToken],
+    mut idx: usize,
+) -> Result<(Option<UnpackedDims>, usize), String> {
+    let mut dims = Vec::new();
+    let start = idx;
+    while tokens.get(idx).map(|t| &t.token) == Some(&Token::LBracket) {
+        idx += 1;
+        let (msb, eaten) = crate::expression::parse_expression(&tokens[idx..])?;
+        idx += eaten;
+        let lsb = if tokens.get(idx).map(|t| &t.token) == Some(&Token::Colon) {
+            idx += 1;
+            let (expr, eaten) = crate::expression::parse_expression(&tokens[idx..])?;
+            idx += eaten;
+            Some(Box::new(expr))
+        } else {
+            None
+        };
+        if tokens.get(idx).map(|t| &t.token) != Some(&Token::RBracket) {
+            return Err("expected ']' pada dimensi unpacked".to_string());
+        }
+        idx += 1;
+        let (first, size, descending) = match (&msb, &lsb) {
+            (Expr::Number(a), Some(b)) => match b.as_ref() {
+                Expr::Number(bb) => {
+                    let a = *a as i64;
+                    let b = *bb as i64;
+                    if a >= b {
+                        (b as u64, (a - b + 1) as u64, false)
+                    } else {
+                        (a as u64, (b - a + 1) as u64, true)
+                    }
+                }
+                _ => (0, 0, false),
+            },
+            _ => (0, 0, false),
+        };
+        dims.push(UnpackedDim {
+            size,
+            first,
+            descending,
+        });
+    }
+    if dims.is_empty() {
+        return Ok((None, idx - start));
+    }
+    Ok((Some(UnpackedDims { dims }), idx - start))
 }
 
 #[cfg(test)]

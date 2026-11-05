@@ -173,11 +173,16 @@ fn parse_arg(tokens: &[SpannedToken]) -> Result<(RoutineArg, usize), String> {
     let arg_span = tokens[idx].span;
     idx += 1;
 
+    // Dimensi unpacked setelah nama, misal `input logic [7:0] a [0:1]`.
+    let (unpacked, consumed) = super::dimension::parse_unpacked_dims(tokens, idx)?;
+    idx += consumed;
+
     Ok((
         RoutineArg {
             name,
             direction,
             width,
+            unpacked,
             signed,
             span: if arg_span == Span::dummy() {
                 span
@@ -305,6 +310,28 @@ mod tests {
         assert_eq!(decl.args[1].direction, ArgDirection::Input);
         // Task tidak punya nilai balik meski header menuliskan dimension.
         assert!(decl.return_width.is_none());
+    }
+
+    #[test]
+    fn task_dengan_argumen_array_unpacked() {
+        // LRM §7.8 + §13.3: argumen task boleh bertipe array unpacked,
+        // misal `input logic [7:0] a [0:1]`.
+        let src =
+            "task t(input logic [7:0] a [0:1], output logic [7:0] q [0:1]); q[0] = a[0]; endtask";
+        let decl = parse(src);
+        assert_eq!(decl.args.len(), 2);
+        assert_eq!(decl.args[0].name, "a");
+        assert_eq!(decl.args[0].direction, ArgDirection::Input);
+        assert_eq!(
+            decl.args[0].unpacked.as_ref().map(|d| d.dims.len()),
+            Some(1)
+        );
+        assert_eq!(decl.args[1].name, "q");
+        assert_eq!(decl.args[1].direction, ArgDirection::Output);
+        assert_eq!(
+            decl.args[1].unpacked.as_ref().map(|d| d.dims.len()),
+            Some(1)
+        );
     }
 
     #[test]

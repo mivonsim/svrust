@@ -382,6 +382,29 @@ Semua 10 fase telah selesai.
 - `cargo fmt --check`: clean
 - `examples/e2e_unpacked_multi/demo.sh`: DEMO OK
 
+## Ringkasan Fase 15 (Selesai)
+
+### Implementasi
+
+1. **Array sebagai port/argumen task/function (LRM §13.3 + §7.8)**
+   - `sv-ast`/`sv-ir`: `RoutineArg` dan `VarDecl` membawa dimensi unpacked; `Design::unpacked_dims` melacak offset elemen.
+   - `sv-parser`: `parse_arg` menerima `[dims]` unpacked setelah nama argumen (`dimension.rs`).
+   - `sv-elaborator`: argumen array di-rename ke sinyal pemanggil saat task di-inline; `lower_stmt` menurunkan seleksi elemen array ke posisi bit pada sinyal rata.
+   - `sv-codegen-rust`: penulisan elemen array unpacked (`mem[k] = ...`) menghasilkan write pada posisi elemen dengan lebar penuh.
+
+### Test baru
+- `task_dengan_argumen_array_unpacked` di `crates/sv-parser/src/routine.rs`.
+
+### Demo
+- `examples/e2e_routine_array/` — `input logic [7:0] a [0:1]` dan `output logic [7:0] q [0:1]`; `ti(a)` dan `to(m)` work.
+
+### Verifikasi
+- `cargo build`: OK
+- `cargo test --workspace`: semua lolos
+- `cargo clippy --all-targets`: clean (0 warning)
+- `cargo fmt --check`: clean
+- `examples/e2e_routine_array/demo.sh`: DEMO OK
+
 ## Catatan Akhir
 
 SVRust telah mencapai dukungan fitur utama SystemVerilog LRM melalui 8 fase. Fitur-fitur utama yang didukung:
@@ -401,7 +424,7 @@ SVRust telah mencapai dukungan fitur utama SystemVerilog LRM melalui 8 fase. Fit
 - Infinite loop dan bug stabilitas telah diperbaiki
 
 Sisa keterbatalan untuk 100% LRM:
-- Array sebagai port/argumen task/function (LRM §13.3/§13.4) — port/argumen bertipe array belum ditangani parser
+- Tidak ada (semua fitur target fase telah full support)
 
 Catatan verifikasi (sudah full support, demo OK):
 - SVA concurrent assertion `assert property` (LRM §20/§21) — demo `examples/e2e_assert/`

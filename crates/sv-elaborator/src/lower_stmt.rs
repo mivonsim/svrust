@@ -837,7 +837,17 @@ fn lookup_lvalue(
         for extra in &lhs.extra_slices {
             all_indices.push(u64::from(extra.lsb));
         }
-        let (msb_bit, lsb_bit) = symbol.elemen(&all_indices).ok_or_else(|| {
+        let ndims = symbol
+            .unpacked
+            .as_ref()
+            .map(|i| i.dims.dims.len())
+            .unwrap_or(0);
+        let elemen_idx = if all_indices.len() > ndims {
+            &all_indices[..ndims]
+        } else {
+            &all_indices
+        };
+        let (msb_bit, lsb_bit) = symbol.elemen(elemen_idx).ok_or_else(|| {
             ElaborateError::new(
                 format!(
                     "indeks [{}] di luar jangkauan array '{}' {}",

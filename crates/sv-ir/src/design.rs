@@ -1,10 +1,14 @@
 // Tanggung jawab: node design/elaboration dalam IR.
 use crate::datatype::DataType;
+use crate::expr::SignalId;
 use crate::scope::ScopePath;
 use crate::time_scale::TimeScale;
 use crate::variable::VarDecl;
 use std::collections::BTreeMap;
 use std::rc::Rc;
+
+/// Satu dimensi unpacked: (first, size, descending).
+pub type UnpackedElem = (u64, u64, bool);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PortDirection {
@@ -40,6 +44,10 @@ pub struct Design {
     /// `$timescale` di VCD. `Option` karena `Design::new` tidak tahu apa pun
     /// tentang SV; elaborator yang mengisinya.
     pub time_scale: Option<TimeScale>,
+    /// Dimensi unpacked per sinyal (LRM §7.8), untuk mengetahui offset elemen
+    /// pada sinyal rata saat codegen. Setiap entri: (signal_id, daftar
+    /// (first, size, descending) dari luar ke dalam).
+    pub unpacked_dims: Vec<(SignalId, Vec<UnpackedElem>)>,
 }
 
 impl Design {
@@ -63,6 +71,15 @@ impl Design {
         if let Some(var) = self.variables.iter_mut().find(|v| v.signal_id == signal) {
             Rc::get_mut(var).expect("VarDecl belum di-share").initial = Some(value);
         }
+    }
+
+    /// Dimensi unpacked suatu sinyal, untuk mengetahui offset elemen pada
+    /// sinyal rata saat codegen.
+    pub fn unpacked_dims(&self, signal_id: SignalId) -> Option<&Vec<UnpackedElem>> {
+        self.unpacked_dims
+            .iter()
+            .find(|(id, _)| *id == signal_id)
+            .map(|(_, dims)| dims)
     }
 
     pub fn port_names(&self) -> Vec<&str> {
