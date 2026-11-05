@@ -19,10 +19,32 @@ pub fn parse_typedef(tokens: &[SpannedToken]) -> Result<(TypeDefDecl, usize), St
     let span = tokens[0].span;
     let mut idx = 1;
 
+    // LRM §6.16 / §8.20: `typedef class Nama;` — alias kelas OOP. Lewati
+    // `class` lalu baca nama.
+    if tokens.get(idx).map(|t| &t.token) == Some(&Token::Class) {
+        idx += 1; // skip 'class'
+        let nama = baca_nama(tokens, idx)?;
+        idx += 1;
+        if tokens.get(idx).map(|t| &t.token) != Some(&Token::Semi) {
+            return Err("expected ';' menutup typedef class".to_string());
+        }
+        idx += 1;
+        return Ok((
+            TypeDefDecl {
+                name: nama,
+                body: TypeDefBody::Scalar {
+                    width: WidthExpr::Literal(1),
+                    signed: false,
+                },
+                span,
+            },
+            idx,
+        ));
+    }
+
     // Bentuk enumerasi punya daftar anggota di dalam kurung kurawal.
     if tokens.get(idx).map(|t| &t.token) == Some(&Token::Enum) {
         idx += 1;
-        // Tipe atom (Tabel 6-22) sudah menentukan lebar dan signedness-nya.
         let tipe_atom = tokens
             .get(idx)
             .and_then(|t| sv_lexer::token::tipe::atom(&t.token));
@@ -86,7 +108,11 @@ pub fn parse_typedef(tokens: &[SpannedToken]) -> Result<(TypeDefDecl, usize), St
         idx += 1;
         // Tutup dengan `;`, sama seperti deklarasi module item lainnya.
         if tokens.get(idx).map(|t| &t.token) != Some(&Token::Semi) {
-            return Err("expected ';' menutup typedef".to_string());
+            return Err(super::pesan::harap(
+                tokens,
+                idx,
+                "expected ';' menutup typedef",
+            ));
         }
         idx += 1;
         return Ok((
@@ -111,6 +137,49 @@ pub fn parse_typedef(tokens: &[SpannedToken]) -> Result<(TypeDefDecl, usize), St
         .is_some_and(|t| sv_lexer::token::tipe::bisa_mulai_deklarasi(&t.token))
     {
         idx += 1;
+    } else if tokens
+        .get(idx)
+        .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
+    {
+        // `typedef Ident #(...) Nama;` atau `typedef Ident Nama;` — tipe
+        // referensi dengan optional parameter override (LRM §8.20).
+        idx += 1; // skip nama tipe referensi
+                  // Lewati parameter override opsional #(...)
+        if idx < tokens.len() && tokens[idx].token == Token::Hash {
+            idx += 1; // skip '#'
+            if idx < tokens.len() && tokens[idx].token == Token::LParen {
+                idx += 1; // skip '('
+                let mut paren_depth = 1u32;
+                while idx < tokens.len() && paren_depth > 0 {
+                    match tokens[idx].token {
+                        Token::LParen => paren_depth += 1,
+                        Token::RParen => paren_depth -= 1,
+                        _ => {}
+                    }
+                    idx += 1;
+                }
+            }
+        }
+        // Lewati dimensi packed opsional setelah tipe referensi
+        while idx < tokens.len() && tokens[idx].token == Token::LBracket {
+            let mut depth = 1u32;
+            idx += 1;
+            while idx < tokens.len() && depth > 0 {
+                match tokens[idx].token {
+                    Token::LBracket => depth += 1,
+                    Token::RBracket => depth -= 1,
+                    _ => {}
+                }
+                idx += 1;
+            }
+        }
+        // Signedness qualifier opsional
+        if matches!(
+            tokens.get(idx).map(|t| &t.token),
+            Some(Token::Signed) | Some(Token::Unsigned)
+        ) {
+            idx += 1;
+        }
     } else {
         return Err(format!(
             "expected tipe setelah 'typedef', dapat {:?}",
@@ -137,7 +206,11 @@ pub fn parse_typedef(tokens: &[SpannedToken]) -> Result<(TypeDefDecl, usize), St
     idx += 1;
     // Tutup dengan `;` supaya pemanggil module.rs bisa lanjut ke item berikutnya.
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::Semi) {
-        return Err("expected ';' menutup typedef".to_string());
+        return Err(super::pesan::harap(
+            tokens,
+            idx,
+            "expected ';' menutup typedef",
+        ));
     }
     idx += 1;
     Ok((

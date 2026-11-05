@@ -568,6 +568,20 @@ fn baris_sumber_asli(source_asli: &str, source: &str, line: usize) -> Option<usi
     cocok.next().is_none().then_some(baris_asli)
 }
 
+/// Pisahkan penanda ` [pos=baris:kolom]` dari pesan parser.
+fn pisahkan_penanda(error: &str) -> (&str, Option<(usize, usize)>) {
+    let Some((pesan, ekor)) = error.rsplit_once(sv_parser::pesan::PENANDA) else {
+        return (error, None);
+    };
+    let Some((baris, kolom)) = ekor.strip_suffix(']').and_then(|isi| isi.split_once(':')) else {
+        return (error, None);
+    };
+    match (baris.parse(), kolom.parse()) {
+        (Ok(baris), Ok(kolom)) => (pesan, Some((baris, kolom))),
+        _ => (error, None),
+    }
+}
+
 fn diagnostic_parser(
     error: &str,
     tokens: &[sv_lexer::SpannedToken],
@@ -577,11 +591,21 @@ fn diagnostic_parser(
     source_id: SourceId,
     sources: &SourceMap,
 ) -> sv_diag::Diagnostic {
+    // Pesan parser membawa penanda ` [pos=baris:kolom]` dari token yang gagal
+    // di-parse. Penanda itu dipakai lebih dulu supaya lokasi diagnostic tidak
+    // jatuh ke `endmodule` atau ke token pertama yang kebetulan sama teksnya.
+    let (error, posisi) = pisahkan_penanda(error);
     let token_text = error
         .split_once("ditemukan ")
         .map(|(_, rest)| rest.trim_end_matches(['.', ' ']).trim_matches('`'));
-    let token_range = token_text
-        .and_then(|target| {
+    let token_dari_penanda = posisi.and_then(|(baris, kolom)| {
+        tokens
+            .iter()
+            .position(|token| token.span.line == baris && token.span.col == kolom)
+            .map(|indeks| indeks..indeks + 1)
+    });
+    let token_range = token_dari_penanda.or_else(|| {
+        token_text.and_then(|target| {
             (0..tokens.len()).find_map(|start| {
                 let mut actual = String::new();
                 for (end, token) in tokens.iter().enumerate().skip(start) {
@@ -599,12 +623,13 @@ fn diagnostic_parser(
                 None
             })
         })
-        .or_else(|| {
-            let token = tokens
-                .iter()
-                .position(|token| error.contains(&format!("{:?}", token.token)))?;
-            Some(token..token + 1)
-        });
+    });
+    let token_range = token_range.or_else(|| {
+        let token = tokens
+            .iter()
+            .position(|token| error.contains(&format!("{:?}", token.token)))?;
+        Some(token..token + 1)
+    });
     let token_range = token_range.or_else(|| {
         let nama = error.strip_prefix("module duplikat: ")?;
         let (index, _) = tokens
@@ -737,6 +762,26 @@ mod tests {
         assert!(report.contains("2 |   assign y = {a b};"));
         assert!(report.contains("= expected koma atau penutup"));
         assert!(report.contains("ringkasan: 1 error(s), 0 warning(s)"));
+    }
+
+    // Regresi: pesan "expected '='" tidak menyebut token, jadi dulu jatuh ke
+    // baris terakhir berkas (`endmodule`). Penanda posisi dari parser membuat
+    // diagnostic menunjuk token penyebab sebenarnya.
+    #[test]
+    fn error_parser_tanpa_token_tidak_lagi_menunjuk_endmodule() {
+        let source = "module m;\n  assign a b;\nendmodule\n";
+        let tokens = sv_lexer::lex(source).expect("lex");
+        let error = match sv_parser::parse_file(&tokens) {
+            Ok(_) => panic!("assign tanpa '=' harus gagal diparse"),
+            Err(error) => error,
+        };
+        assert!(error.contains("[pos="), "{error}");
+
+        let report = render_parser_error(&error, source, "sesat.sv");
+        assert!(report.contains("--> sesat.sv:2:12"), "{report}");
+        assert!(report.contains("2 |   assign a b;"), "{report}");
+        assert!(!report.contains("endmodule"), "{report}");
+        assert!(!report.contains("[pos="), "penanda bocor: {report}");
     }
 
     #[test]

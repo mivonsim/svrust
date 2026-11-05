@@ -1,4 +1,5 @@
 // Tanggung jawab: parse module SystemVerilog.
+use crate::pesan;
 use sv_ast::module::Module;
 use sv_lexer::spanned::SpannedToken;
 use sv_lexer::token::Token;
@@ -80,9 +81,9 @@ fn parse_param_body(
         let span = tokens
             .get(idx)
             .map(|t| t.span)
-            .ok_or_else(|| "expected nama parameter".to_string())?;
+            .ok_or_else(|| "expected nama parameter, tetapi input habis".to_string())?;
         let Token::Ident(name) = &tokens[idx].token else {
-            return Err("expected nama parameter".to_string());
+            return Err(pesan::harap(tokens, idx, "expected nama parameter"));
         };
         let name = name.clone();
         idx += 1;
@@ -93,7 +94,11 @@ fn parse_param_body(
             idx += 1;
         }
         if tokens.get(idx).map(|t| &t.token) != Some(&Token::Eq) {
-            return Err(format!("expected '=' setelah nama parameter '{name}'"));
+            return Err(pesan::tandai(
+                tokens,
+                idx,
+                format!("expected '=' setelah nama parameter '{name}'"),
+            ));
         }
         idx += 1;
         // Nilai default boleh angka atau string literal, misal `parameter string Name = "dmi0"`.
@@ -131,7 +136,7 @@ fn parse_param_body(
         break;
     }
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::Semi) {
-        return Err("expected ';' setelah parameter".to_string());
+        return Err(pesan::harap(tokens, idx, "expected ';' setelah parameter"));
     }
     Ok((out, idx + 1))
 }
@@ -189,9 +194,9 @@ fn parse_localparam(
         let span = tokens
             .get(idx)
             .map(|t| t.span)
-            .ok_or_else(|| "expected nama localparam".to_string())?;
+            .ok_or_else(|| "expected nama localparam, tetapi input habis".to_string())?;
         let Token::Ident(name) = &tokens[idx].token else {
-            return Err("expected nama localparam".to_string());
+            return Err(pesan::harap(tokens, idx, "expected nama localparam"));
         };
         let name = name.clone();
         idx += 1;
@@ -203,7 +208,11 @@ fn parse_localparam(
         }
         // `=` adalah `Token::Eq`; `Token::Assign` adalah keyword `assign`.
         if tokens.get(idx).map(|t| &t.token) != Some(&Token::Eq) {
-            return Err(format!("expected '=' setelah nama localparam '{name}'"));
+            return Err(pesan::tandai(
+                tokens,
+                idx,
+                format!("expected '=' setelah nama localparam '{name}'"),
+            ));
         }
         idx += 1;
         let (value, eaten) = super::expression::parse_expression(&tokens[idx..])?;
@@ -216,7 +225,7 @@ fn parse_localparam(
         break;
     }
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::Semi) {
-        return Err("expected ';' setelah localparam".to_string());
+        return Err(pesan::harap(tokens, idx, "expected ';' setelah localparam"));
     }
     Ok((out, idx + 1))
 }
@@ -327,8 +336,8 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                 Token::Wire | Token::Logic | Token::Reg | Token::Bit | Token::Ident(_) => {
                     arah_terakhir
                 }
-                ref lain => {
-                    return Err(format!("expected port direction, ditemukan {:?}", lain));
+                _ => {
+                    return Err(pesan::harap(tokens, idx, "expected port direction"));
                 }
             };
             if matches!(
@@ -507,7 +516,7 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
 
     // Expect ';'
     if idx >= tokens.len() || tokens[idx].token != Token::Semi {
-        return Err("expected ';'".to_string());
+        return Err(pesan::harap(tokens, idx, "expected ';'"));
     }
     idx += 1;
 
@@ -767,7 +776,11 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                     declarations.push(first);
                     declarations.extend(tambahan);
                     if tokens.get(idx + akhir).map(|t| &t.token) != Some(&Token::Semi) {
-                        return Err("expected ';' setelah deklarasi bertipe".to_string());
+                        return Err(pesan::harap(
+                            tokens,
+                            idx + akhir,
+                            "expected ';' setelah deklarasi bertipe",
+                        ));
                     }
                     idx += akhir + 1;
                     continue;

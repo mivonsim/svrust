@@ -1,4 +1,5 @@
 // Tanggung jawab: parse sisi kiri assignment berupa sinyal dengan irisan opsional.
+use crate::pesan;
 use sv_ast::lvalue::{Lvalue, Slice};
 use sv_lexer::spanned::SpannedToken;
 use sv_lexer::token::Token;
@@ -43,7 +44,11 @@ pub fn parse_lvalue(tokens: &[SpannedToken]) -> Result<(Lvalue, usize), String> 
     if let Some(pos) = (3..first_closing).find(|&i| tokens[i].token == Token::Colon) {
         match tokens[pos - 1].token {
             Token::Plus | Token::Minus => {
-                return Err("indexed part-select `a[base +: width]` belum didukung".to_string())
+                return Err(pesan::tandai(
+                    tokens,
+                    pos,
+                    "indexed part-select `a[base +: width]` belum didukung".to_string(),
+                ))
             }
             _ => {}
         }

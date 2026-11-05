@@ -1,4 +1,5 @@
 // Tanggung jawab: parse packed dimension menjadi ekspresi lebar.
+use crate::pesan;
 use sv_ast::declaration::{UnpackedDim, UnpackedDims};
 use sv_ast::expression::Expr;
 use sv_ast::width::WidthExpr;
@@ -57,7 +58,7 @@ fn parse_literal_dimension(
         msb
     };
     if tokens.get(cursor).map(|t| &t.token) != Some(&Token::RBracket) {
-        return Err("expected ']'".to_string());
+        return Err(pesan::harap(tokens, cursor, "expected ']'"));
     }
     cursor += 1;
     let width = usize::try_from(width).map_err(|_| format!("dimension too large: {width}"))?;
@@ -78,7 +79,7 @@ pub fn parse_dimension(
 
     let idx = start + 1;
     if idx >= tokens.len() {
-        return Err("expected dimension bound".to_string());
+        return Err("expected dimension bound, tetapi input habis".to_string());
     }
 
     // Batas angka literal, opsional `A - B` lalu opsional `: C`.
@@ -100,7 +101,7 @@ pub fn parse_dimension(
     if let Token::Ident(name) = &tokens[idx].token {
         let nama = name.clone();
         let Some(after) = tokens.get(idx + 1).map(|t| &t.token) else {
-            return Err("expected ']'".to_string());
+            return Err(pesan::harap(tokens, idx + 1, "expected ']'"));
         };
         match after {
             Token::RBracket => {
@@ -132,7 +133,7 @@ pub fn parse_dimension(
         None
     };
     if tokens.get(cursor).map(|t| &t.token) != Some(&Token::RBracket) {
-        return Err("expected ']' pada dimension".to_string());
+        return Err(pesan::harap(tokens, cursor, "expected ']' pada dimension"));
     }
     cursor += 1;
     Ok((
@@ -168,7 +169,11 @@ pub fn parse_unpacked_dims(
             None
         };
         if tokens.get(idx).map(|t| &t.token) != Some(&Token::RBracket) {
-            return Err("expected ']' pada dimensi unpacked".to_string());
+            return Err(pesan::harap(
+                tokens,
+                idx,
+                "expected ']' pada dimensi unpacked",
+            ));
         }
         idx += 1;
         let (first, size, descending) = match (&msb, &lsb) {

@@ -1,4 +1,5 @@
 // Tanggung jawab: parse deklarasi signal (logic/wire/reg/bit).
+use crate::pesan;
 use sv_ast::declaration::Declaration;
 use sv_ast::width::WidthExpr;
 use sv_lexer::span::Span;
@@ -67,11 +68,19 @@ fn parse_unpacked(
         c += 1;
         if tokens.get(c).map(|t| &t.token) == Some(&Token::Colon) {
             let Some(lsb) = angka(c + 1) else {
-                return Err("expected ']' pada dimensi unpacked".to_string());
+                return Err(pesan::harap(
+                    tokens,
+                    c + 1,
+                    "expected angka lsb dimensi unpacked",
+                ));
             };
             c += 2;
             if tokens.get(c).map(|t| &t.token) != Some(&Token::RBracket) {
-                return Err("expected ']' pada dimensi unpacked".to_string());
+                return Err(pesan::harap(
+                    tokens,
+                    c,
+                    "expected ']' pada dimensi unpacked",
+                ));
             }
             c += 1;
             let size = msb.abs_diff(lsb) + 1;
@@ -93,7 +102,11 @@ fn parse_unpacked(
                 descending: false,
             });
         } else {
-            return Err("expected ']' pada dimensi unpacked".to_string());
+            return Err(pesan::harap(
+                tokens,
+                c,
+                "expected ']' pada dimensi unpacked",
+            ));
         }
         cursor = c;
     }
@@ -197,7 +210,7 @@ pub fn parse_declaration(tokens: &[SpannedToken]) -> Result<(Vec<Declaration>, u
         }
         let name = match &tokens[idx].token {
             Token::Ident(n) => n.clone(),
-            _ => return Err("expected signal name".to_string()),
+            _ => return Err(pesan::harap(tokens, idx, "expected signal name")),
         };
         idx += 1;
 
@@ -242,7 +255,7 @@ pub fn parse_declaration(tokens: &[SpannedToken]) -> Result<(Vec<Declaration>, u
 
     // Expect ';'
     if idx >= tokens.len() || tokens[idx].token != Token::Semi {
-        return Err("expected ';'".to_string());
+        return Err(pesan::harap(tokens, idx, "expected ';'"));
     }
     idx += 1;
 
@@ -346,7 +359,7 @@ fn parse_struct_union(
 
     // Expect `;`
     if idx >= tokens.len() || tokens[idx].token != Token::Semi {
-        return Err("expected ';'".to_string());
+        return Err(pesan::harap(tokens, idx, "expected ';'"));
     }
     idx += 1;
 

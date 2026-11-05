@@ -198,16 +198,44 @@ fn parse_postfix(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
             },
         };
     }
+
+    // Referensi hierarkis dengan titik: `tl_i.a_source`, `a.b.c` (LRM §6.6).
+    // Kumpulkan semua bagian setelah identifier dasar menjadi satu jalur.
+    if idx < tokens.len() && tokens[idx].token == Token::Dot {
+        let mut parts: Vec<String> = Vec::new();
+        // Bagian pertama sudah ada di `base` (Identifier). Ekstrak namanya.
+        if let Expr::Ident { name, .. } = &base {
+            parts.push(name.clone());
+        }
+        while idx < tokens.len() && tokens[idx].token == Token::Dot {
+            idx += 1; // skip '.'
+            if idx >= tokens.len() {
+                return Err("expected nama setelah '.' pada referensi hierarkis".to_string());
+            }
+            let part = match &tokens[idx].token {
+                Token::Ident(n) => n.clone(),
+                other => return Err(format!("expected nama setelah '.', dapat {other:?}")),
+            };
+            parts.push(part);
+            idx += 1;
+        }
+        base = Expr::HierarchicalRef {
+            parts,
+            span: tokens[0].span,
+        };
+    }
+
     Ok((base, idx))
 }
 
 /// Parse type cast ke tipe bertipe `nama_tipe'(ekspresi)` (LRM §6.14).
 ///
 /// Token pertama sudah dipastikan identifier dan token kedua `Token::Cast`.
-fn parse_cast(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
+pub(super) fn parse_cast(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
     let span = tokens[0].span;
     let type_name = match &tokens[0].token {
         Token::Ident(n) => n.clone(),
+        Token::Void => "void".to_string(),
         other => return Err(format!("expected nama tipe pada cast, ditemukan {other:?}")),
     };
     parse_cast_body(type_name, tokens, span)
@@ -288,6 +316,7 @@ fn nama_tipe_bawaan(token: &Token) -> &'static str {
         Token::LongInt => "longint",
         Token::Integer => "integer",
         Token::Time => "time",
+        Token::Void => "void",
         other => unreachable!("nama_tipe_bawaan dipanggil dengan {other:?}"),
     }
 }
@@ -343,10 +372,18 @@ fn parse_select_index(tokens: &[SpannedToken]) -> Result<(Indeks, usize), String
     // Bentuk kosong dan batas kosong ditolak lebih dulu agar pesan errornya
     // menyebut fitur yang ditolak, bukan error internal dari `parse_expression`.
     if tokens[0].token == Token::RBracket {
-        return Err("kurung siku seleksi kosong `[]` belum didukung".to_string());
+        return Err(crate::pesan::harap(
+            tokens,
+            0,
+            "kurung siku seleksi kosong `[]` belum didukung",
+        ));
     }
     if tokens[0].token == Token::Colon {
-        return Err("part-select dengan batas bawah kosong `[:lsb]` belum didukung".to_string());
+        return Err(crate::pesan::harap(
+            tokens,
+            0,
+            "part-select dengan batas bawah kosong `[:lsb]` belum didukung",
+        ));
     }
 
     // Wildcard indeks `a[*]` hanya sah di `$sampled`/signature argument (LRM §20.11),
@@ -364,8 +401,10 @@ fn parse_select_index(tokens: &[SpannedToken]) -> Result<(Indeks, usize), String
             _ => None,
         };
         if let Some(arah) = arah {
-            return Err(format!(
-                "indexed part-select `a[base {arah}: width]` belum didukung"
+            return Err(crate::pesan::tandai(
+                tokens,
+                pos,
+                format!("indexed part-select `a[base {arah}: width]` belum didukung"),
             ));
         }
     }
@@ -379,22 +418,30 @@ fn parse_select_index(tokens: &[SpannedToken]) -> Result<(Indeks, usize), String
         // runtime-nya hanya menangani indeks tunggal.
         Some(Token::Colon) => {
             if consumed + 1 >= closing {
-                return Err(
+                return Err(crate::pesan::tandai(
+                    tokens,
+                    consumed,
                     "part-select dengan batas atas kosong `[msb:]` belum didukung".to_string(),
-                );
-            }
-            let msb = batas_part_select_konstan(&expr, "atas")?;
-            let (lsb_expr, lsb_consumed) = parse_expression(&tokens[consumed + 1..closing])?;
-            if consumed + 1 + lsb_consumed != closing {
-                return Err(format!(
-                    "sisa token tak dikenal pada part-select: {:?}",
-                    tokens[consumed + 1 + lsb_consumed..closing]
-                        .iter()
-                        .map(|t| &t.token)
-                        .collect::<Vec<_>>()
                 ));
             }
-            let lsb = batas_part_select_konstan(&lsb_expr, "bawah")?;
+            let msb = batas_part_select_konstan(&expr, "atas")
+                .map_err(|pesan| crate::pesan::tandai(tokens, consumed, pesan))?;
+            let (lsb_expr, lsb_consumed) = parse_expression(&tokens[consumed + 1..closing])?;
+            if consumed + 1 + lsb_consumed != closing {
+                return Err(crate::pesan::tandai(
+                    tokens,
+                    consumed + 1 + lsb_consumed,
+                    format!(
+                        "sisa token tak dikenal pada part-select: {:?}",
+                        tokens[consumed + 1 + lsb_consumed..closing]
+                            .iter()
+                            .map(|t| &t.token)
+                            .collect::<Vec<_>>()
+                    ),
+                ));
+            }
+            let lsb = batas_part_select_konstan(&lsb_expr, "bawah")
+                .map_err(|pesan| crate::pesan::tandai(tokens, consumed + 1, pesan))?;
             Ok((Indeks::Konstanta(msb, lsb), closing))
         }
         Some(Token::RBracket) => {
@@ -404,7 +451,11 @@ fn parse_select_index(tokens: &[SpannedToken]) -> Result<(Indeks, usize), String
                 None => Ok((Indeks::Dinamis(expr), consumed)),
             }
         }
-        Some(other) => Err(format!("expected ']' closing select, ditemukan {other:?}")),
+        Some(other) => Err(crate::pesan::tandai(
+            tokens,
+            consumed,
+            format!("expected ']' closing select, ditemukan {other:?}"),
+        )),
     }
 }
 
@@ -478,7 +529,29 @@ fn parse_primary(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
                 let (cast, consumed) = parse_cast(tokens)?;
                 return Ok((cast, consumed));
             }
-            Ok((Expr::ident(n.clone(), tokens[0].span), 1))
+            // LRM §6.6: nama dengan scope paket, misal `pkg::nama`, ditulis
+            // sebagai `Ident` `:` `:` `Ident`. Gabungkan semua menjadi satu
+            // identifier dengan pemisah `::`.
+            let mut full_name = n.clone();
+            let mut consumed = 1;
+            while consumed + 2 < tokens.len()
+                && matches!(tokens.get(consumed).map(|t| &t.token), Some(&Token::Colon))
+                && matches!(
+                    tokens.get(consumed + 1).map(|t| &t.token),
+                    Some(&Token::Colon)
+                )
+                && matches!(
+                    tokens.get(consumed + 2).map(|t| &t.token),
+                    Some(&Token::Ident(_))
+                )
+            {
+                consumed += 3; // lewati `:`, `:`, dan nama bagian
+                if let Token::Ident(part) = &tokens[consumed - 1].token {
+                    full_name.push_str("::");
+                    full_name.push_str(part);
+                }
+            }
+            Ok((Expr::ident(full_name, tokens[0].span), consumed))
         }
         // LRM §6.14: nama tipe bawaan adalah keyword, jadi tidak pernah
         // sampai sebagai `Token::Ident`. Tanpa cabang ini `integer'(x)` —
@@ -492,6 +565,7 @@ fn parse_primary(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
         | Token::ShortInt
         | Token::LongInt
         | Token::Time
+        | Token::Void
             if matches!(tokens.get(1).map(|t| &t.token), Some(&Token::Cast)) =>
         {
             let span = tokens[0].span;
@@ -511,7 +585,11 @@ fn parse_primary(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
             let (operand, consumed) = parse_expression(&tokens[idx..])?;
             idx += consumed;
             if tokens.get(idx).map(|t| &t.token) != Some(&Token::RParen) {
-                return Err("expected ')' menutup size cast".to_string());
+                return Err(crate::pesan::harap(
+                    tokens,
+                    idx,
+                    "expected ')' menutup size cast",
+                ));
             }
             idx += 1;
             Ok((
@@ -552,9 +630,11 @@ fn parse_primary(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
         // LRM §6.14: `'` tanpa lebar eksplisit bukan size cast yang sah, dan
         // tanpa `s`/`b`/`o`/`d`/`h` juga bukan literal. Pesannya menyebut
         // bentuk yang benar.
-        Token::Cast => {
-            Err("size cast butuh lebar eksplisit, contoh 16'(x), bukan '(x)".to_string())
-        }
+        Token::Cast => Err(crate::pesan::harap(
+            tokens,
+            0,
+            "size cast butuh lebar eksplisit, contoh 16'(x), bukan '(x)",
+        )),
         Token::Number(n) => Ok((Expr::Number(*n), 1)),
         Token::BasedNumber {
             value,
@@ -638,6 +718,46 @@ fn parse_primary(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
                 idx,
             ))
         }
+        // Literal string dipertahankan sebagai node AST agar lebarnya dihitung
+        // saat lowering dan tidak hilang sebelum codegen.
+        Token::StringLiteral(teks) => {
+            let span = tokens[0].span;
+            Ok((
+                Expr::StringConst {
+                    value: teks.clone(),
+                    span,
+                },
+                1,
+            ))
+        }
+        // System task pemanggilan umum sebagai ekspresi, misal
+        // `$value$plusargs({...}, ...)` (LRM §20). `signed`/`unsigned`/`time`/
+        // `$bits` sudah ditangani di cabang di atas.
+        Token::SystemTask(nama) if tokens.get(1).map(|t| &t.token) == Some(&Token::LParen) => {
+            let span = tokens[0].span;
+            let mut idx = 2; // lewati `$nama` dan `(`
+            let mut args = Vec::new();
+            while idx < tokens.len() && tokens[idx].token != Token::RParen {
+                let (arg, consumed) = parse_expression(&tokens[idx..])?;
+                args.push(arg);
+                idx += consumed;
+                if tokens.get(idx).map(|t| &t.token) == Some(&Token::Comma) {
+                    idx += 1;
+                }
+            }
+            if tokens.get(idx).map(|t| &t.token) != Some(&Token::RParen) {
+                return Err(format!("expected ')' menutup ${nama}"));
+            }
+            idx += 1;
+            Ok((
+                Expr::FunctionCall {
+                    name: format!("${nama}"),
+                    args,
+                    span,
+                },
+                idx,
+            ))
+        }
         _ => Err(format!(
             "expected identifier or number, ditemukan {:?}",
             tokens[0].token
@@ -659,12 +779,17 @@ fn parse_brace(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
     // umum), lalu kalau gagal dikembalikan ke jalur concatenation.
     match try_parse_replication(tokens, span) {
         Ok(hasil) => Ok(hasil),
-        Err(e) => match try_parse_concatenation(tokens, span) {
+        Err(replication_error) => match try_parse_concatenation(tokens, span) {
             Ok(hasil) => Ok(hasil),
-            // Kedua jalur gagal. Pesan dari replication lebih informatif saat
-            // bentuknya memangMirip replication — `{2{a, 1'b0}}` tidak sah SV
-            // dan iverilog juga menolaknya.
-            Err(_) => Err(e),
+            // "Bukan replication" berarti parse count tidak menemukan `{`;
+            // itu jalur spekulatif untuk membedakan concatenation. Jika
+            // concatenation juga gagal, laporkan token yang benar-benar gagal.
+            Err(concatenation_error) if replication_error.starts_with("bukan replication:") => {
+                Err(concatenation_error)
+            }
+            // Kalau bentuknya sudah menyerupai replication, error replication
+            // lebih menjelaskan kenapa bentuk tersebut tidak valid.
+            Err(_) => Err(replication_error),
         },
     }
 }
@@ -787,6 +912,15 @@ mod tests {
             }
             _ => panic!("expected binary expression"),
         }
+    }
+
+    #[test]
+    fn concatenation_salah_menampilkan_token_yang_gagal() {
+        let tokens = lex("{a b}").expect("lex");
+        let error = parse_expression(&tokens).expect_err("concatenation tidak valid");
+        assert!(error.contains("expected koma atau penutup"));
+        assert!(error.contains("ditemukan Ident(\"b\")"), "{error}");
+        assert!(!error.contains("bukan replication"), "{error}");
     }
 
     #[test]
@@ -1531,6 +1665,21 @@ mod brace_tests {
                 assert_eq!(*rhs, Expr::Number(5));
             }
             other => panic!("dapat {:?}", other),
+        }
+    }
+
+    #[test]
+    fn system_task_panggilan_sebagai_ekspresi() {
+        // LRM §20: system task boleh dipakai sebagai ekspresi, misal
+        // `$value$plusargs({...}, ...)` di kondisi `if`.
+        let tokens = lex(r#"$value$plusargs({plusarg_name, "=%s"}, log_file_path)"#).unwrap();
+        let (expr, _) = parse_expression(&tokens).expect("parse");
+        match expr {
+            Expr::FunctionCall { name, args, .. } => {
+                assert_eq!(name, "$value$plusargs");
+                assert_eq!(args.len(), 2);
+            }
+            other => panic!("expected function call, dapat {other:?}"),
         }
     }
 }

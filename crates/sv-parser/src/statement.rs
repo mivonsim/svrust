@@ -1,4 +1,5 @@
 // Tanggung jawab: parse continuous assignment (assign lhs = rhs).
+use crate::pesan;
 use sv_ast::statement::Statement;
 use sv_lexer::spanned::SpannedToken;
 use sv_lexer::token::Token;
@@ -16,7 +17,7 @@ pub fn parse_continuous_assign(tokens: &[SpannedToken]) -> Result<(Statement, us
 
     // Expect '='
     if idx >= tokens.len() || tokens[idx].token != Token::Eq {
-        return Err("expected '='".to_string());
+        return Err(pesan::harap(tokens, idx, "expected '='"));
     }
     idx += 1;
 
@@ -26,7 +27,7 @@ pub fn parse_continuous_assign(tokens: &[SpannedToken]) -> Result<(Statement, us
 
     // Expect ';'
     if idx >= tokens.len() || tokens[idx].token != Token::Semi {
-        return Err("expected ';'".to_string());
+        return Err(pesan::harap(tokens, idx, "expected ';'"));
     }
     idx += 1;
 
@@ -37,6 +38,14 @@ pub fn parse_continuous_assign(tokens: &[SpannedToken]) -> Result<(Statement, us
 mod tests {
     use super::*;
     use sv_ast::lvalue::{Lvalue, Slice};
+
+    #[test]
+    fn error_assign_tanpa_sama_membawa_posisi_token_penyebab() {
+        let tokens = sv_lexer::lex("assign a b;").expect("lex");
+        let err = parse_continuous_assign(&tokens).expect_err("harus error");
+        assert!(err.contains("Ident(\"b\")"), "{err}");
+        assert!(err.ends_with("[pos=1:10]"), "{err}");
+    }
 
     fn parse(src: &str) -> Statement {
         let tokens = sv_lexer::lex(src).expect("lex");

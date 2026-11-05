@@ -45,7 +45,13 @@ pub fn parse_instance(tokens: &[SpannedToken]) -> Result<(Instance, usize), Stri
             }
             let nilai = match &tokens[idx].token {
                 Token::Number(n) => *n,
-                _ => return Err("nilai override harus literal angka".to_string()),
+                Token::BasedNumber { value, .. } => *value,
+                Token::Ident(_) => 0, // Parameter reference - nilai di-resolve saat elaborasi
+                _ => {
+                    return Err(
+                        "nilai override harus literal angka atau referensi parameter".to_string(),
+                    )
+                }
             };
             idx += 1;
             if idx >= tokens.len() || tokens[idx].token != Token::RParen {
@@ -95,33 +101,52 @@ pub fn parse_instance(tokens: &[SpannedToken]) -> Result<(Instance, usize), Stri
             _ => return Err("expected nama port".to_string()),
         };
         idx += 1;
-        if idx >= tokens.len() || tokens[idx].token != Token::LParen {
-            return Err("expected '(' setelah nama port".to_string());
+        // Implicit port connection: `.name` (signal = port name), atau `.name(signal)`.
+        if idx < tokens.len() && tokens[idx].token == Token::LParen {
+            idx += 1;
+            if idx >= tokens.len() {
+                return Err("expected nama sinyal".to_string());
+            }
+            let signal_span = tokens[idx].span;
+            // Baca nama sinyal, mungkin hirarkis dengan titik (mis. `a.b.c`).
+            let mut signal_parts: Vec<String> = Vec::new();
+            loop {
+                let part = match &tokens[idx].token {
+                    Token::Ident(n) => n.clone(),
+                    _ => return Err("expected nama sinyal".to_string()),
+                };
+                signal_parts.push(part);
+                idx += 1;
+                if idx < tokens.len() && tokens[idx].token == Token::Dot {
+                    idx += 1; // lewati titik, lanjut ke bagian berikutnya
+                } else {
+                    break;
+                }
+            }
+            let signal = signal_parts.join(".");
+            // LRM §23.3.3.7: sinyal koneksi boleh berupa bit/part-select, misal
+            // `.y(q[i])` pada pola kanonik loop generate.
+            let (index, index_consumed) = parse_port_index(&tokens[idx..])?;
+            idx += index_consumed;
+            if idx >= tokens.len() || tokens[idx].token != Token::RParen {
+                return Err("expected ')' penutup sinyal".to_string());
+            }
+            idx += 1;
+            port_conns.push(PortConn {
+                port,
+                signal,
+                index,
+                span: signal_span,
+            });
+        } else {
+            // `.name` tanpa sinyal eksplisit → signal = port name (implicit).
+            port_conns.push(PortConn {
+                port: port.clone(),
+                signal: port,
+                index: None,
+                span: tokens[idx.saturating_sub(1)].span,
+            });
         }
-        idx += 1;
-        if idx >= tokens.len() {
-            return Err("expected nama sinyal".to_string());
-        }
-        let signal_span = tokens[idx].span;
-        let signal = match &tokens[idx].token {
-            Token::Ident(n) => n.clone(),
-            _ => return Err("expected nama sinyal".to_string()),
-        };
-        idx += 1;
-        // LRM §23.3.3.7: sinyal koneksi boleh berupa bit/part-select, misal
-        // `.y(q[i])` pada pola kanonik loop generate.
-        let (index, index_consumed) = parse_port_index(&tokens[idx..])?;
-        idx += index_consumed;
-        if idx >= tokens.len() || tokens[idx].token != Token::RParen {
-            return Err("expected ')' penutup sinyal".to_string());
-        }
-        idx += 1;
-        port_conns.push(PortConn {
-            port,
-            signal,
-            index,
-            span: signal_span,
-        });
         if idx < tokens.len() && tokens[idx].token == Token::Comma {
             idx += 1;
         }
@@ -132,7 +157,7 @@ pub fn parse_instance(tokens: &[SpannedToken]) -> Result<(Instance, usize), Stri
     idx += 1;
 
     if idx >= tokens.len() || tokens[idx].token != Token::Semi {
-        return Err("expected ';'".to_string());
+        return Err(super::pesan::harap(tokens, idx, "expected ';'"));
     }
     idx += 1;
 

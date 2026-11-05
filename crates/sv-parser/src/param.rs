@@ -1,4 +1,5 @@
 // Tanggung jawab: parse daftar parameter module #(parameter W = 8).
+use crate::pesan;
 use sv_ast::width::ParamDecl;
 use sv_lexer::spanned::SpannedToken;
 use sv_lexer::token::Token;
@@ -20,7 +21,7 @@ pub fn parse_param_list(
     let mut idx = 1;
 
     if idx >= tokens.len() || tokens[idx].token != Token::LParen {
-        return Err("expected '(' setelah '#'".to_string());
+        return Err(pesan::harap(tokens, idx, "expected '(' setelah '#'"));
     }
     idx += 1;
 
@@ -41,7 +42,7 @@ pub fn parse_param_list(
         idx += 1;
 
         if idx >= tokens.len() {
-            return Err("expected nama parameter".to_string());
+            return Err("expected nama parameter, tetapi input habis".to_string());
         }
         // Parameter boleh bermula dengan tipe, misal `parameter string Name`
         // atau `parameter int ListenPort` (LRM §6.20.1).
@@ -147,7 +148,7 @@ pub fn parse_param_list(
         }
         let (nama, span) = match &tokens[idx].token {
             Token::Ident(n) => (n.clone(), tokens[idx].span),
-            _ => return Err("expected nama parameter".to_string()),
+            _ => return Err(pesan::harap(tokens, idx, "expected nama parameter")),
         };
         idx += 1;
 
@@ -167,12 +168,12 @@ pub fn parse_param_list(
         }
 
         if idx >= tokens.len() || tokens[idx].token != Token::Eq {
-            return Err("expected '=' pada parameter".to_string());
+            return Err(pesan::harap(tokens, idx, "expected '=' pada parameter"));
         }
         idx += 1;
 
         if idx >= tokens.len() {
-            return Err("expected nilai default parameter".to_string());
+            return Err("expected nilai default parameter, tetapi input habis".to_string());
         }
         // Nilai `localparam` adalah ekspresi konstanta, bukan hanya literal:
         // `localparam int Share = (EnMasking) ? 2 : 1`. Ekspresinya disimpan
@@ -276,8 +277,8 @@ pub fn parse_param_list(
         }
     }
 
-    if idx >= tokens.len() {
-        return Err("expected ')' penutup parameter".to_string());
+    if tokens.get(idx).map(|t| &t.token) != Some(&Token::RParen) {
+        return Err(pesan::harap(tokens, idx, "expected ')' penutup parameter"));
     }
     idx += 1; // lewati ')'
 

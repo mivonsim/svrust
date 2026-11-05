@@ -211,6 +211,20 @@ fn parse_seq_block(
             idx += consumed;
             continue;
         }
+        // LRM §13.3: `automatic` berarti variabel lokal per-panggilan. Di
+        // dalam blok sekuensial, `automatic` hanya qualifier deklarasi lokal,
+        // jadi lewati lalu parse deklarasi berikutnya.
+        if matches!(token, Token::Automatic) {
+            let sisa = &tokens[idx + 1..];
+            if !sisa.is_empty() && sv_lexer::token::tipe::bisa_mulai_deklarasi(&sisa[0].token) {
+                let (decls, consumed) = super::declaration::parse_declaration(sisa)?;
+                for decl in decls {
+                    body.push(SequentialStatement::Decl(decl));
+                }
+                idx += 1 + consumed;
+                continue;
+            }
+        }
         let (stmt, consumed) = parse_seq_statement(&tokens[idx..])?;
         body.push(stmt);
         idx += consumed;
@@ -419,7 +433,7 @@ fn parse_seq_statement(tokens: &[SpannedToken]) -> Result<(SequentialStatement, 
     idx += consumed;
 
     if idx >= tokens.len() || tokens[idx].token != Token::Semi {
-        return Err("expected ';'".to_string());
+        return Err(super::pesan::harap(tokens, idx, "expected ';'"));
     }
     idx += 1;
 
