@@ -81,8 +81,20 @@ pub fn parse_combinational_statement(
             Ok((CombinationalStatement::Deassign { lhs, span }, idx))
         }
         Token::Begin => {
-            let (body, mut idx) = parse_combinational_block(&tokens[1..])?;
-            if idx >= tokens[1..].len() || tokens[idx + 1].token != Token::End {
+            let mut idx = 1; // skip 'begin'
+            // LRM §12.9: `begin : label` bentuk alternatif labeled block.
+            if idx < tokens.len() && tokens[idx].token == Token::Colon {
+                idx += 1; // skip ':'
+                if idx < tokens.len() {
+                    match &tokens[idx].token {
+                        Token::Ident(_) => idx += 1, // skip label name
+                        _ => return Err("expected label name after ':' in begin".to_string()),
+                    }
+                }
+            }
+            let (body, consumed) = parse_combinational_block(&tokens[idx..])?;
+            idx += consumed;
+            if idx >= tokens.len() || tokens[idx].token != Token::End {
                 return Err("expected 'end'".to_string());
             }
             idx += 1;
@@ -92,7 +104,7 @@ pub fn parse_combinational_statement(
                     body,
                     span: tokens[0].span,
                 },
-                idx + 1,
+                idx,
             ))
         }
         Token::Incr | Token::Decr => {
@@ -491,7 +503,47 @@ fn parse_for(tokens: &[SpannedToken]) -> Result<(CombinationalStatement, usize),
 /// karena `ForStep` hanya menyimpan satu assignment biasa.
 fn parse_for_step(tokens: &[SpannedToken], start: usize) -> Result<(ForStep, usize), String> {
     let span = tokens[start].span;
-    let (lhs, mut idx) = super::lvalue::parse_lvalue(&tokens[start..])?;
+    let mut idx = 0usize; // offset dari start
+
+    // Optional type declaration for loop variable: `int unsigned kk = 0`.
+    // SVRust tidak memproses tipe secara semantik, hanya melewatinya.
+    // Heuristic: [type] [signedness?] ident = expr
+    let is_typed_decl = if let Some(Token::Int | Token::Integer | Token::Bit | Token::Logic) =
+        tokens.get(start).map(|t| &t.token)
+    {
+        let after_type = tokens.get(start + 1).map(|t| &t.token);
+        // Skip optional signedness
+        let after_signedness = if matches!(after_type, Some(Token::Signed) | Some(Token::Unsigned)) {
+            tokens.get(start + 2).map(|t| &t.token)
+        } else {
+            after_type
+        };
+        matches!(after_signedness, Some(Token::Ident(_)))
+            && tokens
+                .get(start + 2 + if matches!(after_type, Some(Token::Signed) | Some(Token::Unsigned)) {
+                    1
+                } else {
+                    0
+                })
+                .map(|t| matches!(t.token, Token::Eq))
+                .unwrap_or(false)
+    } else {
+        false
+    };
+
+    if is_typed_decl {
+        idx += 1; // skip type keyword
+        if matches!(
+            tokens.get(start + idx).map(|t| &t.token),
+            Some(Token::Signed) | Some(Token::Unsigned)
+        ) {
+            idx += 1; // skip signedness
+        }
+        // Jangan skip nama variabel — biarkan parse_lvalue menangani.
+    }
+
+    let (lhs, lhs_idx) = super::lvalue::parse_lvalue(&tokens[start + idx..])?;
+    idx += lhs_idx;
 
     let next = tokens.get(start + idx).map(|t| &t.token);
     match next {
@@ -584,6 +636,29 @@ pub fn parse_combinational_block(
     let mut idx = 0;
 
     while idx < tokens.len() {
+        // Compiler directive (mis. `ASSERT` dari OpenTitan) dilewati —
+        // preprocessor sudah melewatkannya, parser tidak perlu memprosesnya.
+        // Argumen dalam kurung setelah nama direktif juga dilewati.
+        if matches!(&tokens[idx].token, Token::Directive(_)) {
+            idx += 1;
+            if idx < tokens.len() && tokens[idx].token == Token::LParen {
+                let mut depth = 1u32;
+                idx += 1;
+                while idx < tokens.len() && depth > 0 {
+                    match &tokens[idx].token {
+                        Token::LParen => depth += 1,
+                        Token::RParen => depth -= 1,
+                        _ => {}
+                    }
+                    idx += 1;
+                }
+            }
+            // Lepas `;` setelah argumen direktif, mis. `assert ...);`
+            if idx < tokens.len() && tokens[idx].token == Token::Semi {
+                idx += 1;
+            }
+            continue;
+        }
         match &tokens[idx].token {
             Token::End | Token::Endcase | Token::Else => break,
             // Penutup subrutin (LRM §13.3/§13.4) juga menjadi batas blok,

@@ -119,6 +119,22 @@ pub fn parse_declaration(tokens: &[SpannedToken]) -> Result<(Vec<Declaration>, u
     // Optional packed dimension: [N] atau [MSB:LSB]
     let (lebar_tertulis, consumed) = super::dimension::parse_dimension(tokens, idx)?;
     idx += consumed;
+    // Additional packed dimensions for multi-dimensional declarations,
+    // misal `logic [N_CLASSES-1:0][NAlerts-1:0] class_masks;`. SVRust tidak
+    // mendukung multi-dimensional penuh, jadi dimensi tambahan hanya
+    // dikonsumsi tanpa diproses.
+    while idx < tokens.len() && tokens[idx].token == Token::LBracket {
+        let mut depth = 1u32;
+        idx += 1;
+        while idx < tokens.len() && depth > 0 {
+            match &tokens[idx].token {
+                Token::LBracket => depth += 1,
+                Token::RBracket => depth -= 1,
+                _ => {}
+            }
+            idx += 1;
+        }
+    }
 
     // LRM §7.8: dimensi unpacked menyusul packed dimension, misal
     // `logic [7:0] mem [0:15];`. Paket packed DAN unpacked (`logic [7:0]

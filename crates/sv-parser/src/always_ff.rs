@@ -181,6 +181,26 @@ fn parse_seq_block(
     idx += 1;
     let mut body = Vec::new();
     while idx < tokens.len() && tokens[idx].token != Token::End {
+        // Compiler directive dilewati.
+        if matches!(&tokens[idx].token, Token::Directive(_)) {
+            idx += 1;
+            if idx < tokens.len() && tokens[idx].token == Token::LParen {
+                let mut depth = 1u32;
+                idx += 1;
+                while idx < tokens.len() && depth > 0 {
+                    match &tokens[idx].token {
+                        Token::LParen => depth += 1,
+                        Token::RParen => depth -= 1,
+                        _ => {}
+                    }
+                    idx += 1;
+                }
+            }
+            if idx < tokens.len() && tokens[idx].token == Token::Semi {
+                idx += 1;
+            }
+            continue;
+        }
         // Deklarasi variabel lokal di dalam blok (LRM §12.8).
         let token = &tokens[idx].token;
         if sv_lexer::token::tipe::bisa_mulai_deklarasi(token) {

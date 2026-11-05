@@ -44,6 +44,11 @@ pub struct LocalParamDecl {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParamDecl {
     pub name: String,
+    /// Tipe parameter opsional, misal `string`, `int` (LRM §6.20.1).
+    pub type_name: Option<String>,
+    /// Nilai default numerik (hanya untuk parameter non-string).
     pub default: u64,
+    /// Nilai default string (hanya untuk parameter bertipe `string`).
+    pub default_str: Option<String>,
     pub span: Span,
 }

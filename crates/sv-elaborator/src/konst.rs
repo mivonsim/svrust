@@ -246,7 +246,9 @@ mod tests {
             .iter()
             .map(|(nama, v)| ParamDecl {
                 name: nama.to_string(),
+                type_name: None,
                 default: *v,
+                default_str: None,
                 span: Span::dummy(),
             })
             .collect();

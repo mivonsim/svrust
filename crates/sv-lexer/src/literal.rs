@@ -140,22 +140,37 @@ pub fn scan_number(
     let basis = match chars.peek().copied().and_then(Basis::from_char) {
         Some(b) => b,
         None => {
-            // Lebar eksplisit + karakter non-basis setelah `'` hampir selalu
-            // size cast yang salah tulis (`16'a`), bukan literal. Pesan umum
-            // "expected basis" menyesatkan di sana.
-            if !ukuran_teks.is_empty() {
+            // Unspecified-sized based literal tanpa basis, misal `'0` atau `'1`.
+            // Default basis adalah desimal (LRM §5.7.1). Hanya berlaku bila
+            // tidak ada ukuran eksplisit sebelum `'` (ukuran_teks kosong).
+            if ukuran_teks.is_empty() {
+                let next = chars.peek().copied();
+                if next.is_some_and(|c| c.is_ascii_digit() || is_unknown_digit(c)) {
+                    Basis::Decimal
+                } else {
+                    return Err(LexError::new(
+                        "expected basis b, o, d or h after '",
+                        span(byte_offset),
+                    ));
+                }
+            } else {
                 return Err(LexError::new(
                     "setelah N' harus basis b/o/d/h untuk literal, atau '(' untuk size cast",
                     span(byte_offset),
                 ));
             }
-            return Err(LexError::new(
-                "expected basis b, o, d or h after '",
-                span(byte_offset),
-            ));
         }
     };
-    adv(chars, byte_offset, col);
+    // Tidak ada `adv` di sini untuk basis yang diambil dari digit pertama
+    // (unsized based literal) — digit tersebut akan dikonsumsi oleh loop
+    // di bawah. Hanya `adv` untuk basis yang dieksekusi secara eksplisit
+    // (misal `'h`, `'d`).
+    if matches!(basis, Basis::Decimal) && ukuran_teks.is_empty() {
+        // Unsized based literal: digit pertama belum dikonsumsi, biarkan loop
+        // di bawah yang menangani.
+    } else {
+        adv(chars, byte_offset, col);
+    }
 
     // Digit isi; `_` adalah separator yang diabaikan (LRM §5.7.1).
     let mut nilai: u64 = 0;

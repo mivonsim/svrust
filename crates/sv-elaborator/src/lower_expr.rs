@@ -333,20 +333,6 @@ pub fn lower_expression_dengan_konteks(
                         }
                         let (msb_bit, lsb_bit) =
                             symbol.elemen(&[u64::from(*msb)]).ok_or_else(|| {
-                                eprintln!(
-                                    "DEBUG single error name={name} msb={msb} dims={:?}",
-                                    symbol
-                                        .unpacked
-                                        .as_ref()
-                                        .map(|i| i.dims.clone())
-                                );
-                                eprintln!(
-                                    "DEBUG single name={name} msb={msb} dims={:?}",
-                                    symbol
-                                        .unpacked
-                                        .as_ref()
-                                        .map(|i| i.dims.clone())
-                                );
                                 ElaborateError::new(
                                     format!(
                                         "indeks {} di luar jangkauan array '{}' {}",

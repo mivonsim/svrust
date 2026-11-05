@@ -53,16 +53,29 @@ fn parse_param_body(
             return Err(format!("expected '=' setelah nama parameter '{name}'"));
         }
         idx += 1;
-        let (expr, eaten) = super::expression::parse_expression(&tokens[idx..])?;
-        idx += eaten;
-        let sv_ast::expression::Expr::Number(nilai) = expr else {
-            return Err(format!(
-                "nilai default parameter '{name}' harus literal di body modul"
-            ));
+        // Nilai default boleh angka atau string literal, misal `parameter string Name = "dmi0"`.
+        let (default, default_str) = match &tokens[idx].token {
+            Token::StringLiteral(s) => {
+                let s = s.clone();
+                idx += 1;
+                (0, Some(s))
+            }
+            _ => {
+                let (expr, eaten) = super::expression::parse_expression(&tokens[idx..])?;
+                idx += eaten;
+                match expr {
+                    sv_ast::expression::Expr::Number(nilai) => (nilai, None),
+                    _ => return Err(format!(
+                        "nilai default parameter '{name}' harus literal angka atau string di body modul"
+                    )),
+                }
+            }
         };
         out.push(sv_ast::width::ParamDecl {
             name,
-            default: nilai,
+            type_name: None,
+            default,
+            default_str,
             span,
         });
         if tokens.get(idx).map(|t| &t.token) == Some(&Token::Comma) {
@@ -152,6 +165,27 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
     };
     idx += 1;
 
+    // LRM §26.8: `import` paket boleh muncul setelah nama modul, sebelum
+    // daftar parameter atau port list, misal `module m import pkg::*; (`..
+    // SVRust tidak memproses impor secara semantik, hanya melewatinya.
+    while idx < tokens.len() {
+        match &tokens[idx].token {
+            Token::Ident(n) if n == "import" => {
+                idx += 1; // skip 'import'
+                // Skip hingga ';' atau '(' atau '#'
+                while idx < tokens.len() {
+                    match &tokens[idx].token {
+                        Token::Semi => { idx += 1; break; }
+                        Token::LParen | Token::Hash => break,
+                        _ => { idx += 1; }
+                    }
+                }
+            }
+            Token::Hash | Token::LParen => break,
+            _ => break,
+        }
+    }
+
     // Daftar parameter opsional: #(parameter WIDTH = 8, ...)
     let (mut params, makan) = super::param::parse_param_list(&tokens[idx..])?;
     idx += makan;
@@ -189,6 +223,22 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
             // Optional packed dimension: [N] atau [MSB:LSB]
             let (lebar_tertulis, consumed) = super::dimension::parse_dimension(tokens, idx)?;
             idx += consumed;
+            // Additional dimensions for multi-dimensional ports, misal
+            // `[NAlerts-1:0] [CLASS_DW-1:0] alert_class_i`. SVRust tidak
+            // mendukung multi-dimensional penuh, jadi dimensi tambahan hanya
+            // dikonsumsi tanpa diproses.
+            while idx < tokens.len() && tokens[idx].token == Token::LBracket {
+                let mut depth = 1u32;
+                idx += 1;
+                while idx < tokens.len() && depth > 0 {
+                    match &tokens[idx].token {
+                        Token::LBracket => depth += 1,
+                        Token::RBracket => depth -= 1,
+                        _ => {}
+                    }
+                    idx += 1;
+                }
+            }
             // `integer`/`int` selalu 32-bit signed dan tidak perlu dimension.
             let width = if tipe_bulat {
                 sv_ast::width::WidthExpr::Literal(32)
@@ -240,6 +290,26 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
     let mut localparams = Vec::new();
 
     while idx < tokens.len() && tokens[idx].token != Token::Endmodule {
+        // Compiler directive dilewati.
+        if matches!(&tokens[idx].token, Token::Directive(_)) {
+            idx += 1;
+            if idx < tokens.len() && tokens[idx].token == Token::LParen {
+                let mut depth = 1u32;
+                idx += 1;
+                while idx < tokens.len() && depth > 0 {
+                    match &tokens[idx].token {
+                        Token::LParen => depth += 1,
+                        Token::RParen => depth -= 1,
+                        _ => {}
+                    }
+                    idx += 1;
+                }
+            }
+            if idx < tokens.len() && tokens[idx].token == Token::Semi {
+                idx += 1;
+            }
+            continue;
+        }
         match &tokens[idx].token {
             // LRM §6.20: `localparam NAME = <konstanta>;`, opsional bertipe dan
             // boleh beberapa nama dipisah koma. Nilai disimpan sebagai ekspresi

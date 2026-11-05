@@ -53,7 +53,9 @@ impl ParamTable {
         self.nilai.insert(nama.to_string(), (nilai, span));
         self.decls.push(ParamDecl {
             name: nama.to_string(),
+            type_name: None,
             default: nilai,
+            default_str: None,
             span,
         });
         Ok(())
@@ -138,7 +140,9 @@ mod tests {
     fn tabel() -> ParamTable {
         let params = vec![ParamDecl {
             name: "WIDTH".to_string(),
+            type_name: None,
             default: 8,
+            default_str: None,
             span: Span::dummy(),
         }];
         ParamTable::baru(&params).unwrap()
@@ -181,12 +185,16 @@ mod tests {
         let params = vec![
             ParamDecl {
                 name: "W".to_string(),
+                type_name: None,
                 default: 8,
+                default_str: None,
                 span: Span::dummy(),
             },
             ParamDecl {
                 name: "W".to_string(),
+                type_name: None,
                 default: 4,
+                default_str: None,
                 span: Span::dummy(),
             },
         ];

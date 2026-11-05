@@ -47,6 +47,16 @@ pub(super) fn parse_comb_body(
 
     if tokens[idx].token == Token::Begin {
         idx += 1;
+        // LRM §12.9: `begin : label` bentuk alternatif labeled block.
+        if idx < tokens.len() && tokens[idx].token == Token::Colon {
+            idx += 1; // skip ':'
+            if idx < tokens.len() {
+                match &tokens[idx].token {
+                    Token::Ident(_) => idx += 1, // skip label name
+                    _ => return Err("expected label name after ':' in begin".to_string()),
+                }
+            }
+        }
         let (stmts, consumed) = super::combinational::parse_combinational_block(&tokens[idx..])?;
         idx += consumed;
         if idx >= tokens.len() || tokens[idx].token != Token::End {

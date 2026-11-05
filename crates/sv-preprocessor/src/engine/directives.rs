@@ -112,12 +112,13 @@ impl Engine {
             | "line"
             | "pragma"
             | "default_decay_time" => {}
+            // Direktif tak dikenal (mis. `ASSERT` dari OpenTitan) — lewatkan ke
+            // output agar parser/lexer yang menanggungnya dapat menanganinya.
             other => {
-                return Err(PreprocessError::at(
-                    format!("direktif `{} tidak dikenal", other),
-                    file,
-                    line,
-                ));
+                out.push_str("`");
+                out.push_str(other);
+                out.push_str(&rest[word.len()..]);
+                out.push('\n');
             }
         }
         Ok(())

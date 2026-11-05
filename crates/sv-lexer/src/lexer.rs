@@ -1,7 +1,7 @@
 // Tanggung jawab: orkestrasi pemindaian token SystemVerilog.
 use crate::error::LexError;
 use crate::keyword::keyword_or_ident;
-use crate::literal::{scan_number, scan_string};
+use crate::literal::{is_unknown_digit, scan_number, scan_string};
 use crate::operator::{scan_compound, scan_operator};
 use crate::skip::skip_trivia;
 use crate::span::Span;
@@ -150,6 +150,9 @@ pub fn lex(source: &str) -> Result<Vec<SpannedToken>, LexError> {
 /// True bila `'` diikuti pola based literal, yaitu basis opsional bertanda
 /// `s` lalu basis wajib `b`/`o`/`d`/`h` (LRM §5.7.1).
 ///
+/// Juga true bila `'` diikuti digit (unsized based literal misal `'0`, `'1`)
+/// atau digit tak diketahui `x`/`z`/`?` (LRM §5.7.1).
+///
 /// Kalau tidak, `'` adalah awal type cast (LRM §6.14) seperti `byte_t'(x)`.
 fn mulai_based_literal(mut chars: Peekable<std::str::Chars>) -> bool {
     // Pemanggil memanggil fungsi ini saat `chars` masih menunjuk ke `'` itu
@@ -158,17 +161,12 @@ fn mulai_based_literal(mut chars: Peekable<std::str::Chars>) -> bool {
     if matches!(chars.peek(), Some('s') | Some('S')) {
         chars.next();
     }
-    matches!(
-        chars.peek(),
-        Some('b')
-            | Some('o')
-            | Some('d')
-            | Some('h')
-            | Some('B')
-            | Some('O')
-            | Some('D')
-            | Some('H')
-    )
+    match chars.peek() {
+        Some('b') | Some('o') | Some('d') | Some('h')
+        | Some('B') | Some('O') | Some('D') | Some('H') => true,
+        Some(c) if c.is_ascii_digit() || is_unknown_digit(*c) => true,
+        _ => false,
+    }
 }
 
 #[cfg(test)]

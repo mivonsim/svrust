@@ -26,6 +26,26 @@ pub fn parse_param_list(tokens: &[SpannedToken]) -> Result<(Vec<ParamDecl>, usiz
         if idx >= tokens.len() {
             return Err("expected nama parameter".to_string());
         }
+        // Parameter boleh bermula dengan tipe, misal `parameter string Name`
+        // atau `parameter int ListenPort` (LRM §6.20.1).
+        let type_name = if tokens.get(idx).is_some_and(|t| {
+            matches!(
+                &t.token,
+                Token::Ident(_) | Token::Int | Token::Bit | Token::Logic
+            )
+        }) {
+            let tn = match &tokens[idx].token {
+                Token::Ident(n) => Some(n.clone()),
+                Token::Int => Some("int".to_string()),
+                Token::Bit => Some("bit".to_string()),
+                Token::Logic => Some("logic".to_string()),
+                _ => None,
+            };
+            idx += 1;
+            tn
+        } else {
+            None
+        };
         let (nama, span) = match &tokens[idx].token {
             Token::Ident(n) => (n.clone(), tokens[idx].span),
             _ => return Err("expected nama parameter".to_string()),
@@ -40,11 +60,13 @@ pub fn parse_param_list(tokens: &[SpannedToken]) -> Result<(Vec<ParamDecl>, usiz
         if idx >= tokens.len() {
             return Err("expected nilai default parameter".to_string());
         }
-        let default = match &tokens[idx].token {
-            Token::Number(n) => *n,
+        // Nilai default boleh angka atau string literal, misal `parameter string Name = "dmi0"`.
+        let (default, default_str) = match &tokens[idx].token {
+            Token::Number(n) => (*n, None),
             // Sized literal juga sah sebagai nilai parameter, misal `8'd4`.
-            Token::BasedNumber { value, .. } => *value,
-            _ => return Err("nilai default parameter harus literal angka".to_string()),
+            Token::BasedNumber { value, .. } => (*value, None),
+            Token::StringLiteral(s) => (0, Some(s.clone())),
+            _ => return Err("nilai default parameter harus literal angka atau string".to_string()),
         };
         idx += 1;
 
@@ -53,7 +75,9 @@ pub fn parse_param_list(tokens: &[SpannedToken]) -> Result<(Vec<ParamDecl>, usiz
         }
         params.push(ParamDecl {
             name: nama,
+            type_name,
             default,
+            default_str,
             span,
         });
 

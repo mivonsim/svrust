@@ -231,7 +231,9 @@ fn lower_instance_body(
             .unwrap_or(p.default);
         efektif.push(ParamDecl {
             name: p.name.clone(),
+            type_name: p.type_name.clone(),
             default: nilai,
+            default_str: p.default_str.clone(),
             span: p.span,
         });
     }

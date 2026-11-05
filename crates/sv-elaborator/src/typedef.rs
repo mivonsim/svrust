@@ -381,7 +381,9 @@ mod tests {
     fn params() -> ParamTable {
         ParamTable::baru(&[ParamDecl {
             name: "W".to_string(),
+            type_name: None,
             default: 8,
+            default_str: None,
             span: Span::dummy(),
         }])
         .expect("params")
