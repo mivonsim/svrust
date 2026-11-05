@@ -97,20 +97,51 @@ pub fn scan_number(
         if ukuran_teks.is_empty() {
             return Err(LexError::new("invalid number", span(byte_offset)));
         }
-        let value = ukuran_teks
-            .parse::<u64>()
-            .map_err(|_| LexError::new("invalid number", span(byte_offset)))?;
+        let value = ukuran_teks.parse::<u64>().unwrap_or(u64::MAX); // literal yang melebihi u64 dipotong
         return Ok(Token::Number(value));
     }
 
     adv(chars, byte_offset, col); // consume `'`
+
+    // LRM §5.7.1: literal 4-state tanpa ukuran, misal `'x` / `'z` / `'?`.
+    // Semua bit tidak diketahui; lebar ditentukan konteks (di sini LEBAR_UNSIZED).
+    if ukuran_teks.is_empty() && chars.peek().is_some_and(|c| is_unknown_digit(*c)) {
+        let mut pertama_z = false;
+        let mut pertama_unknown = true;
+        while let Some(&c) = chars.peek() {
+            if !is_unknown_digit(c) {
+                break;
+            }
+            adv(chars, byte_offset, col);
+            if pertama_unknown {
+                pertama_z = matches!(c, 'z' | 'Z' | '?');
+                pertama_unknown = false;
+            }
+        }
+        let lebar = LEBAR_UNSIZED.min(64);
+        let unknown_mask = if lebar >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << lebar) - 1
+        };
+        let zmask = if pertama_z { unknown_mask } else { 0 };
+        return Ok(Token::BasedNumber {
+            value: 0,
+            width: lebar,
+            signed: false,
+            unknown_mask,
+            zmask,
+        });
+    }
 
     // LRM §6.14: `16'(x)` adalah size cast — lebar eksplisit tanpa nama tipe.
     // Karakter setelah `'` adalah `(` pada bentuk ini, bukan basis digit, jadi
     // harus diperiksa sebelum basis. Spasi di antaranya legal (`16' (x)`),
     // jadi trivia dilewati lebih dulu; `skip_trivia` idempoten sehingga tidak
     // ada yang terlewat saat loop utama berjalan lagi.
-    skip_trivia(chars, line, col, byte_offset);
+    // Trivia boleh lebih dari satu unit (spasi, baris baru, komentar), jadi
+    // harus diulang sampai habis sebelum memeriksa tanda berikutnya.
+    while skip_trivia(chars, line, col, byte_offset) {}
     if chars.peek() == Some(&'(') {
         if ukuran_teks.is_empty() {
             return Err(LexError::new(
@@ -165,11 +196,18 @@ pub fn scan_number(
     // (unsized based literal) — digit tersebut akan dikonsumsi oleh loop
     // di bawah. Hanya `adv` untuk basis yang dieksekusi secara eksplisit
     // (misal `'h`, `'d`).
-    if matches!(basis, Basis::Decimal) && ukuran_teks.is_empty() {
-        // Unsized based literal: digit pertama belum dikonsumsi, biarkan loop
-        // di bawah yang menangani.
-    } else {
+    // Konsumsi karakter basis yang ditulis secara eksplisit (misal `d` pada
+    // `'d2`, `h` pada `'hFF`). Untuk literal tanpa ukuran dan tanpa basis
+    // karakter (misal `'0`, `'1`), digit datang langsung setelah `'`.
+    if matches!(
+        chars.peek(),
+        Some('b' | 'o' | 'd' | 'h' | 'B' | 'O' | 'D' | 'H')
+    ) {
         adv(chars, byte_offset, col);
+        // LRM §5.7.1: spasi/komentar boleh memisahkan basis dari digit, dan
+        // jumlahnya tidak dibatasi (`16'h    0001`). Satu panggilan
+        // `skip_trivia` hanya melewati satu unit, jadi harus diulang.
+        while skip_trivia(chars, line, col, byte_offset) {}
     }
 
     // Digit isi; `_` adalah separator yang diabaikan (LRM §5.7.1).
@@ -177,7 +215,6 @@ pub fn scan_number(
     let mut unknown_mask: u64 = 0;
     let mut zmask: u64 = 0;
     let mut jumlah_digit = 0usize;
-    let mut overflow = false;
     // Digit paling kiri menentukan padding LRM §5.7.1: `x`/`z` di-padding
     // dengan dirinya sendiri, selain itu dengan nol.
     let mut digit_kiri_z = false;
@@ -192,15 +229,15 @@ pub fn scan_number(
             // Nilai di-collapse ke 0, tetapi posisinya tetap harus dihitung:
             // digit unknown menggeser akumulator seperti digit biasa lalu
             // menandai bit barunya pada `unknown_mask`.
-            nilai = nilai.saturating_mul(basis_nilai);
+            nilai = nilai.wrapping_mul(basis_nilai);
             let digit_mask = digit_unknown_mask(basis);
-            unknown_mask = (unknown_mask.saturating_mul(basis_nilai)) | digit_mask;
+            unknown_mask = (unknown_mask.wrapping_mul(basis_nilai)) | digit_mask;
             // LRM §5.7.1: `?` berarti `z` bila digit bernilai 0 atau 1 dan
             // `x` bila digitnya sudah `x`/`z`. Karena `nilai` di-collapse ke 0
             // di sini, `?` selalu diperlakukan sebagai `z` — sama seperti
             // penulisan eksplisit `z`. Digit `x` dan `z` eksplisit tetap
             // dibedakan.
-            zmask = zmask.saturating_mul(basis_nilai);
+            zmask = zmask.wrapping_mul(basis_nilai);
             let ini_z = matches!(c, 'z' | 'Z' | '?');
             if ini_z {
                 zmask |= digit_mask;
@@ -211,15 +248,12 @@ pub fn scan_number(
             }
         } else if let Some(d) = basis.digit_value(c) {
             let _ = d;
-            // Deteksi luap sebelum mengalikan agar tidak diam-diam terpotong.
-            if nilai > u64::MAX / basis_nilai {
-                overflow = true;
-            }
-            nilai = nilai.saturating_mul(basis_nilai).saturating_add(d as u64);
+            // Nilai disimpan pada u64; lebar di atas 64 bit dipotong (wrap).
+            nilai = nilai.wrapping_mul(basis_nilai).wrapping_add(d as u64);
             // Bit unknown yang sudah lewat juga harus bergeser agar posisinya
             // tetap relatif terhadap digit yang sedang diproses.
-            unknown_mask = unknown_mask.saturating_mul(basis_nilai);
-            zmask = zmask.saturating_mul(basis_nilai);
+            unknown_mask = unknown_mask.wrapping_mul(basis_nilai);
+            zmask = zmask.wrapping_mul(basis_nilai);
         } else {
             break;
         }
@@ -243,12 +277,28 @@ pub fn scan_number(
             span(byte_offset),
         ));
     }
-    if overflow {
-        return Err(LexError::new("literal meluap", span(byte_offset)));
-    }
-
     // Desimal tidak punya digit unknown; tolak agar tidak mengarang masker.
+    // Exception: literal tanpa ukuran (`'dz`, `'1x`) adalah 4-state unsized
+    // (LRM §5.7.1), lebar ditentukan konteks — terima sebagai BasedNumber
+    // dengan semua bit unknown, jangan error.
     if unknown_mask != 0 && basis == Basis::Decimal {
+        if ukuran_teks.is_empty() {
+            // 4-state unsized literal, lebar default 32 bit (LRM §5.7.1).
+            let lebar = LEBAR_UNSIZED.min(64);
+            let unknown_mask = if lebar >= 64 {
+                u64::MAX
+            } else {
+                (1u64 << lebar) - 1
+            };
+            let zmask = if digit_kiri_z { unknown_mask } else { 0 };
+            return Ok(Token::BasedNumber {
+                value: 0,
+                width: lebar,
+                signed: false,
+                unknown_mask,
+                zmask,
+            });
+        }
         return Err(LexError::new(
             "literal desimal tidak boleh memuat x/z/?",
             span(byte_offset),
@@ -400,6 +450,34 @@ mod tests {
         let tokens = lex(sumber).expect("lex gagal");
         assert_eq!(tokens.len(), 1, "harus satu token untuk {sumber:?}");
         tokens[0].token.clone()
+    }
+
+    // BUG: `skip_trivia` hanya melewati satu unit trivia, sehingga based
+    // literal dengan lebih dari satu spasi setelah basis dilaporkan
+    // "based literal tanpa digit". Ditemukan pada `16'h    0001` di
+    // OpenTitan kmac_pkg.sv.
+    #[test]
+    fn spasi_banyak_setelah_basis_dilewati() {
+        assert_eq!(
+            pindai("16'h    0001"),
+            Token::BasedNumber {
+                value: 1,
+                width: 16,
+                signed: false,
+                unknown_mask: 0,
+                zmask: 0,
+            }
+        );
+        assert_eq!(
+            pindai("1'b 1"),
+            Token::BasedNumber {
+                value: 1,
+                width: 1,
+                signed: false,
+                unknown_mask: 0,
+                zmask: 0,
+            }
+        );
     }
 
     #[test]
@@ -627,6 +705,40 @@ mod tests {
     fn unknown_ditolak_pada_literal_desimal() {
         // LRM §5.7.1: basis desimal tidak punya digit unknown.
         assert!(lex("8'd1x").is_err());
+    }
+
+    // LRM §5.7.1: literal 4-state tanpa ukuran (`'dz`, `'1x`) diterima;
+    // lebar ditentukan konteks (digunakan LEBAR_UNSIZED sebagai placeholder).
+    #[test]
+    fn unknown_tanpa_ukuran_diterima_sebagai_4state() {
+        match lex("'dz").expect("lex")[0].token.clone() {
+            Token::BasedNumber {
+                width,
+                unknown_mask,
+                zmask,
+                ..
+            } => {
+                assert_eq!(width, LEBAR_UNSIZED.min(64));
+                // Placeholder 32 bit: seluruh bit pada lebar itu tidak diketahui.
+                let semua = (1u64 << width) - 1;
+                assert_eq!(unknown_mask, semua);
+                assert_eq!(zmask, semua);
+            }
+            other => panic!("expected BasedNumber, dapat {other:?}"),
+        }
+        match lex("'1x").expect("lex")[0].token.clone() {
+            Token::BasedNumber {
+                width,
+                unknown_mask,
+                zmask,
+                ..
+            } => {
+                assert_eq!(width, LEBAR_UNSIZED.min(64));
+                assert_eq!(unknown_mask, (1u64 << width) - 1);
+                assert_eq!(zmask, 0);
+            }
+            other => panic!("expected BasedNumber, dapat {other:?}"),
+        }
     }
 
     #[test]

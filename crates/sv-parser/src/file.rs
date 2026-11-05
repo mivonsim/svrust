@@ -42,37 +42,97 @@ pub fn parse_file(tokens: &[SpannedToken]) -> Result<ParseResult, String> {
             idx += next;
             continue;
         }
-        if tokens[idx].token != Token::Module {
-            return Err(format!("expected 'module', dapat {:?}", tokens[idx].token));
-        }
-        let awal = idx;
-        let mut akhir = None;
-        for (rel, t) in tokens[idx..].iter().enumerate() {
-            if t.token == Token::Endmodule {
-                akhir = Some(idx + rel);
-                break;
+        // `package` — deklarasi paket yang berisi definisi tipe, parameter, dan subroutine (LRM §26).
+        // SVRust tidak memproses isi paket; lewati seluruh `package ... endpackage`.
+        if tokens[idx].token == Token::Package {
+            let mut end_idx = idx;
+            while end_idx < tokens.len() {
+                if tokens[end_idx].token == Token::Endpackage {
+                    end_idx += 1;
+                    break;
+                }
+                end_idx += 1;
             }
+            idx = end_idx;
+            continue;
         }
-        let akhir = akhir.ok_or_else(|| "expected 'endmodule'".to_string())?;
-        let mut modul = super::module::parse_module(&tokens[awal..=akhir])?;
-        // LRM §21.8: `#n` tanpa satuan memakai `timeunit` modul, jadi satuan
-        // `Bawaan` diselesaikan di sini — setelah `timescale` diketahui dan
-        // sebelum modul masuk elaborator.
-        modul.time_scale = time_scale;
-        sv_ast::delay_unit::terapkan_module(&mut modul, time_scale);
-        // Tolak nama module duplikat dalam satu berkas.
-        if out.iter().any(|m: &Module| m.name == modul.name) {
-            return Err(format!("module duplikat: {}", modul.name));
+        // `class` — deklarasi kelas OOP (LRM §8). SVRust tidak memproses isi
+        // kelas; lewati seluruh `class ... endclass` agar berkas verifikasi
+        // (UVM/DV) tetap bisa di-parse tanpa error.
+        if tokens[idx].token == Token::Class {
+            let mut end_idx = idx;
+            while end_idx < tokens.len() {
+                if tokens[end_idx].token == Token::Endclass {
+                    end_idx += 1;
+                    break;
+                }
+                end_idx += 1;
+            }
+            idx = end_idx;
+            continue;
         }
-        out.push(modul);
-        idx = akhir + 1;
-        // `endmodule : label` bentuk labeled endmodule (LRM §12.9).
-        if idx < tokens.len() && tokens[idx].token == Token::Colon {
-            idx += 2; // skip ':' and label name
+        // `function` di luar module — definisi metode kelas dengan :: scope
+        // (contoh `function kmac_app_device_agent::new(...)`). Lewati hingga
+        // `endfunction` agar berkas verifikasi tidak menyebabkan error.
+        if tokens[idx].token == Token::Function {
+            let mut end_idx = idx;
+            while end_idx < tokens.len() {
+                if tokens[end_idx].token == Token::Endfunction {
+                    end_idx += 1;
+                    break;
+                }
+                end_idx += 1;
+            }
+            idx = end_idx;
+            continue;
         }
-    }
-    if out.is_empty() {
-        return Err("berkas kosong: tidak ada module".to_string());
+        // `task` di luar module — definisi task kelas. Lewati hingga `endtask`.
+        if tokens[idx].token == Token::Task {
+            let mut end_idx = idx;
+            while end_idx < tokens.len() {
+                if tokens[end_idx].token == Token::Endtask {
+                    end_idx += 1;
+                    break;
+                }
+                end_idx += 1;
+            }
+            idx = end_idx;
+            continue;
+        }
+        // Modul SV — parse seluruh `module ... endmodule`.
+        if tokens[idx].token == Token::Module {
+            let awal = idx;
+            let mut akhir = None;
+            for (rel, t) in tokens[idx..].iter().enumerate() {
+                if t.token == Token::Endmodule {
+                    akhir = Some(idx + rel);
+                    break;
+                }
+            }
+            let akhir = akhir.ok_or_else(|| "expected 'endmodule'".to_string())?;
+            let mut modul = super::module::parse_module(&tokens[awal..=akhir])?;
+            // LRM §21.8: `#n` tanpa satuan memakai `timeunit` modul, jadi satuan
+            // `Bawaan` diselesaikan di sini — setelah `timescale` diketahui dan
+            // sebelum modul masuk elaborator.
+            modul.time_scale = time_scale;
+            sv_ast::delay_unit::terapkan_module(&mut modul, time_scale);
+            // Tolak nama module duplikat dalam satu berkas.
+            if out.iter().any(|m: &Module| m.name == modul.name) {
+                return Err(format!("module duplikat: {}", modul.name));
+            }
+            out.push(modul);
+            idx = akhir + 1;
+            // `endmodule : label` bentuk labeled endmodule (LRM §12.9).
+            if idx < tokens.len() && tokens[idx].token == Token::Colon {
+                idx += 2; // skip ':' and label name
+            }
+            continue;
+        }
+        // Konstruk tak dikenal di level berkas (mis. deklarasi variabel kelas
+        // di luar module, `rand`, `bit`, `logic`, dll.) — lewati satu token
+        // dan lanjutkan agar parse tidak gagal total pada berkas verifikasi.
+        idx += 1;
+        continue;
     }
     Ok(ParseResult {
         modules: out,
@@ -151,5 +211,61 @@ fn unit_text(unit: sv_ast::time_unit::TimeUnit) -> &'static str {
         PicoSeconds => "ps",
         FectoSeconds => "fs",
         Bawaan => "?",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sv_lexer::lex;
+
+    fn parse(src: &str) -> ParseResult {
+        let tokens = lex(src).expect("lex");
+        parse_file(&tokens).expect("parse")
+    }
+
+    #[test]
+    fn class_dilewati_pada_toplevel() {
+        // Berkas yang berisi class OOP (UVM/DV) harus bisa di-parse tanpa error;
+        // isi class dilewati, hanya module yang dihasilkan.
+        let src = "class my_agent extends uvm_agent;\n  function new();\n  endfunction\nendclass\nmodule m;\nendmodule";
+        let result = parse(src);
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(result.modules[0].name, "m");
+    }
+
+    #[test]
+    fn class_tanpa_endmodule_tetap_dilewati() {
+        // class sebelum module: class dilewati, module tetap terparse.
+        let src = "class my_seq_item extends uvm_sequence_item;\n  rand bit [7:0] data;\nendclass\nmodule top;\nendmodule";
+        let result = parse(src);
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(result.modules[0].name, "top");
+    }
+
+    #[test]
+    fn function_dan_task_dilewati_di_luar_module() {
+        // Definisi metode kelas dengan :: scope di luar module harus dilewati.
+        let src = "function kmac_app_device_agent::new(string name, uvm_component parent);\n  super.new(name, parent);\nendfunction\nmodule top;\nendmodule";
+        let result = parse(src);
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(result.modules[0].name, "top");
+    }
+
+    #[test]
+    fn task_dilewati_di_luar_module() {
+        let src = "task kmac_app_device_agent::run_device_seq();\n  forever begin\n  end\nendtask\nmodule top;\nendmodule";
+        let result = parse(src);
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(result.modules[0].name, "top");
+    }
+
+    #[test]
+    fn konstruk_tak_dikenal_dilewati_satu_token() {
+        // Token yang tidak dikenal di level berkas tidak boleh menyebabkan error total.
+        let src = "rand bit [7:0] data;\nmodule top;\nendmodule";
+        let result = parse(src);
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(result.modules[0].name, "top");
     }
 }

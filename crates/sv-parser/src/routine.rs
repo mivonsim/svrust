@@ -35,14 +35,20 @@ pub fn parse_routine(tokens: &[SpannedToken]) -> Result<(RoutineDecl, usize), St
     // `reg`, `bit`, dan seterusnya (LRM §6.16, Tabel 6-22).
     let mut lebar_atom = None;
     if matches!(kind, RoutineKind::Function) {
-        lebar_atom = tokens
-            .get(idx)
-            .and_then(|t| sv_lexer::token::tipe::atom(&t.token));
-        let bisa_mulai = tokens
-            .get(idx)
-            .is_some_and(|t| sv_lexer::token::tipe::bisa_mulai_deklarasi(&t.token));
-        if bisa_mulai {
+        // `void` berarti function tanpa nilai balik (LRM §13.4).
+        if matches!(tokens.get(idx).map(|t| &t.token), Some(Token::Void)) {
+            lebar_atom = Some((0, false));
             idx += 1;
+        } else {
+            lebar_atom = tokens
+                .get(idx)
+                .and_then(|t| sv_lexer::token::tipe::atom(&t.token));
+            let bisa_mulai = tokens
+                .get(idx)
+                .is_some_and(|t| sv_lexer::token::tipe::bisa_mulai_deklarasi(&t.token));
+            if bisa_mulai {
+                idx += 1;
+            }
         }
     }
 
@@ -131,13 +137,20 @@ pub fn parse_routine(tokens: &[SpannedToken]) -> Result<(RoutineDecl, usize), St
 fn parse_arg(tokens: &[SpannedToken]) -> Result<(RoutineArg, usize), String> {
     let mut idx = 0;
     let span = tokens.first().map(|t| t.span).unwrap_or_else(Span::dummy);
+    // LRM §13.3: arah yang dihilangkan berarti `input`, jadi
+    // `function ... (logic [7:0] x)` sah dan tidak boleh ditolak.
     let direction = match tokens.get(idx).map(|t| &t.token) {
         Some(Token::Input) => ArgDirection::Input,
         Some(Token::Output) => ArgDirection::Output,
         Some(Token::Inout) => ArgDirection::Inout,
-        other => return Err(format!("expected arah argumen, dapat {other:?}")),
+        _ => ArgDirection::Input,
     };
-    idx += 1;
+    if matches!(
+        tokens.get(idx).map(|t| &t.token),
+        Some(Token::Input) | Some(Token::Output) | Some(Token::Inout)
+    ) {
+        idx += 1;
+    }
 
     // Qualifier tipe opsional. Tipe atom sudah menentukan lebarnya sehingga
     // tidak boleh diikuti dimension (LRM §6.16, Tabel 6-22).
@@ -372,10 +385,16 @@ mod tests {
         assert!(parse_routine(&tokens).is_err());
     }
 
+    // LRM §13.3: arah yang dihilangkan berarti `input`, jadi `task t(a);`
+    // sah. Versi lama menolaknya, padahal OpenTitan memakai bentuk ini di
+    // banyak task/function.
     #[test]
-    fn argumen_tanpa_arah_ditolak() {
+    fn argumen_tanpa_arah_berarti_input() {
         let tokens = lex("task t(a); endtask").expect("lex");
-        assert!(parse_routine(&tokens).is_err());
+        let (routine, _) = parse_routine(&tokens).expect("arah default input");
+        assert_eq!(routine.args.len(), 1);
+        assert_eq!(routine.args[0].name, "a");
+        assert_eq!(routine.args[0].direction, ArgDirection::Input);
     }
 
     #[test]

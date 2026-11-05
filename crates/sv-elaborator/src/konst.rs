@@ -77,6 +77,20 @@ pub fn konst(
             // hasilnya, angkanya jadi keliru.
             Ok((satu & mask(lebar)).wrapping_mul(rep_multiplier(n, lebar)))
         }
+        // LRM §11.4.11: `c ? a : b`. Hanya cabang terpilih yang dievaluasi,
+        // jadi `W ? 1 : 1/0` tidak menghasilkan pembagian nol palsu.
+        Expr::Ternary {
+            condition,
+            when_true,
+            when_false,
+            ..
+        } => {
+            if konst(condition, env, params, span)? != 0 {
+                konst(when_true, env, params, span)
+            } else {
+                konst(when_false, env, params, span)
+            }
+        }
         // LRM §7.4: `a[hi:lo]` dan `a[i]` pada ekspresi konstanta.
         Expr::Select { base, msb, lsb, .. } => {
             let lebar = msb - lsb + 1;
@@ -346,6 +360,30 @@ mod tests {
         let a = binary(BinaryOp::Lt, ident("W"), Expr::Number(4));
         let b = binary(BinaryOp::Eq, ident("SEL"), Expr::Number(2));
         assert_eq!(eval(&binary(BinaryOp::LogOr, a, b)).unwrap(), 1);
+    }
+
+    // BUG: evaluator konstanta tidak mengenal `? :`, sehingga
+    // `localparam int Share = (EnMasking) ? 2 : 1` (OpenTitan kmac_msgfifo)
+    // ditolak dengan pesan yang menyebut ternary sebagai non-konstanta.
+    #[test]
+    fn ternary_konstan_memilih_cabang() {
+        let cond = binary(BinaryOp::Gt, ident("W"), Expr::Number(4));
+        let expr = Expr::Ternary {
+            condition: Box::new(cond),
+            when_true: Box::new(Expr::Number(2)),
+            when_false: Box::new(Expr::Number(1)),
+            span: Span::dummy(),
+        };
+        assert_eq!(eval(&expr).unwrap(), 2);
+
+        let cond_salah = binary(BinaryOp::Lt, ident("W"), Expr::Number(4));
+        let expr_salah = Expr::Ternary {
+            condition: Box::new(cond_salah),
+            when_true: Box::new(Expr::Number(2)),
+            when_false: Box::new(Expr::Number(1)),
+            span: Span::dummy(),
+        };
+        assert_eq!(eval(&expr_salah).unwrap(), 1);
     }
 
     #[test]

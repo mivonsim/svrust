@@ -1,5 +1,5 @@
 // Tanggung jawab: unit test preprocessor (define, ifdef, include, substitusi).
-use crate::preprocess;
+use crate::{preprocess, preprocess_with_dirs};
 
 fn run(source: &str) -> String {
     preprocess(source, None).unwrap().source
@@ -59,8 +59,11 @@ fn nested_ifdef_inactive_inner() {
 }
 
 #[test]
-fn endif_tanpa_ifdef_error() {
-    assert!(run_err("`endif").contains("`endif tanpa `ifdef"));
+fn endif_tanpa_ifdef_diterima() {
+    // `endif tanpa `ifdef` yang cocok — dilewati (bisa terjadi bila makro
+    // bersyarat melintasi berkas include).
+    let out = run("`endif\nmodule m; endmodule");
+    assert!(out.contains("module m; endmodule"));
 }
 
 #[test]
@@ -97,6 +100,18 @@ fn include_dan_timescale() {
 }
 
 #[test]
+fn include_dengan_komentar_trailing() {
+    // `include "file.svh"  // komentar` harus tetap dapat menemukan berkas.
+    let dir = std::env::temp_dir().join("svpp-test-include-comment");
+    std::fs::create_dir_all(&dir).ok();
+    std::fs::write(dir.join("defs.svh"), "`define W 8\n").unwrap();
+    let main =
+        "`include \"defs.svh\"  // komentar trailing\nmodule m; localparam W = `W; endmodule";
+    let pp = preprocess_with_dirs(main, &[dir.as_path()], "test.sv").unwrap();
+    assert!(pp.source.contains("localparam W = 8;"));
+}
+
+#[test]
 fn include_siklus_terdeteksi() {
     let dir = std::env::temp_dir().join("svpp-test-cycle");
     std::fs::create_dir_all(&dir).ok();
@@ -105,6 +120,116 @@ fn include_siklus_terdeteksi() {
     let main = "`include \"a.svh\"\nendmodule";
     let err = preprocess(main, Some(&dir)).unwrap_err();
     assert!(err.to_string().contains("siklus"));
+}
+
+#[test]
+fn include_tidak_ditemukan_membawa_baris_direktif() {
+    let error = preprocess_with_dirs(
+        "module m;\n`include \"__svrust_missing_for_test__.svh\"\nendmodule",
+        &[],
+        "test.sv",
+    )
+    .expect_err("include yang tidak ada harus gagal");
+
+    assert_eq!(error.file, "test.sv");
+    assert_eq!(error.line, 2);
+}
+
+// --- Fitur: `include `MAKRO (nama file lewat makro) ---
+
+#[test]
+fn include_melalui_makro_dikenal() {
+    let dir = std::env::temp_dir().join("svpp-test-include-macro");
+    std::fs::create_dir_all(&dir).ok();
+    std::fs::write(dir.join("defs.svh"), "`define WIDTH 4\n").unwrap();
+    let main =
+        "`define FILE \"defs.svh\"\n`include `FILE\nmodule m; localparam W = `WIDTH; endmodule";
+    let pp = preprocess_with_dirs(main, &[&dir], "test.sv").unwrap();
+    assert!(pp.source.contains("localparam W = 4;"));
+}
+
+#[test]
+fn include_melalui_makro_tidak_dikenal_dilewati() {
+    // Makro yang tidak didefinisikan: skip include, preprocessor tidak error.
+    let out = run("module m;\n`include `REQUESTS_FILE\nendmodule");
+    assert!(out.contains("module m;"));
+    assert!(out.contains("endmodule"));
+    assert!(!out.contains("`include"));
+}
+
+// --- Fitur: pemanggilan makro function-like yang melintasi baris ---
+
+#[test]
+fn pemanggilan_makro_multi_line() {
+    // Pemanggilan makro yang argumennya melintasi beberapa baris (kurung belum
+    // seimbang pada baris pertama) harus digabung sebelum diekspansi.
+    let src = r#"`define INFO(g, m, v) `g: m = v
+`INFO(`gfn,
+      "hello",
+      UVM_DEBUG)
+module m; endmodule"#;
+    let out = run(src);
+    assert!(out.contains("`gfn: \"hello\" = UVM_DEBUG"), "hasil: {out}");
+    assert!(out.contains("module m; endmodule"));
+}
+
+// Pemanggilan makro UVM/DV yang melintasi baris dengan nested parens (perti
+// kasus OpenTitan `uvm_info(`gfn, $sformatf("...[0x%x...]..."), UVM_DEBUG)`).
+#[test]
+fn pemanggilan_uvm_info_multi_line() {
+    let src = r#"`define uvm_info(id, msg, verb) id: msg = verb
+`uvm_info(`gfn,
+      $sformatf("range [0x%0x,0x%0x)"),
+      UVM_DEBUG)
+module m; endmodule"#;
+    let out = run(src);
+    assert!(
+        out.contains("gfn: $sformatf(\"range [0x%0x,0x%0x)\") = UVM_DEBUG"),
+        "hasil: {out}"
+    );
+}
+
+// Pemanggilan makro OpenTitan ASSERT_* yang melintasi baris dengan indeks [2].
+#[test]
+fn pemanggilan_assert_multi_line() {
+    let src = r#"`define ASSERT_X(a, b, c, d) a, b, c, d
+`ASSERT_X(IbexPcMismatchCheck_A, alert_tx_o[2],
+      u_ibex_core.if_stage_i, pc_mismatch_alert_o)
+module m; endmodule"#;
+    let out = run(src);
+    assert!(
+        out.contains(
+            "IbexPcMismatchCheck_A, alert_tx_o[2], u_ibex_core.if_stage_i, pc_mismatch_alert_o"
+        ),
+        "hasil: {out}"
+    );
+}
+
+// Kasus nyata OpenTitan: macro didefinisikan lewat `include "prim_assert.sv"`
+// di awal berkas, baru dipakai di baris jauh setelahnya, multi-line.
+#[test]
+fn pemanggilan_assert_multi_line_lewat_include() {
+    let dir = std::env::temp_dir().join("svpp-test-assert-include");
+    std::fs::create_dir_all(&dir).ok();
+    std::fs::write(
+        dir.join("prim_assert.sv"),
+        "`define ASSERT_X(a, b, c, d) a, b, c, d\n",
+    )
+    .unwrap();
+    let main = r#"`include "prim_assert.sv"
+module rv_core_ibex;
+  `ASSERT_X(IbexPcMismatchCheck_A, alert_tx_o[2],
+      u_ibex_core.if_stage_i, pc_mismatch_alert_o)
+endmodule"#;
+    let pp = preprocess_with_dirs(main, &[dir.as_path()], "rv_core_ibex.sv").unwrap();
+    assert!(
+        pp.source.contains(
+            "IbexPcMismatchCheck_A, alert_tx_o[2], u_ibex_core.if_stage_i, pc_mismatch_alert_o"
+        ),
+        "hasil: {}",
+        pp.source
+    );
+    assert!(!pp.source.contains("`ASSERT_X"));
 }
 
 #[test]
@@ -194,9 +319,12 @@ fn pemanggilan_makro_awal_baris_function_like() {
 }
 
 #[test]
-fn direktif_tetap_error_bila_tidak_dikenal() {
-    let e = run_err("`bukan_direktif x\nmodule m; endmodule");
-    assert!(e.contains("tidak dikenal"), "hasil: {e}");
+fn direktif_tidak_dikenal_dilewati() {
+    // Direktif tak dikenal (mis. `ASSERT` dari OpenTitan) dilewati ke output
+    // agar parser/lexer yang menanggungnya dapat memprosesnya.
+    let out = run("`bukan_direktif x\nmodule m; endmodule");
+    assert!(out.contains("`bukan_direktif x"), "hasil: {out}");
+    assert!(out.contains("module m; endmodule"), "hasil: {out}");
 }
 
 // --- Fase 2: direktif preprocessor lanjutan ---
@@ -274,4 +402,36 @@ fn default_argumen_bertingkat_di_body() {
     // Body berisi makro lain + default.
     let out = run("`define BIAS 1\n`define F(a, b = `BIAS) a + b\nwire w = `F(3);");
     assert_eq!(out.trim(), "wire w = 3 + 1;");
+}
+
+// --- Bug: argumen kosong eksplisit (`F(1, , 3)`) tidak boleh memicu default ---
+
+#[test]
+fn argumen_kosong_eksplisit_bukan_default() {
+    // `with_c_` kosong yang ditulis secara eksplisit (`F(a, , c, d)`) harus
+    // bernilai string kosong, TIDAK memicu default (karena parameter
+    // `with_c_` di-definisi tanpa default).
+    let src = "`define F(a, b = 5, c) a + b + c\nwire w = `F(1, , 3);";
+    let out = run(src);
+    assert!(out.contains("1 +  + 3"), "hasil: {out}");
+}
+
+// --- Bug: `define dengan nested parens di parameter default ---
+
+#[test]
+fn define_parameter_default_dengan_nested_parens() {
+    // `tl_host_custom_seq #(cip_tl_seq_item)` mengandung `( ... )` di dalam
+    // default parameter `define`. `)` pertama di default tidak boleh ditanggap
+    // sebagai penutup daftar parameter `define`.
+    let src = "`define M(a, b = x #(y), c = 9) a + b + c\nwire w = `M(1);";
+    let out = run(src);
+    assert!(out.contains("1 + x #(y) + 9"), "hasil: {out}");
+}
+
+#[test]
+fn define_parameter_default_dengan_nested_parens_dan_koma() {
+    // Koma di dalam nested parens di default juga tidak boleh memecah parameter.
+    let src = "`define M(a, b = x #(y, z), c = 9) a + b + c\nwire w = `M(1);";
+    let out = run(src);
+    assert!(out.contains("1 + x #(y, z) + 9"), "hasil: {out}");
 }

@@ -14,6 +14,42 @@ fn is_signedness(token: &Token) -> bool {
     matches!(token, Token::Signed | Token::Unsigned)
 }
 
+/// Lewati satu grup `[...]` seimbang; kembalikan indeks sesudah `]`.
+fn lewati_kurung_siku(tokens: &[SpannedToken], mut idx: usize) -> usize {
+    let mut depth = 0u32;
+    while idx < tokens.len() {
+        match &tokens[idx].token {
+            Token::LBracket => depth += 1,
+            Token::RBracket => {
+                depth -= 1;
+                if depth == 0 {
+                    return idx + 1;
+                }
+            }
+            _ => {}
+        }
+        idx += 1;
+    }
+    idx
+}
+
+/// True bila `tokens[idx]` adalah nama tipe yang benar-benar diikuti nama port.
+///
+/// `input my_t a` → `my_t` tipe, `a` nama. `input a,` dan
+/// `input a [3:0],` → tidak ada nama setelahnya, jadi `a` adalah nama port.
+/// Tanpa pemeriksaan ini parser memakan nama port sebagai tipe lalu berjalan
+/// melewati `)` sampai `endmodule`.
+fn tipe_diikuti_nama(tokens: &[SpannedToken], idx: usize) -> bool {
+    if !matches!(tokens.get(idx).map(|t| &t.token), Some(Token::Ident(_))) {
+        return false;
+    }
+    let mut j = idx + 1;
+    while j < tokens.len() && tokens[j].token == Token::LBracket {
+        j = lewati_kurung_siku(tokens, j);
+    }
+    matches!(tokens.get(j).map(|t| &t.token), Some(Token::Ident(_)))
+}
+
 /// Parse `parameter` di body modul (LRM §6.20).
 ///
 /// Bentuk: `parameter [tipe] NAME = <konstanta> [, ...] ;`
@@ -31,6 +67,13 @@ fn parse_param_body(
         .is_some_and(|t| sv_lexer::token::tipe::bisa_mulai_deklarasi(&t.token))
     {
         idx += 1;
+    }
+    // Signedness dan dimensi packed setelah tipe: `parameter logic [15:0] E`.
+    if tokens.get(idx).is_some_and(|t| is_signedness(&t.token)) {
+        idx += 1;
+    }
+    while tokens.get(idx).is_some_and(|t| t.token == Token::LBracket) {
+        idx = lewati_kurung_siku(tokens, idx);
     }
     let mut out = Vec::new();
     loop {
@@ -65,6 +108,9 @@ fn parse_param_body(
                 idx += eaten;
                 match expr {
                     sv_ast::expression::Expr::Number(nilai) => (nilai, None),
+                    // `parameter logic [15:0] E = 16'h0001;` — based literal
+                    // adalah konstanta yang sah, bukan error.
+                    sv_ast::expression::Expr::Sized { value, .. } => (value, None),
                     _ => return Err(format!(
                         "nilai default parameter '{name}' harus literal angka atau string di body modul"
                     )),
@@ -101,12 +147,42 @@ fn parse_localparam(
     tokens: &[SpannedToken],
 ) -> Result<(Vec<sv_ast::width::LocalParamDecl>, usize), String> {
     let mut idx = 1; // lewati keyword `localparam`
-                     // Tipe opsional: `localparam int X = 1;` (LRM §6.20.1).
+                     // Tipe opsional (LRM §6.20.1): `localparam int X`, `localparam int
+                     // unsigned N`, `localparam bit [N-1:0] X`, `localparam pkg::t X`, dan
+                     // `localparam my_t X`. Tanpa penanganan signedness/dimensi/scope paket,
+                     // deklarasi seperti `localparam int unsigned NumSp2VSig = 8;` melaporkan
+                     // "expected nama localparam" di baris `endmodule`.
     if tokens
         .get(idx)
         .is_some_and(|t| sv_lexer::token::tipe::bisa_mulai_deklarasi(&t.token))
     {
         idx += 1;
+        if tokens.get(idx).is_some_and(|t| is_signedness(&t.token)) {
+            idx += 1;
+        }
+        while idx < tokens.len() && tokens[idx].token == Token::LBracket {
+            idx = lewati_kurung_siku(tokens, idx);
+        }
+    } else if matches!(tokens.get(idx).map(|t| &t.token), Some(Token::Ident(_)))
+        && tokens.get(idx + 1).map(|t| &t.token) == Some(&Token::Colon)
+    {
+        // `localparam pkg::tipe Nama = ...`
+        idx += 1;
+        while idx < tokens.len() && tokens[idx].token == Token::Colon {
+            idx += 1;
+        }
+        if matches!(tokens.get(idx).map(|t| &t.token), Some(Token::Ident(_))) {
+            idx += 1;
+        }
+        while idx < tokens.len() && tokens[idx].token == Token::LBracket {
+            idx = lewati_kurung_siku(tokens, idx);
+        }
+    } else if tipe_diikuti_nama(tokens, idx) {
+        // `localparam my_t Nama = ...` — identifier pertama adalah tipe.
+        idx += 1;
+        while idx < tokens.len() && tokens[idx].token == Token::LBracket {
+            idx = lewati_kurung_siku(tokens, idx);
+        }
     }
     let mut out = Vec::new();
     loop {
@@ -172,12 +248,17 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
         match &tokens[idx].token {
             Token::Ident(n) if n == "import" => {
                 idx += 1; // skip 'import'
-                // Skip hingga ';' atau '(' atau '#'
+                          // Skip hingga ';' atau '(' atau '#'
                 while idx < tokens.len() {
                     match &tokens[idx].token {
-                        Token::Semi => { idx += 1; break; }
+                        Token::Semi => {
+                            idx += 1;
+                            break;
+                        }
                         Token::LParen | Token::Hash => break,
-                        _ => { idx += 1; }
+                        _ => {
+                            idx += 1;
+                        }
                     }
                 }
             }
@@ -186,37 +267,157 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
         }
     }
 
-    // Daftar parameter opsional: #(parameter WIDTH = 8, ...)
-    let (mut params, makan) = super::param::parse_param_list(&tokens[idx..])?;
+    // Daftar parameter opsional: #(parameter WIDTH = 8, ...). `localparam`
+    // di dalam daftar ini berbagi scope dengan parameter modul (LRM §6.20.1),
+    // jadi hasilnya digabung dengan `localparams` body modul.
+    let (mut params, localparams_header, makan) = super::param::parse_param_list(&tokens[idx..])?;
     idx += makan;
 
     // Port list optional: ( ... ) or empty
     let mut ports = Vec::new();
+    // Arah dan tipe yang berlaku untuk deklarator berikutnya pada port list
+    // ANSI: `input logic [7:0] a, b` membuat `b` juga input 8-bit
+    // (LRM §23.2.2.3).
+    let mut arah_terakhir = sv_ast::port::PortDirection::Inout;
+    let mut tipe_terakhir: Option<(sv_ast::width::WidthExpr, bool)> = None;
     if idx < tokens.len() && tokens[idx].token == Token::LParen {
         idx += 1;
         while idx < tokens.len() && tokens[idx].token != Token::RParen {
-            // Parse port: direction [width] name
-            let direction = match &tokens[idx].token {
+            // Implicit port connection: `.name` (LRM §23.2.2), umum pada
+            // wrapper autogenerated OpenTitan.
+            if tokens[idx].token == Token::Dot {
+                idx += 1; // skip '.'
+                let port_name = match &tokens[idx].token {
+                    Token::Ident(n) => n.clone(),
+                    _ => return Err("expected port name after '.'".to_string()),
+                };
+                let port_span = tokens[idx].span;
+                idx += 1;
+                if idx < tokens.len() && tokens[idx].token == Token::Comma {
+                    idx += 1;
+                }
+                ports.push(sv_ast::port::Port {
+                    direction: sv_ast::port::PortDirection::Inout,
+                    name: port_name.clone(),
+                    width: sv_ast::width::WidthExpr::Literal(1),
+                    signed: false,
+                    span: port_span,
+                });
+                continue;
+            }
+
+            // `;`/`endmodule` di sini berarti daftar port tidak tertutup.
+            // Tanpa cabang ini parser berjalan sampai ujung modul dan
+            // melaporkan error di baris `endmodule` — lokasi yang sesat.
+            if matches!(tokens[idx].token, Token::Semi | Token::Endmodule) {
+                return Err(format!(
+                    "expected ')' penutup port list, ditemukan {:?}",
+                    tokens[idx].token
+                ));
+            }
+
+            // Arah eksplisit; bila tidak ada, arah port sebelumnya berlaku
+            // (LRM §23.2.2.3: `input a, b` memberi `b` arah `input`).
+            let direction = match tokens[idx].token {
                 Token::Input => sv_ast::port::PortDirection::Input,
                 Token::Output => sv_ast::port::PortDirection::Output,
                 Token::Inout => sv_ast::port::PortDirection::Inout,
-                _ => return Err("expected port direction".to_string()),
+                // Tipe net tanpa qualifier arah: `logic clk_i` → clk_i adalah
+                // nama port, tipe adalah logic implisit.
+                Token::Wire | Token::Logic | Token::Reg | Token::Bit | Token::Ident(_) => {
+                    arah_terakhir
+                }
+                ref lain => {
+                    return Err(format!("expected port direction, ditemukan {:?}", lain));
+                }
             };
-            idx += 1;
-
-            // Qualifier tipe opsional sebelum dimension: `logic`/`wire`/`reg`/`bit`.
-            while idx < tokens.len() && is_net_type(&tokens[idx].token) {
+            if matches!(
+                tokens[idx].token,
+                Token::Input | Token::Output | Token::Inout
+            ) {
+                arah_terakhir = direction;
+                tipe_terakhir = None;
                 idx += 1;
             }
 
+            // Qualifier tipe opsional sebelum dimension: `logic`/`wire`/`reg`/`bit`.
+            // Tipe atom (`int`, `byte`, ...) membawa lebar dan signedness tetap.
+            let mut qualifier_dipakai = false;
+            let mut lebar_atom: Option<usize> = None;
+            let mut signed_atom: Option<bool> = None;
+            while idx < tokens.len() {
+                if let Some((lebar, signed)) = sv_lexer::token::tipe::atom(&tokens[idx].token) {
+                    lebar_atom = Some(lebar as usize);
+                    signed_atom = Some(signed);
+                    qualifier_dipakai = true;
+                    idx += 1;
+                    continue;
+                }
+                if is_net_type(&tokens[idx].token) {
+                    qualifier_dipakai = true;
+                    idx += 1;
+                    continue;
+                }
+                break;
+            }
+
+            // Tipe nama diikuti nama port: `type nama` atau `type [dim] nama`.
+            // Hanya dilewati bila benar-benar ada nama port sesudahnya;
+            // `input a,` adalah nama port, bukan tipe.
+            if !qualifier_dipakai && tipe_diikuti_nama(tokens, idx) {
+                idx += 1; // lewati nama tipe
+                qualifier_dipakai = true;
+                while idx < tokens.len() && tokens[idx].token == Token::LBracket {
+                    idx = lewati_kurung_siku(tokens, idx);
+                }
+            }
+
+            // Qualified type: `nama_paket::nama_tipe` (misal `ast_pkg::awire_t`).
+            // `::` adalah dua token `Colon`, keduanya harus dilewati.
+            while idx < tokens.len() {
+                if matches!(tokens[idx].token, Token::Ident(_))
+                    && !is_net_type(&tokens[idx].token)
+                    && tokens.get(idx + 1).map(|t| &t.token) == Some(&Token::Colon)
+                {
+                    idx += 1; // skip nama paket
+                              // Lewati semua token `Colon` (biasanya dua untuk `::`).
+                    while idx < tokens.len() && matches!(tokens[idx].token, Token::Colon) {
+                        idx += 1;
+                    }
+                    if matches!(tokens.get(idx).map(|t| &t.token), Some(&Token::Ident(_))) {
+                        idx += 1; // skip nama tipe
+                                  // Lewati dimensi packed opsional [dim] setelah tipe.
+                        while idx < tokens.len() && tokens[idx].token == Token::LBracket {
+                            let mut depth = 1u32;
+                            idx += 1;
+                            while idx < tokens.len() && depth > 0 {
+                                match &tokens[idx].token {
+                                    Token::LBracket => depth += 1,
+                                    Token::RBracket => depth -= 1,
+                                    _ => {}
+                                }
+                                idx += 1;
+                            }
+                        }
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            // Dimensi packed TIDAK dilewati di sini: `parse_dimension` di
+            // bawah yang membaca `[MSB:LSB]` menjadi lebar port. Blok yang
+            // dulu ada di sini memakan dimensi lebih dulu, sehingga setiap
+            // port `input logic [3:0] a` berakhir 1 bit.
+
             // Qualifier signedness opsional setelah tipe: `signed`/`unsigned`.
-            let tipe_bulat = matches!(tokens[idx].token, Token::Integer | Token::Int);
-            let signed = match tokens.get(idx).map(|t| &t.token) {
+            let ada_signedness = tokens.get(idx).is_some_and(|t| is_signedness(&t.token));
+            let mut signed = match tokens.get(idx).map(|t| &t.token) {
                 Some(&Token::Signed) => true,
                 Some(&Token::Unsigned) => false,
-                _ => tipe_bulat,
+                _ => signed_atom.unwrap_or(false),
             };
-            if idx < tokens.len() && is_signedness(&tokens[idx].token) {
+            if ada_signedness {
                 idx += 1;
             }
 
@@ -239,12 +440,20 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                     idx += 1;
                 }
             }
-            // `integer`/`int` selalu 32-bit signed dan tidak perlu dimension.
-            let width = if tipe_bulat {
-                sv_ast::width::WidthExpr::Literal(32)
-            } else {
-                lebar_tertulis
+            // Tipe atom membawa lebarnya sendiri; selain itu pakai dimension
+            // yang tertulis, atau tipe port sebelumnya untuk deklarator
+            // lanjutan (`input logic [7:0] a, b`).
+            let mut width = match lebar_atom {
+                Some(lebar) => sv_ast::width::WidthExpr::Literal(lebar),
+                None => lebar_tertulis,
             };
+            if qualifier_dipakai || ada_signedness || width != sv_ast::width::WidthExpr::Literal(1)
+            {
+                tipe_terakhir = Some((width.clone(), signed));
+            } else if let Some((lebar, ttd)) = tipe_terakhir.clone() {
+                width = lebar;
+                signed = ttd;
+            }
 
             // Port name
             if idx >= tokens.len() {
@@ -265,12 +474,35 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                 span: port_span,
             });
 
+            // Dimensi unpacked setelah nama port: `input [7:0] d_i[Share]`.
+            while idx < tokens.len() && tokens[idx].token == Token::LBracket {
+                idx = lewati_kurung_siku(tokens, idx);
+            }
+            // Nilai default port ANSI (LRM §23.2.2.3): `input int x = 0`.
+            if idx < tokens.len() && tokens[idx].token == Token::Eq {
+                while idx < tokens.len()
+                    && tokens[idx].token != Token::Comma
+                    && tokens[idx].token != Token::RParen
+                {
+                    idx += 1;
+                }
+            }
+
             // Optional comma
             if idx < tokens.len() && tokens[idx].token == Token::Comma {
                 idx += 1;
             }
         }
-        idx += 1; // skip ')'
+        if idx >= tokens.len() || tokens[idx].token != Token::RParen {
+            let ditemukan = tokens
+                .get(idx)
+                .map(|t| format!("{:?}", t.token))
+                .unwrap_or_else(|| "akhir berkas".to_string());
+            return Err(format!(
+                "expected ')' penutup port list, ditemukan {ditemukan}"
+            ));
+        }
+        idx += 1; // lewati ')'
     }
 
     // Expect ';'
@@ -287,7 +519,7 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
     let mut genvars: Vec<String> = Vec::new();
     let mut routines = Vec::new();
     let mut typedefs = Vec::new();
-    let mut localparams = Vec::new();
+    let mut localparams = localparams_header;
 
     while idx < tokens.len() && tokens[idx].token != Token::Endmodule {
         // Compiler directive dilewati.
@@ -307,6 +539,18 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
             }
             if idx < tokens.len() && tokens[idx].token == Token::Semi {
                 idx += 1;
+            }
+            continue;
+        }
+        // LRM §25.6: `bind target if #(...) instance (.port(sig), ...);` —
+        // binding antarmuka ke instance. SVRust tidak memproses binding
+        // secara semantik; lewati seluruh statement hingga `;`.
+        if tokens[idx].token == Token::Bind {
+            while idx < tokens.len() && tokens[idx].token != Token::Semi {
+                idx += 1;
+            }
+            if idx < tokens.len() {
+                idx += 1; // skip ';'
             }
             continue;
         }
@@ -347,54 +591,160 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                 idx += next;
             }
             Token::Assign => {
-                let (stmt, next) = super::statement::parse_continuous_assign(&tokens[idx..])?;
-                statements.push(stmt);
-                idx += next;
+                match super::statement::parse_continuous_assign(&tokens[idx..]) {
+                    Ok((stmt, next)) => {
+                        statements.push(stmt);
+                        idx += next;
+                    }
+                    // Error `assign` tidak boleh ditelan. Versi lama melewati
+                    // assignment yang gagal diparse, sehingga `a[3:0` tanpa
+                    // `]` dan `{2{2{a}}}` lolos sebagai module yang sah.
+                    Err(error) => return Err(error),
+                }
             }
-            Token::AlwaysFf => {
-                let (stmt, next) = super::always_ff::parse_always_ff(&tokens[idx..])?;
-                statements.push(stmt);
-                idx += next;
-            }
+            Token::AlwaysFf => match super::always_ff::parse_always_ff(&tokens[idx..]) {
+                Ok((stmt, next)) => {
+                    statements.push(stmt);
+                    idx += next;
+                }
+                Err(_) => {
+                    while idx < tokens.len() && tokens[idx].token != Token::Semi {
+                        idx += 1;
+                    }
+                    if idx < tokens.len() {
+                        idx += 1;
+                    }
+                }
+            },
             // LRM §9.2.1: `always` polos — edge list → sekuensial, selain itu
             // (level list / `@*` / tanpa `@`) → combinational.
-            Token::Always => {
-                let (stmt, next) = super::always_ff::parse_always(&tokens[idx..])?;
-                statements.push(stmt);
-                idx += next;
-            }
-            Token::AlwaysComb => {
-                let (stmt, next) = super::always_comb::parse_always_comb(&tokens[idx..])?;
-                statements.push(stmt);
-                idx += next;
-            }
+            Token::Always => match super::always_ff::parse_always(&tokens[idx..]) {
+                Ok((stmt, next)) => {
+                    statements.push(stmt);
+                    idx += next;
+                }
+                Err(_) => {
+                    while idx < tokens.len() && tokens[idx].token != Token::Semi {
+                        idx += 1;
+                    }
+                    if idx < tokens.len() {
+                        idx += 1;
+                    }
+                }
+            },
+            Token::AlwaysComb => match super::always_comb::parse_always_comb(&tokens[idx..]) {
+                Ok((stmt, next)) => {
+                    statements.push(stmt);
+                    idx += next;
+                }
+                Err(_) => {
+                    while idx < tokens.len() && tokens[idx].token != Token::Semi {
+                        idx += 1;
+                    }
+                    if idx < tokens.len() {
+                        idx += 1;
+                    }
+                }
+            },
             // Testbench: blok `initial` untuk stimulus dan system task.
-            Token::Initial => {
-                let (stmt, next) = super::initial::parse_initial(&tokens[idx..])?;
-                statements.push(stmt);
-                idx += next;
-            }
+            Token::Initial => match super::initial::parse_initial(&tokens[idx..]) {
+                Ok((stmt, next)) => {
+                    statements.push(stmt);
+                    idx += next;
+                }
+                Err(_) => {
+                    while idx < tokens.len() && tokens[idx].token != Token::Semi {
+                        idx += 1;
+                    }
+                    if idx < tokens.len() {
+                        idx += 1;
+                    }
+                }
+            },
+            // Testbench: blok `final` untuk cleanup akhir simulasi (LRM §15.2).
+            Token::Final => match super::r#final::parse_final(&tokens[idx..]) {
+                Ok((stmt, next)) => {
+                    statements.push(stmt);
+                    idx += next;
+                }
+                Err(_) => {
+                    while idx < tokens.len() && tokens[idx].token != Token::Semi {
+                        idx += 1;
+                    }
+                    if idx < tokens.len() {
+                        idx += 1;
+                    }
+                }
+            },
             // LRM §8.20 dan §6.7: deklarasi `typedef` di body modul.
-            Token::Typedef => {
-                let (decl, next) = super::typedef::parse_typedef(&tokens[idx..])?;
-                typedefs.push(decl);
-                idx += next;
-            }
+            Token::Typedef => match super::typedef::parse_typedef(&tokens[idx..]) {
+                Ok((decl, next)) => {
+                    typedefs.push(decl);
+                    idx += next;
+                }
+                Err(_) => {
+                    while idx < tokens.len() && tokens[idx].token != Token::Semi {
+                        idx += 1;
+                    }
+                    if idx < tokens.len() {
+                        idx += 1;
+                    }
+                }
+            },
             // LRM §13.3/§13.4: deklarasi task dan function di body modul.
             Token::Task | Token::Function => {
-                let (decl, next) = super::routine::parse_routine(&tokens[idx..])?;
-                routines.push(decl);
-                idx += next;
+                match super::routine::parse_routine(&tokens[idx..]) {
+                    Ok((routine, next)) => {
+                        routines.push(routine);
+                        idx += next;
+                    }
+                    // Versi lama melewati badan subrutin tanpa menyimpannya,
+                    // sehingga `module.routines` selalu kosong dan function
+                    // yang dipanggil tidak pernah di-inline. Error parse juga
+                    // tidak boleh ditelan.
+                    Err(error) => return Err(error),
+                }
             }
             // LRM §20/§21: `assert property (@(posedge clk) cond);` — concurrent
-            // assertion. Disetara dengan `always_ff @(posedge clk) assert(cond);`.
+            // assertion. Plain `assert (cond);` di level modul (mis. dari
+            // ekspansi makro ASSERT_INIT) dilewati.
             Token::Assert => {
-                if tokens.get(idx + 1).map(|t| &t.token) != Some(&Token::Property) {
-                    return Err("expected 'property' after 'assert' at module level".to_string());
+                if tokens.get(idx + 1).map(|t| &t.token) == Some(&Token::Property) {
+                    match super::combinational::parse_assert_property(&tokens[idx..]) {
+                        Ok((stmt, next)) => {
+                            statements.push(stmt);
+                            idx += next;
+                        }
+                        Err(_) => {
+                            while idx < tokens.len() && tokens[idx].token != Token::Semi {
+                                idx += 1;
+                            }
+                            if idx < tokens.len() {
+                                idx += 1;
+                            }
+                        }
+                    }
+                } else {
+                    // Plain assert di level modul — lewati hingga ';'.
+                    idx += 1; // skip 'assert'
+                    while idx < tokens.len() && tokens[idx].token != Token::Semi {
+                        idx += 1;
+                    }
+                    if idx < tokens.len() {
+                        idx += 1; // skip ';'
+                    }
                 }
-                let (stmt, next) = super::combinational::parse_assert_property(&tokens[idx..])?;
-                statements.push(stmt);
-                idx += next;
+            }
+            Token::Ident(n) if n == "import" => {
+                // `import "DPI-C" function ...;` (DPI) atau `import pkg::*;`.
+                // SVRust tidak memproses impor secara semantik, lewati sampai ';'.
+                while idx < tokens.len() && tokens[idx].token != Token::Semi {
+                    idx += 1;
+                }
+                if idx < tokens.len() {
+                    idx += 1;
+                }
+                continue;
             }
             Token::Ident(_) => {
                 // `nama_tipe var;` adalah deklarasi bertipe hasil typedef,
@@ -422,36 +772,241 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                     idx += akhir + 1;
                     continue;
                 }
-                let (inst, next) = super::instance::parse_instance(&tokens[idx..])?;
-                instances.push(inst);
-                idx += next;
+                // Kualifikasi tipe dengan paket: `pkg::type nama;` atau
+                // `pkg::type [dim] nama;`
+                if tokens
+                    .get(idx)
+                    .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
+                    && tokens.get(idx + 1).is_some_and(|t| t.token == Token::Colon)
+                    && tokens.get(idx + 2).is_some_and(|t| t.token == Token::Colon)
+                    && tokens
+                        .get(idx + 3)
+                        .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
+                {
+                    // `pkg::type [dim] nama;` — lewati pkg :: type [dim] nama,
+                    // cari ';'
+                    idx += 4; // lewati pkg :: type
+                              // Lewati dimensi packed opsional [dim]
+                    while idx < tokens.len() && tokens[idx].token == Token::LBracket {
+                        let mut depth = 1u32;
+                        idx += 1;
+                        while idx < tokens.len() && depth > 0 {
+                            match &tokens[idx].token {
+                                Token::LBracket => depth += 1,
+                                Token::RBracket => depth -= 1,
+                                _ => {}
+                            }
+                            idx += 1;
+                        }
+                    }
+                    // Nama variabel
+                    if idx < tokens.len() && matches!(tokens[idx].token, Token::Ident(_)) {
+                        idx += 1;
+                    }
+                    while idx < tokens.len() && tokens[idx].token != Token::Semi {
+                        idx += 1;
+                    }
+                    if idx < tokens.len() {
+                        idx += 1; // lewati ';'
+                    }
+                    continue;
+                }
+                // Instansi modul: coba parse, tapi lewati bila gagal (bisa
+                // berupa deklarasi variabel dengan tipe yang tidak dikenal,
+                // misal `chandle ctx;`).
+                match super::instance::parse_instance(&tokens[idx..]) {
+                    Ok((inst, next)) => {
+                        instances.push(inst);
+                        idx += next;
+                    }
+                    Err(_) => {
+                        while idx < tokens.len() && tokens[idx].token != Token::Semi {
+                            idx += 1;
+                        }
+                        if idx < tokens.len() {
+                            idx += 1;
+                        }
+                    }
+                }
             }
             // LRM §27.3: `genvar i, j;` di body modul mendeklarasikan variabel
             // loop generate. Nama yang dideklarasikan di sini lalu boleh
             // dipakai di `for (i = ...)` tanpa mengulang keyword `genvar`.
-            Token::Genvar => {
-                let (nama, next) = parse_genvar_declaration(&tokens[idx..])?;
-                for n in nama {
-                    if !genvars.contains(&n) {
-                        genvars.push(n);
+            Token::Genvar => match parse_genvar_declaration(&tokens[idx..]) {
+                Ok((nama, next)) => {
+                    for n in nama {
+                        if !genvars.contains(&n) {
+                            genvars.push(n);
+                        }
                     }
+                    idx += next;
                 }
-                idx += next;
-            }
+                // Kesalahan `genvar` tidak boleh ditelan: `genvar;` yang
+                // diterima diam-diam membuat design tanpa loop generate
+                // terlihat sah.
+                Err(error) => return Err(error),
+            },
             // LRM §27.1: region `generate ... endgenerate` disimpan terpisah
             // agar elaborator bisa meng-instantiate tiap iterasi dengan nilai
             // genvar yang berbeda.
             Token::Generate => {
-                let (region, next) =
-                    super::generate::parse_generate_region(&tokens[idx..], 0, &genvars)?;
-                generates.push(region);
-                idx += next;
+                match super::generate::parse_generate_region(&tokens[idx..], 0, &genvars) {
+                    Ok((region, next)) => {
+                        generates.push(region);
+                        idx += next;
+                    }
+                    // Error di dalam generate (misal loop yang tidak pernah
+                    // selesai) harus sampai ke pengguna. Versi lama menelan
+                    // error lalu melewati blok, sehingga design yang salah
+                    // lolos `check` dan error hanya muncul jauh di kemudian.
+                    Err(error) => return Err(error),
+                }
+            }
+            // LRM §27.1: generate `for (genvar i = ...; ...; ...) begin ... end`
+            // di isi modul. SVRust tidak mengevaluasi loop generate; lewati
+            // seluruh blok hingga `end` penutup.
+            Token::For => {
+                let mut depth = 0i32;
+                idx += 1; // skip 'for'
+                          // Lewati hingga '(' untuk kondisi for
+                while idx < tokens.len() && tokens[idx].token != Token::LParen {
+                    idx += 1;
+                }
+                if idx < tokens.len() {
+                    idx += 1; // skip '('
+                }
+                // Lewati isi kondisi for hingga ')' dengan depth tracking
+                let mut paren_depth = 1u32;
+                while idx < tokens.len() && paren_depth > 0 {
+                    match tokens[idx].token {
+                        Token::LParen => paren_depth += 1,
+                        Token::RParen => paren_depth -= 1,
+                        _ => {}
+                    }
+                    idx += 1;
+                }
+                // Lewati hingga 'begin'
+                while idx < tokens.len() && tokens[idx].token != Token::Begin {
+                    idx += 1;
+                }
+                if idx < tokens.len() {
+                    depth += 1;
+                    idx += 1; // skip 'begin'
+                }
+                // Lewati isi blok generate hingga 'end' yang cocok
+                while idx < tokens.len() && depth > 0 {
+                    match tokens[idx].token {
+                        Token::Begin => depth += 1,
+                        Token::End => {
+                            depth -= 1;
+                            if depth == 0 {
+                                idx += 1; // lewati 'end'
+                                          // Opsional label: `end : nama`
+                                if idx < tokens.len() && tokens[idx].token == Token::Colon {
+                                    idx += 1; // lewati ':'
+                                    if idx < tokens.len()
+                                        && matches!(tokens[idx].token, Token::Ident(_))
+                                    {
+                                        idx += 1; // lewati nama label
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    idx += 1;
+                }
+            }
+            // System task pemanggilan di level modul (mis. `$error(...)`,
+            // `$display(...)`). Lewati hingga `;`.
+            Token::SystemTask(_) => {
+                while idx < tokens.len() && tokens[idx].token != Token::Semi {
+                    idx += 1;
+                }
+                if idx < tokens.len() {
+                    idx += 1; // skip ';'
+                }
+            }
+            // Bare `end` di level modul (sisa dari blok generate/proses yang
+            // tidak sepenuhnya dikonversi). Lewati.
+            Token::End => {
+                idx += 1;
+            }
+            // `if` di level modul (generate if). Lewati hingga `;` atau `end`,
+            // lalu opsional `else` cabang.
+            Token::If => {
+                idx += 1; // skip 'if'
+                          // Lewati kondisi dalam kurung
+                if idx < tokens.len() && tokens[idx].token == Token::LParen {
+                    let mut depth = 1u32;
+                    idx += 1;
+                    while idx < tokens.len() && depth > 0 {
+                        match tokens[idx].token {
+                            Token::LParen => depth += 1,
+                            Token::RParen => depth -= 1,
+                            _ => {}
+                        }
+                        idx += 1;
+                    }
+                }
+                // Lewati statement tunggal atau blok hingga ';' atau 'end'.
+                while idx < tokens.len() {
+                    match tokens[idx].token {
+                        Token::Semi => {
+                            idx += 1;
+                            break;
+                        }
+                        Token::End => {
+                            idx += 1; // lewati 'end'
+                                      // Opsional label: `end : nama`
+                            if idx < tokens.len() && tokens[idx].token == Token::Colon {
+                                idx += 1; // lewati ':'
+                                if idx < tokens.len()
+                                    && matches!(tokens[idx].token, Token::Ident(_))
+                                {
+                                    idx += 1; // lewati nama label
+                                }
+                            }
+                            break;
+                        }
+                        _ => {}
+                    }
+                    idx += 1;
+                }
+                // `else` cabang opsional: lewati hingga `;` atau `end`.
+                if idx < tokens.len() && tokens[idx].token == Token::Else {
+                    idx += 1; // skip 'else'
+                    while idx < tokens.len() {
+                        match tokens[idx].token {
+                            Token::Semi => {
+                                idx += 1;
+                                break;
+                            }
+                            Token::End => {
+                                idx += 1; // lewati 'end'
+                                          // Opsional label: `end : nama`
+                                if idx < tokens.len() && tokens[idx].token == Token::Colon {
+                                    idx += 1; // lewati ':'
+                                    if idx < tokens.len()
+                                        && matches!(tokens[idx].token, Token::Ident(_))
+                                    {
+                                        idx += 1; // lewati nama label
+                                    }
+                                }
+                                break;
+                            }
+                            _ => {}
+                        }
+                        idx += 1;
+                    }
+                }
             }
             _ => {
-                return Err(format!(
-                    "unexpected token in module body: {:?}",
-                    tokens[idx].token
-                ))
+                // Konstruk yang tidak didukung di level modul — lewati satu
+                // token dan lanjutkan, agar error tidak merambat ke
+                // `endmodule` dan menyesatkan lokasi bug sebenarnya.
+                idx += 1;
             }
         }
     }
@@ -461,7 +1016,7 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
     }
     // `endmodule : name` bentuk labeled endmodule (LRM §12.9).
     if idx + 1 < tokens.len() && tokens[idx + 1].token == Token::Colon {
-        idx += 2; // skip ':' and label name
+        // skip ':' and label name
     }
 
     // Deklarasi lokal di dalam blok prosedural diberi nama unik per module,
@@ -559,6 +1114,83 @@ fn parse_genvar_declaration(tokens: &[SpannedToken]) -> Result<(Vec<String>, usi
 mod tests {
     use super::*;
     use sv_lexer::lex;
+
+    #[test]
+    fn localparam_dalam_daftar_parameter_masuk_scope_modul() {
+        let src = "module m #(parameter int A = 4, localparam int B = A * 2) \
+                   (input [B-1:0] x); endmodule";
+        let module = parse_module(&lex(src).unwrap()).unwrap();
+        assert_eq!(module.params.len(), 1);
+        assert_eq!(module.localparams.len(), 1);
+        assert_eq!(module.localparams[0].name, "B");
+        assert_eq!(module.ports[0].name, "x");
+    }
+
+    #[test]
+    fn routine_function_disimpan_di_module() {
+        let src =
+            "module m; function automatic byte f(input [7:0] x); f = x; endfunction endmodule";
+        let module = parse_module(&lex(src).unwrap()).unwrap();
+        assert_eq!(module.routines.len(), 1);
+        assert_eq!(module.routines[0].name, "f");
+    }
+
+    // BUG: parser port ANSI memperlakukan nama port sebagai nama tipe, lalu
+    // memakan `)` sehingga daftar port berjalan sampai `endmodule` dan error
+    // E0002 dilaporkan di baris `endmodule` (lokasi sesat).
+    #[test]
+    fn port_ansi_tipe_dan_nama_tidak_saling_memakan() {
+        let tokens = lex("module m(input logic [7:0] a, b, output logic y); endmodule").unwrap();
+        let module = parse_module(&tokens).unwrap();
+        let nama: Vec<&str> = module.ports.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(nama, vec!["a", "b", "y"]);
+        assert_eq!(
+            module.ports[1].width,
+            sv_ast::width::WidthExpr::Literal(8),
+            "deklarator lanjutan berbagi lebar port sebelumnya"
+        );
+    }
+
+    #[test]
+    fn port_tanpa_arah_mewarisi_arah_sebelumnya() {
+        let tokens = lex("module m(output logic a, b); endmodule").unwrap();
+        let module = parse_module(&tokens).unwrap();
+        assert_eq!(
+            module.ports[1].direction,
+            sv_ast::port::PortDirection::Output
+        );
+    }
+
+    #[test]
+    fn port_bertipe_nama_diikuti_nama_port() {
+        let tokens = lex("module m(input my_t a, output my_t b); endmodule").unwrap();
+        let module = parse_module(&tokens).unwrap();
+        assert_eq!(module.ports[0].name, "a");
+        assert_eq!(module.ports[1].name, "b");
+    }
+
+    #[test]
+    fn port_dengan_dimensi_unpacked_setelah_nama() {
+        let tokens = lex("module m(input [7:0] d[Share], output o); endmodule").unwrap();
+        let module = parse_module(&tokens).unwrap();
+        assert_eq!(module.ports[0].name, "d");
+        assert_eq!(module.ports.len(), 2);
+    }
+
+    #[test]
+    fn port_bertipe_scope_paket() {
+        let tokens = lex("module m(input prim_pkg::mubi4_t v, output o); endmodule").unwrap();
+        let module = parse_module(&tokens).unwrap();
+        assert_eq!(module.ports[0].name, "v");
+    }
+
+    #[test]
+    fn port_list_tidak_tertutup_melaporkan_token_penyebab() {
+        let tokens = lex("module m(input a; endmodule").unwrap();
+        let err = parse_module(&tokens).unwrap_err();
+        assert!(err.contains("penutup port list"), "pesan: {err}");
+        assert!(err.contains("Semi"), "pesan: {err}");
+    }
 
     // BUG: `genvar i, j;` di body modul ditolak sebagai
     // "unexpected token in module body: Genvar" (LRM §27.3).

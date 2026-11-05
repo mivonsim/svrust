@@ -21,19 +21,54 @@ fn parse_unpacked(
     let mut cursor = idx;
     let mut dims = Vec::new();
     while tokens.get(cursor).map(|t| &t.token) == Some(&Token::LBracket) {
-        let angka = |at: usize| -> Result<u64, String> {
+        // `None` berarti batas bukan literal. Literal `0` BUKAN penanda
+        // non-literal: `[0:3]` adalah dimensi 4 elemen yang sah. Versi lama
+        // memperlakukan 0 sebagai "batas tak diketahui", mencatat size 0, dan
+        // membuat setiap `mem[2]` ditolak sebagai di luar jangkauan.
+        let angka = |at: usize| -> Option<u64> {
             match tokens.get(at).map(|t| &t.token) {
-                Some(Token::Number(n)) => Ok(*n),
-                _ => Err(format!(
-                    "batas dimensi unpacked harus literal, ditemukan {:?}",
-                    tokens.get(at).map(|t| &t.token)
-                )),
+                Some(Token::Number(n)) => Some(*n),
+                _ => None,
             }
         };
-        let msb = angka(cursor + 1)?;
-        let mut c = cursor + 2;
+        let msb = angka(cursor + 1);
+        let mut c = cursor + 1; // mulai dari isi '['
+        let Some(msb) = msb else {
+            // Batas non-literal (misal parameter atau ekspresi): lewati
+            // seluruh dimensi hingga ']'. Lebarnya belum bisa dihitung di
+            // sini; elaborator yang menentukan.
+            {
+                let mut depth = 1u32;
+                while c < tokens.len() && depth > 0 {
+                    match tokens.get(c).map(|t| &t.token) {
+                        Some(Token::LBracket) => depth += 1,
+                        Some(Token::RBracket) => {
+                            depth -= 1;
+                            if depth == 0 {
+                                c += 1;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    c += 1;
+                }
+                dims.push(sv_ast::declaration::UnpackedDim {
+                    size: 0,
+                    first: 0,
+                    descending: false,
+                });
+                cursor = c;
+                continue;
+            }
+        };
+        // `c` masih menunjuk batas msb; maju satu token agar menunjuk ':'
+        // atau ']' penutup.
+        c += 1;
         if tokens.get(c).map(|t| &t.token) == Some(&Token::Colon) {
-            let lsb = angka(c + 1)?;
+            let Some(lsb) = angka(c + 1) else {
+                return Err("expected ']' pada dimensi unpacked".to_string());
+            };
             c += 2;
             if tokens.get(c).map(|t| &t.token) != Some(&Token::RBracket) {
                 return Err("expected ']' pada dimensi unpacked".to_string());
@@ -148,6 +183,7 @@ pub fn parse_declaration(tokens: &[SpannedToken]) -> Result<(Vec<Declaration>, u
     // dipakai oleh elaborator untuk membangun `DataType` yang benar.
     let type_nama = match tokens[0].token {
         Token::Real => Some("real".to_string()),
+        Token::String => Some("string".to_string()),
         Token::Supply0 => Some("supply0".to_string()),
         Token::Supply1 => Some("supply1".to_string()),
         _ => None,
@@ -441,6 +477,21 @@ mod tests {
         assert_eq!(d1.width, WidthExpr::Literal(1));
         assert!(!d1.signed);
         assert_eq!(d1.type_name.as_deref(), Some("supply1"));
+    }
+
+    #[test]
+    fn deklarasi_string() {
+        // LRM §6.14: `string` adalah tipe dinamis tanpa lebar bit bawaan.
+        let d = parse_one("string s;");
+        assert_eq!(d.name, "s");
+        assert_eq!(d.type_name.as_deref(), Some("string"));
+    }
+
+    #[test]
+    fn deklarasi_string_dengan_init() {
+        let d = parse_one("string s = \"hello\";");
+        assert_eq!(d.name, "s");
+        assert!(d.init.is_some());
     }
 
     #[test]
