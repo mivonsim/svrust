@@ -74,6 +74,17 @@ impl Symbol {
         let start = (jarak as u32) * w;
         Some((start + w - 1, start))
     }
+
+    /// Cari rentang bit elemen berdasarkan `signal_id` (untuk menghindari
+    /// peminjaman `&Symbol` yang panjang saat lowering ekspresi).
+    pub fn elemen_dari_signal(
+        symbols: &SymbolTable,
+        signal_id: SignalId,
+        indices: &[u64],
+    ) -> Option<(u32, u32)> {
+        let symbol = symbols.sinyal(signal_id)?;
+        symbol.elemen(indices)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -125,6 +136,16 @@ impl SymbolTable {
         }
         self.types.insert(nama.to_string(), (width, signed));
         Ok(())
+    }
+
+    /// Ambil simbol berdasarkan `signal_id`.
+    pub fn sinyal(&self, signal_id: SignalId) -> Option<&Symbol> {
+        self.symbols.iter().find(|s| s.signal_id == signal_id)
+    }
+
+    /// Ambil nama sinyal berdasarkan `signal_id`, untuk pesan error.
+    pub fn nama_sinyal(&self, signal_id: SignalId) -> Option<String> {
+        self.sinyal(signal_id).map(|s| s.name.clone())
     }
 
     /// Lebar & signedness nama tipe, bila ada.

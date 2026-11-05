@@ -360,6 +360,28 @@ Semua 10 fase telah selesai.
 - `cargo fmt --check`: clean
 - `examples/e2e_labeled_block/demo.sh`: DEMO OK
 
+## Ringkasan Fase 14 (Selesai)
+
+### Implementasi
+
+1. **Array unpacked multi-dimensi + seleksi bertingkat (LRM §7.8)**
+   - `sv-elaborator`: `Symbol::elemen` sudah mendukung indeks multi-tingkat lewat `UnpackedDims::offset(&[i,j,...])`.
+   - `sv-elaborator/lower_expr.rs`: nested select `mem[i][j]` pada unpacked multidimensi digabung menjadi satu rentang bit pada sinyal rata; unpacked satu dimensi (`mem[i][j]` = elemen lalu bit-select) diformat ulang sesuai LRM.
+   - `sv-parser`/`sv-ast`/`sv-ir`: tidak perlu perubahan struktural (sudah mendukung nested select via `extra_slices`).
+
+### Test baru
+- `seleksi_bertingkat_unpacked_dilower_ke_range_bit` dan `indeks_nested_di_luar_jangkauan_ditolak` di `crates/sv-elaborator/src/lower_expr.rs`.
+
+### Demo
+- `examples/e2e_unpacked_multi/` — `mem[2][15]`, `mem[3][15]`, baca kembali ke `val`, semua work.
+
+### Verifikasi
+- `cargo build`: OK
+- `cargo test --workspace`: semua lolos
+- `cargo clippy --all-targets`: clean (0 warning)
+- `cargo fmt --check`: clean
+- `examples/e2e_unpacked_multi/demo.sh`: DEMO OK
+
 ## Catatan Akhir
 
 SVRust telah mencapai dukungan fitur utama SystemVerilog LRM melalui 8 fase. Fitur-fitur utama yang didukung:
@@ -379,10 +401,10 @@ SVRust telah mencapai dukungan fitur utama SystemVerilog LRM melalui 8 fase. Fit
 - Infinite loop dan bug stabilitas telah diperbaiki
 
 Sisa keterbatalan untuk 100% LRM:
-- Unpacked array multi-dimensi (LRM §7.8) — dimensi bertingkat masih ditolak
 - Array sebagai port/argumen task/function (LRM §13.3/§13.4) — port/argumen bertipe array belum ditangani parser
 
 Catatan verifikasi (sudah full support, demo OK):
 - SVA concurrent assertion `assert property` (LRM §20/§21) — demo `examples/e2e_assert/`
 - 4-state tipe Logic di jalur simulasi (LRM §11.4) — demo `examples/e2e_4state/`
 - `typedef` di luar module / compilation-unit scope (LRM §8.20) — demo `examples/e2e_typedef_global/`
+- Unpacked array multi-dimensi + seleksi bertingkat (LRM §7.8) — demo `examples/e2e_unpacked_multi/` dan `examples/e2e_real_unpacked/`

@@ -262,6 +262,49 @@ pub fn lower_expression_dengan_konteks(
             })
         }
         AstExpr::Select { base, msb, lsb, .. } => {
+            // LRM §7.8: seleksi bertingkat pada array unpacked, misal
+            // `mem[2][15]`. Setiap level select adalah satu indeks elemen;
+            // gabungkan semua indeks dan cari rentang bit pada simbol unpacked
+            // yang sama (selaras dengan Lvalue.extra_slices).
+            if *msb == *lsb {
+                if let Some((signal_id, data_type, mut indices)) =
+                    kumpulkan_indeks_unpacked_bertingkat(base, symbols)
+                {
+                    indices.push(u64::from(*msb));
+                    // Hanya gabungkan jadi indeks multi-dimensi bila jumlah
+                    // indeks tidak melebihi jumlah dimensi deklarasi. Untuk
+                    // unpacked satu dimensi, `mem[2][3]` berarti elemen
+                    // `mem[2]` lalu bit-select `[3]` pada skalar 8-bit — bukan
+                    // multi-dimensi.
+                    let terlalu_banyak = symbols
+                        .sinyal(signal_id)
+                        .is_some_and(|s| {
+                            s.unpacked
+                                .as_ref()
+                                .is_some_and(|info| indices.len() > info.dims.dims.len())
+                        });
+                    if !terlalu_banyak {
+                        if let Some((msb_bit, lsb_bit)) =
+                            crate::symbol::Symbol::elemen_dari_signal(symbols, signal_id, &indices)
+                        {
+                            return Ok(Expr::Select {
+                                base: Box::new(Expr::signal_ref(signal_id, data_type)),
+                                msb: msb_bit,
+                                lsb: lsb_bit,
+                                data_type: DataType::logic(msb_bit - lsb_bit + 1)
+                                    .with_signed(data_type.signed),
+                            });
+                        }
+                        let nama = symbols
+                            .nama_sinyal(signal_id)
+                            .unwrap_or_else(|| "<sinyal>".to_string());
+                        return Err(ElaborateError::new(
+                            format!("indeks {:?} di luar jangkauan array '{nama}'", indices),
+                            span_expr(base),
+                        ));
+                    }
+                }
+            }
             // LRM §7.8: `mem[k]` pada array unpacked mengakses elemen ke-`k`.
             // Sinyalnya disimpan rata, jadi indeks dipetakan ke rentang bit
             // elemennya. Indeks di luar jangkauan adalah error, bukan dipotong
@@ -707,6 +750,36 @@ pub fn sesuaikan_lebar(expr: Expr, lebar: u32, signed_konteks: bool, signed_nila
     }
 }
 
+/// Kumpulkan indeks elemen dari seleksi bertingkat pada array unpacked,
+/// misal `mem[i][j][k]` → `[i, j, k]` dari luar ke dalam.
+///
+/// Hanya seleksi konstanta tunggal indeks per level (`msb == lsb`) yang
+/// dipilih; seleksi rentang atau indeks dinamis pada level tengah belum
+/// didukung dalam nested unpacked select. Mengembalikan `None` bila ekspresi
+/// bukan seleksi bertingkat konstan yang berakhir pada simbol unpacked.
+fn kumpulkan_indeks_unpacked_bertingkat(
+    expr: &AstExpr,
+    symbols: &SymbolTable,
+) -> Option<(SignalId, DataType, Vec<u64>)> {
+    match expr {
+        AstExpr::Ident { name, .. } => {
+            let symbol = symbols.lookup(name)?;
+            if symbol.unpacked.is_some() {
+                Some((symbol.signal_id, symbol.data_type, vec![]))
+            } else {
+                None
+            }
+        }
+        AstExpr::Select { base, msb, lsb, .. } if *msb == *lsb => {
+            let (signal_id, data_type, mut indices) =
+                kumpulkan_indeks_unpacked_bertingkat(base, symbols)?;
+            indices.push(u64::from(*msb));
+            Some((signal_id, data_type, indices))
+        }
+        _ => None,
+    }
+}
+
 fn map_binary_op(op: BinaryOp) -> BinOp {
     match op {
         BinaryOp::And => BinOp::BitAnd,
@@ -783,5 +856,95 @@ pub fn collect_signals(expr: &Expr, out: &mut Vec<SignalId>) {
         Expr::Cast { operand, .. } => collect_signals(operand, out),
         // `$time` tidak membaca sinyal apa pun.
         Expr::SimTime { .. } => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::symbol::Symbol;
+    use sv_ast::declaration::{UnpackedDim, UnpackedDims};
+    use sv_ast::expression::Expr as AstExpr;
+    use sv_ir::VarKind;
+    use sv_lexer::span::Span;
+
+    fn simbol_mem_multi() -> SymbolTable {
+        let mut tabel = SymbolTable::new();
+        let dims = UnpackedDims {
+            dims: vec![
+                UnpackedDim {
+                    size: 3,
+                    first: 0,
+                    descending: false,
+                },
+                UnpackedDim {
+                    size: 16,
+                    first: 0,
+                    descending: false,
+                },
+            ],
+        };
+        let simbol = Symbol::baru(
+            "mem",
+            0,
+            DataType::logic(8),
+            VarKind::Variable,
+            Span::dummy(),
+        )
+        .dengan_unpacked(dims, 8);
+        tabel.insert(simbol).unwrap();
+        tabel
+    }
+
+    /// `mem[2][15]` → elemen (2,15): offset = (2×16 + 15) × 8 = 376, rentang [383:376].
+    #[test]
+    fn seleksi_bertingkat_unpacked_dilower_ke_range_bit() {
+        let tabel = simbol_mem_multi();
+        let expr = AstExpr::Select {
+            base: Box::new(AstExpr::Select {
+                base: Box::new(AstExpr::Ident {
+                    name: "mem".to_string(),
+                    span: Span::dummy(),
+                }),
+                msb: 2,
+                lsb: 2,
+                span: Span::dummy(),
+            }),
+            msb: 15,
+            lsb: 15,
+            span: Span::dummy(),
+        };
+        let lowered = match lower_expression(&expr, &tabel) {
+            Ok(l) => l,
+            Err(e) => panic!("lower_expression gagal: {e}"),
+        };
+        match lowered {
+            Expr::Select { msb, lsb, .. } => {
+                assert_eq!(msb, 383);
+                assert_eq!(lsb, 376);
+            }
+            other => panic!("expected Select, dapat {other:?}"),
+        }
+    }
+
+    /// Indeks di luar jangkauan dimensi kedua [0:15] harus ditolak.
+    #[test]
+    fn indeks_nested_di_luar_jangkauan_ditolak() {
+        let tabel = simbol_mem_multi();
+        let expr = AstExpr::Select {
+            base: Box::new(AstExpr::Select {
+                base: Box::new(AstExpr::Ident {
+                    name: "mem".to_string(),
+                    span: Span::dummy(),
+                }),
+                msb: 1,
+                lsb: 1,
+                span: Span::dummy(),
+            }),
+            msb: 16,
+            lsb: 16,
+            span: Span::dummy(),
+        };
+        assert!(lower_expression(&expr, &tabel).is_err());
     }
 }
