@@ -25,7 +25,7 @@ pub fn parse_expression(tokens: &[SpannedToken]) -> Result<(Expr, usize), String
         let (when_true, consumed) = parse_expression(&tokens[idx + 1..])?;
         idx += 1 + consumed;
         if idx >= tokens.len() || tokens[idx].token != Token::Colon {
-            return Err("expected ':' in ternary".to_string());
+            return Err(crate::pesan::harap(tokens, idx, "expected ':' in ternary"));
         }
         idx += 1;
         let (when_false, consumed) = parse_expression(&tokens[idx..])?;
@@ -161,7 +161,12 @@ fn reduction_ganda(first: &Token, next: Option<&Token>) -> Option<UnaryOp> {
     }
 }
 
-/// Primary ditambah suffix bit-select/part-select: `a[3:0]`, `a[0]`.
+/// Primary ditambah suffix bit-select/part-select dan referensi hierarkis:
+/// `a[3:0]`, `a[0]`, `inst.member`, `inst.member[0]`, `a.b.c[1]` (LRM §6.6, §7.8).
+///
+/// Suffix boleh bertumpuk dan saling berselang-seling: seleksi `[...]` boleh
+/// muncul sesudah `.member` dan sebaliknya, misal `inst.member[0]` atau
+/// `mem[3].field`. Keduanya diurai dalam satu loop agar urutan bebas.
 fn parse_postfix(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
     let (mut base, mut idx) = parse_primary(tokens)?;
 
@@ -175,39 +180,9 @@ fn parse_postfix(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
         idx = consumed;
     }
 
-    // Rangkaian seleksi boleh bertumpuk, misal `mem[3][2:0]`.
-    while idx < tokens.len() && tokens[idx].token == Token::LBracket {
-        let span = tokens[idx].span;
-        let (indeks, consumed) = parse_select_index(&tokens[idx + 1..])?;
-        idx += 1 + consumed;
-        if idx >= tokens.len() || tokens[idx].token != Token::RBracket {
-            return Err("expected ']' closing select".to_string());
-        }
-        idx += 1;
-        base = match indeks {
-            Indeks::Konstanta(msb, lsb) => Expr::Select {
-                base: Box::new(base),
-                msb,
-                lsb,
-                span,
-            },
-            Indeks::Dinamis(index) => Expr::IndexDynamic {
-                base: Box::new(base),
-                index: Box::new(index),
-                span,
-            },
-        };
-    }
-
-    // Referensi hierarkis dengan titik: `tl_i.a_source`, `a.b.c` (LRM §6.6).
-    // Kumpulkan semua bagian setelah identifier dasar menjadi satu jalur.
-    if idx < tokens.len() && tokens[idx].token == Token::Dot {
-        let mut parts: Vec<String> = Vec::new();
-        // Bagian pertama sudah ada di `base` (Identifier). Ekstrak namanya.
-        if let Expr::Ident { name, .. } = &base {
-            parts.push(name.clone());
-        }
-        while idx < tokens.len() && tokens[idx].token == Token::Dot {
+    // Loop tunggal menangani `.member` dan `[...]` secara bergantian.
+    loop {
+        if idx < tokens.len() && tokens[idx].token == Token::Dot {
             idx += 1; // skip '.'
             if idx >= tokens.len() {
                 return Err("expected nama setelah '.' pada referensi hierarkis".to_string());
@@ -216,13 +191,46 @@ fn parse_postfix(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
                 Token::Ident(n) => n.clone(),
                 other => return Err(format!("expected nama setelah '.', dapat {other:?}")),
             };
-            parts.push(part);
             idx += 1;
+            // Gandakan bagian ke jalur hierarkis yang sudah ada, atau buat
+            // jalur baru dari identifier dasar.
+            base = match base {
+                Expr::HierarchicalRef { mut parts, span } => {
+                    parts.push(part);
+                    Expr::HierarchicalRef { parts, span }
+                }
+                Expr::Ident { name, span } => Expr::HierarchicalRef {
+                    parts: vec![name, part],
+                    span,
+                },
+                // `.member` pada hasil seleksi (`sel.field`) jarang di target;
+                // lebih aman berhenti dan biarkan pemanggil melaporkan error.
+                _ => break,
+            };
+        } else if idx < tokens.len() && tokens[idx].token == Token::LBracket {
+            let span = tokens[idx].span;
+            let (indeks, consumed) = parse_select_index(&tokens[idx + 1..])?;
+            idx += 1 + consumed;
+            if idx >= tokens.len() || tokens[idx].token != Token::RBracket {
+                return Err("expected ']' closing select".to_string());
+            }
+            idx += 1;
+            base = match indeks {
+                Indeks::Konstanta(msb, lsb) => Expr::Select {
+                    base: Box::new(base),
+                    msb,
+                    lsb,
+                    span,
+                },
+                Indeks::Dinamis(index) => Expr::IndexDynamic {
+                    base: Box::new(base),
+                    index: Box::new(index),
+                    span,
+                },
+            };
+        } else {
+            break;
         }
-        base = Expr::HierarchicalRef {
-            parts,
-            span: tokens[0].span,
-        };
     }
 
     Ok((base, idx))
@@ -425,7 +433,7 @@ fn parse_select_index(tokens: &[SpannedToken]) -> Result<(Indeks, usize), String
                 ));
             }
             let msb = batas_part_select_konstan(&expr, "atas")
-                .map_err(|pesan| crate::pesan::tandai(tokens, consumed, pesan))?;
+                .map_err(|pesan| crate::pesan::tandai(tokens, 0, pesan))?;
             let (lsb_expr, lsb_consumed) = parse_expression(&tokens[consumed + 1..closing])?;
             if consumed + 1 + lsb_consumed != closing {
                 return Err(crate::pesan::tandai(
@@ -656,7 +664,18 @@ fn parse_primary(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
             let (inner, mut consumed) = parse_expression(&tokens[1..])?;
             consumed += 1;
             if consumed >= tokens.len() || tokens[consumed].token != Token::RParen {
-                return Err("expected ')'".to_string());
+                // Tandai posisi token yang seharusnya ')' agar diagnostic tidak
+                // jatuh ke baris terakhir (endmodule) — lihat svrust::pipeline.
+                let pos = if consumed < tokens.len() {
+                    consumed
+                } else {
+                    tokens.len().saturating_sub(1)
+                };
+                return Err(crate::pesan::tandai(
+                    tokens,
+                    pos,
+                    "expected ')'".to_string(),
+                ));
             }
             Ok((inner, consumed + 1))
         }
@@ -758,9 +777,13 @@ fn parse_primary(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
                 idx,
             ))
         }
-        _ => Err(format!(
-            "expected identifier or number, ditemukan {:?}",
-            tokens[0].token
+        _ => Err(crate::pesan::tandai(
+            tokens,
+            0,
+            format!(
+                "expected identifier or number, ditemukan {:?}",
+                tokens[0].token
+            ),
         )),
     }
 }
@@ -865,7 +888,8 @@ fn try_parse_concatenation(
             other => {
                 return Err(format!(
                     "expected koma atau penutup kurung kurawal pada concatenation, \
-                     ditemukan {other:?}"
+                     ditemukan {other:?} @ line {} col {}",
+                    tokens[idx].span.line, tokens[idx].span.col
                 ))
             }
         }

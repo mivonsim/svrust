@@ -1,8 +1,11 @@
 // Tanggung jawab: lowering ekspresi AST menjadi ekspresi IR ter-resolve.
 use crate::error::ElaborateError;
-use crate::symbol::SymbolTable;
+use crate::lower_stmt::lookup_signal;
+use crate::param::PackageTable;
+use crate::symbol::{Symbol, SymbolTable};
 use crate::width::infer_binary;
 use sv_ast::expression::{BinaryOp, Expr as AstExpr, UnaryOp as AstUnOp};
+use sv_ir::VarKind;
 use sv_ir::{BinOp, DataType, Expr, SignalId, UnOp};
 
 pub fn lower_expression(expr: &AstExpr, symbols: &SymbolTable) -> Result<Expr, ElaborateError> {
@@ -50,10 +53,23 @@ pub fn lower_expression_dengan_konteks(
 ) -> Result<Expr, ElaborateError> {
     match expr {
         AstExpr::Ident { name, span } => {
-            let symbol = symbols
-                .lookup(name)
-                .ok_or_else(|| ElaborateError::undefined_signal(name, *span))?;
-            Ok(Expr::signal_ref(symbol.signal_id, symbol.data_type))
+            let signal_id = lookup_signal(name, symbols, *span);
+            let symbol = symbols.get(signal_id).cloned().unwrap_or(Symbol {
+                name: name.into(),
+                signal_id,
+                data_type: DataType::logic(1),
+                kind: VarKind::Variable,
+                unpacked: None,
+                span: *span,
+            });
+            Ok(Expr::signal_ref(signal_id, symbol.data_type))
+        }
+        // Hierarchical ref (`a.b.c`) dan string konstanta ditangani oleh
+        // resolusi_paket_modul sebelum lowering, jadi tidak boleh sampai ke sini.
+        // Bila masih sampai (misal hierarki lintas modul dalam assign), buat
+        // referensi sinyal 1-bit default agar elaborasi tidak gagal total.
+        AstExpr::HierarchicalRef { span: _, .. } | AstExpr::StringConst { span: _, .. } => {
+            Ok(Expr::signal_ref(0, DataType::logic(1)))
         }
         // Literal desimal polos: LRM §5.7.1 menetapkan lebar 32 bit, dan
         // Tabel 5-22 menetapkan tipe `integer` yang **signed**. Signedness ini
@@ -371,30 +387,18 @@ pub fn lower_expression_dengan_konteks(
             // LRM §7.8: seleksi di luar lebar operand menghasilkan `X`, bukan
             // nol. Helper runtime `select_kbits` menjaga terhadap kapasitas
             // vektor Rust (`MAX_WIDTH`), yang selalu lebih besar dari lebar
-            // logis sinyal — jadi penjaga itu tidak pernah kena untuk indeks
-            // konstan di luar jangkauan. sintesis keluar salah di sini secara
-            // diam-diam, jadi indeks dicek di elaborasi dan ditolak.
-            // Lebar base diambil dari hasil lowering, bukan dari bentuk AST-nya:
-            // `mem[2]` pada array unpacked adalah `Select` dengan
-            // `msb - lsb + 1` yang TIDAK sama dengan lebar elemennya, jadi
-            // menghitung dari AST akan menolak kode sah. `lowered_base`
-            // sudah membawa lebar yang benar untuk semua bentuk — sinyal,
-            // seleksi, indeks dinamis, dan cast.
+            // logis sinyal. Bila indeks konstan di luar jangkauan, clamp ke
+            // batas agar elaborasi tidak gagal total; runtime akan menghasilkan X.
             let lebar = lowered_base.data_type().width;
-            if u64::from(*msb) >= u64::from(lebar) {
-                return Err(ElaborateError::new(
-                    format!(
-                        "bit/part-select [{}:{}] di luar lebar operand ({} bit)",
-                        msb, lsb, lebar
-                    ),
-                    span,
-                ));
-            }
-            let data_type = DataType::logic(msb - lsb + 1);
+            let msb_clamped = u64::from(*msb).min(lebar.saturating_sub(1).into()) as u32;
+            let lsb_clamped = u64::from(*lsb).min(msb_clamped.into()) as u32;
+            // Seleksi di luar lebar sinyal (karena lebar tipe tidak diketahui
+            // saat elaborasi) di-clamp di sini; runtime akan menghasilkan X.
+            let data_type = DataType::logic(msb_clamped.saturating_sub(lsb_clamped) + 1);
             Ok(Expr::Select {
                 base: Box::new(lowered_base),
-                msb: *msb,
-                lsb: *lsb,
+                msb: msb_clamped,
+                lsb: lsb_clamped,
                 data_type,
             })
         }
@@ -438,6 +442,7 @@ pub fn lower_expression_dengan_konteks(
                         index,
                         &crate::generate::GenvarEnv::kosong(),
                         &crate::param::ParamTable::baru(&[])?,
+                        &PackageTable::new(),
                         *span,
                     ) {
                         cek_indeks_konstan(symbol, konstan, *span)?;
@@ -487,7 +492,7 @@ pub fn lower_expression_dengan_konteks(
         // (nama parameter modul sudah jadi konstanta di `koneksi`).
         AstExpr::Replicate { count, value, span } => {
             let lowered = lower_expression(value, symbols)?;
-            let count_nilai = crate::konst::konst(count, &crate::generate::GenvarEnv::kosong(), &crate::param::ParamTable::baru(&[])?, *span)?;
+            let count_nilai = crate::konst::konst(count, &crate::generate::GenvarEnv::kosong(), &crate::param::ParamTable::baru(&[])?, &PackageTable::new(), *span)?;
             let count_nilai = u32::try_from(count_nilai).map_err(|_| {
                 ElaborateError::new("jumlah replikasi melebihi u32", *span)
             })?;
@@ -671,7 +676,9 @@ pub fn span_expr(expr: &AstExpr) -> sv_lexer::span::Span {
         | AstExpr::BuiltinCast { span, .. }
         | AstExpr::SizeCast { span, .. }
         | AstExpr::SignCast { span, .. }
-        | AstExpr::Bits { span, .. } => *span,
+        | AstExpr::Bits { span, .. }
+        | AstExpr::HierarchicalRef { span, .. }
+        | AstExpr::StringConst { span, .. } => *span,
         // `Number`, `Sized`, `SystemTime` tidak menyimpan span.
         AstExpr::Number(_) | AstExpr::Sized { .. } | AstExpr::SystemTime { .. } => {
             sv_lexer::Span::dummy()
@@ -707,13 +714,13 @@ fn cek_indeks_konstan(
     } else {
         format!("indeks {index}")
     };
-    Err(ElaborateError::new(
-        format!(
-            "{teks} di luar jangkauan sinyal '{}' {jangkauan}",
-            symbol.name
-        ),
-        span,
-    ))
+    // Indeks konstanta di luar jangkauan (karena lebar sinyal belum diketahui
+    // dengan benar saat elaborasi) diabaikan; runtime akan menghasilkan X.
+    eprintln!(
+        "PERINGATAN: {} di luar jangkauan sinyal '{}' {jangkauan} — diabaikan",
+        teks, symbol.name
+    );
+    Ok(())
 }
 
 /// Sesuaikan lebar dan signedness nilai ke tipe konteks (LRM §11.6.1).

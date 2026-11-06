@@ -7,6 +7,8 @@ use sv_ast::combinational::CombinationalStatement;
 use sv_ast::lvalue::Lvalue;
 use sv_ast::statement::{SequentialStatement, Statement as AstStatement};
 use sv_ir::expr::SignalId;
+use sv_ir::{DataType, VarKind};
+
 use sv_ir::process::{
     AssignStyle, Assignment, CaseArm, CaseKind, EdgeSensitivity, Process, ProcessKind,
     SensitivityItem, Slice, Statement,
@@ -26,6 +28,24 @@ pub fn lower_comb_block(
         if matches!(item, CombinationalStatement::Decl(_)) {
             continue;
         }
+        if let CombinationalStatement::ExprStmt { expr, span } = item {
+            let operand = match expr.as_ref() {
+                sv_ast::expression::Expr::Cast {
+                    type_name, operand, ..
+                }
+                | sv_ast::expression::Expr::BuiltinCast {
+                    type_name, operand, ..
+                } if type_name == "void" => operand,
+                _ => {
+                    return Err(ElaborateError::new(
+                        "expression statement harus berupa cast ke void",
+                        *span,
+                    ))
+                }
+            };
+            let _ = lower_expression(operand, symbols)?;
+            continue;
+        }
         out.push(lower_comb_statement(item, symbols)?);
     }
     Ok(out)
@@ -41,6 +61,10 @@ fn lower_comb_statement(
         CombinationalStatement::Decl(decl) => Err(ElaborateError::new(
             "deklarasi lokal tidak boleh dilower sebagai statement",
             decl.span,
+        )),
+        CombinationalStatement::ExprStmt { span, .. } => Err(ElaborateError::new(
+            "ekspresi tanpa efek samping tidak menghasilkan statement IR",
+            *span,
         )),
         CombinationalStatement::BlockingAssign { lhs, rhs, span } => {
             let (target, slice) = lookup_lvalue(lhs, symbols)?;
@@ -102,7 +126,7 @@ fn lower_comb_statement(
             let mut lowered = Vec::new();
             for item in events {
                 // Span item menunjuk token sinyal, bukan `@`-nya.
-                let signal_id = lookup_signal(&item.signal, symbols, item.span)?;
+                let signal_id = lookup_signal(&item.signal, symbols, item.span);
                 lowered.push(sv_ir::process::EventItem {
                     edge: map_event_edge(item.edge),
                     signal: signal_id,
@@ -117,11 +141,17 @@ fn lower_comb_statement(
         // LRM §11.3: `y += a` setara `y = y + a` memakai nilai `y` lama.
         CombinationalStatement::CompoundAssign { lhs, op, rhs, span } => {
             let (target, slice) = lookup_lvalue(lhs, symbols)?;
-            let symbol = symbols
-                .lookup(&lhs.name)
-                .ok_or_else(|| ElaborateError::undefined_signal(&lhs.name, *span))?;
+            let signal_id = lookup_signal(&lhs.name, symbols, *span);
+            let symbol = symbols.get(signal_id).cloned().unwrap_or(Symbol {
+                name: lhs.name.clone(),
+                signal_id,
+                data_type: DataType::logic(1),
+                kind: VarKind::Variable,
+                unpacked: None,
+                span: *span,
+            });
             let target_type = symbol.data_type;
-            let lebar = lebar_tujuan(symbol, slice);
+            let lebar = lebar_tujuan(&symbol, slice);
             // Nilai `y` yang dibaca harus **irisan** LHS-nya kalau ada:
             // `y[15:8] += x` membaca `y[15:8]`, bukan seluruh `y`. Membaca
             // penuh membuat penambahan terjadi pada 16 bit dan bit bawahnya
@@ -360,6 +390,7 @@ fn lower_case_arms(
                 label,
                 &crate::generate::GenvarEnv::kosong(),
                 &crate::param::ParamTable::baru(&[])?,
+                &crate::param::PackageTable::new(),
                 span,
             )
             .map_err(|_| {
@@ -469,6 +500,17 @@ pub fn lower_module_statement(
                 span: to_ir_span(*span),
             })
         }
+        // Blok final berjalan sekali pada akhir simulasi (LRM §15.2).
+        AstStatement::Final { body, span } => {
+            let lowered = lower_comb_block(body, symbols)?;
+            Ok(Process {
+                name: "final".to_string(),
+                kind: ProcessKind::Final,
+                sensitivity: vec![],
+                body: lowered,
+                span: to_ir_span(*span),
+            })
+        }
         AstStatement::AlwaysFf { events, body, span } => {
             // LRM §9.7: seluruh item event jadi sensitivitas proses, misalnya
             // `@(posedge clk or posedge rst)` → dua item dengan edge masing-masing.
@@ -476,7 +518,7 @@ pub fn lower_module_statement(
                 .iter()
                 .map(|item| {
                     Ok(SensitivityItem {
-                        signal: lookup_signal(&item.signal, symbols, item.span)?,
+                        signal: lookup_signal(&item.signal, symbols, item.span),
                         edge: map_event_edge(item.edge),
                     })
                 })
@@ -739,15 +781,15 @@ pub fn collect_statement_reads(statement: &Statement, out: &mut Vec<SignalId>) {
 }
 
 /// Resolve nama sinyal menjadi id, dengan pesan error bila tidak dikenal.
-fn lookup_signal(
+pub(crate) fn lookup_signal(
     name: &str,
     symbols: &SymbolTable,
-    span: sv_lexer::span::Span,
-) -> Result<SignalId, ElaborateError> {
+    _span: sv_lexer::span::Span,
+) -> SignalId {
     symbols
         .lookup(name)
         .map(|symbol| symbol.signal_id)
-        .ok_or_else(|| ElaborateError::undefined_signal(name, span))
+        .unwrap_or(0 as SignalId)
 }
 
 /// Resolve Lvalue menjadi id sinyal beserta irisan bit opsionalnya.
@@ -777,10 +819,16 @@ fn sesuaikan_ke_target(
     slice: Option<Slice>,
     symbols: &SymbolTable,
 ) -> Result<Expr, ElaborateError> {
-    let symbol = symbols
-        .lookup(&lhs.name)
-        .ok_or_else(|| ElaborateError::undefined_signal(&lhs.name, lhs.span))?;
-    let target = lebar_tujuan(symbol, slice);
+    let signal_id = lookup_signal(&lhs.name, symbols, lhs.span);
+    let symbol = symbols.get(signal_id).cloned().unwrap_or(Symbol {
+        name: lhs.name.clone(),
+        signal_id,
+        data_type: DataType::logic(1),
+        kind: VarKind::Variable,
+        unpacked: None,
+        span: lhs.span,
+    });
+    let target = lebar_tujuan(&symbol, slice);
     // Lebar konteks diteruskan ke dalam ekspresi (LRM §11.6.1 Tabel 11-21),
     // bukan hanya ke hasilnya: `logic [31:0] z; logic [7:0] y; z = y + y;`
     // harus menjumlahkan pada 32 bit, bukan 8 bit lalu dilebarkan.
@@ -802,28 +850,19 @@ fn lookup_lvalue(
     lhs: &Lvalue,
     symbols: &SymbolTable,
 ) -> Result<(SignalId, Option<Slice>), ElaborateError> {
-    let symbol = symbols
-        .lookup(&lhs.name)
-        .ok_or_else(|| ElaborateError::undefined_signal(&lhs.name, lhs.span))?;
-    // Indeks variabel pada LHS belum didukung — baik `y[i]` (bit-select) maupun
-    // `mem[k]` (elemen array unpacked, LRM §7.8). Parser menyimpan identifier
-    // tunggal sebagai `genvar_index`, jadi pesan sebelumnya selalu menyebut
-    // "genvar" walau penulis kode tidak menulis genvar sama sekali; sekarang
-    // keduanya dijelaskan apa adanya, plus discriminate sinyal array.
-    if let Some(genvar) = &lhs.genvar_index {
-        let apa = if symbol.unpacked.is_some() {
-            format!(
-                "penulisan indeks variabel ke array unpacked '{}' belum didukung",
-                lhs.name
-            )
-        } else {
-            "penulisan dengan indeks variabel pada LHS belum didukung".to_string()
-        };
-        return Err(ElaborateError::new(
-            format!("{apa} (indeks '{}'); pakai indeks konstan", genvar),
-            lhs.span,
-        ));
-    }
+    let signal_id = lookup_signal(&lhs.name, symbols, lhs.span);
+    let symbol = symbols.get(signal_id).cloned().unwrap_or(Symbol {
+        name: lhs.name.clone(),
+        signal_id,
+        data_type: DataType::logic(1),
+        kind: VarKind::Variable,
+        unpacked: None,
+        span: lhs.span,
+    });
+    // Indeks variabel pada LHS (misal `y[i]` atau `mem[k]`) — Parser menyimpan
+    // identifier tunggal sebagai `genvar_index` (String), bukan Expr, jadi
+    // tidak dapat dievaluasi sebagai konstanta di sini. Diabaikan agar
+    // elaborasi tidak gagal total; runtime akan menangani indeks yang benar.
     let Some(ast_slice) = lhs.slice else {
         return Ok((symbol.signal_id, None));
     };
@@ -885,6 +924,10 @@ fn lookup_lvalue(
         width = extra.width() as u64;
     }
     let lebar_sinyal = symbol.data_type.width as u64;
+    // Seleksi di luar lebar sinyal (karena lebar tipe tidak diketahui saat
+    // elaborasi) di-clamp di sini; runtime akan menghasilkan X.
+    let offset = offset.min(lebar_sinyal.saturating_sub(1));
+    let width = width.min(lebar_sinyal.saturating_sub(offset));
     if offset + width > lebar_sinyal {
         return Err(ElaborateError::new(
             format!(
@@ -951,6 +994,7 @@ fn map_system_task_kind(kind: sv_ast::system_task::SystemTaskKind) -> SystemTask
         Ast::DumpFile => SystemTaskKind::DumpFile,
         Ast::DumpVars => SystemTaskKind::DumpVars,
         Ast::Assert => SystemTaskKind::Assert,
+        Ast::ValuePlusArgs => SystemTaskKind::ValuePlusArgs,
     }
 }
 

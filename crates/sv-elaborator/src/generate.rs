@@ -1,7 +1,8 @@
 // Tanggung jawab: elaborasi region `generate` menjadi design flat (LRM §27).
 use crate::error::ElaborateError;
+
 use crate::lower_stmt::lower_module_statement;
-use crate::param::ParamTable;
+use crate::param::{PackageTable, ParamTable};
 use crate::symbol::{Symbol, SymbolTable};
 use sv_ast::expression::Expr as AstExpr;
 use sv_ast::generate::{ForGenerate, GenerateItem, GenerateRegion};
@@ -170,6 +171,7 @@ pub fn lower_regions(
     module: &Module,
     params: &ParamTable,
     modules: &[Module],
+    packages: &PackageTable,
 ) -> Result<(), ElaborateError> {
     // LRM §6.20: parameter modul adalah konstanta yang juga terlihat di dalam
     // `generate`. Tanpa peta ini `if (WIDTH > 8)` gagal dengan "undefined
@@ -190,6 +192,7 @@ pub fn lower_regions(
             modules,
             &GenvarEnv::kosong(),
             &scope,
+            packages,
         )?;
     }
     Ok(())
@@ -207,6 +210,7 @@ pub(crate) fn lower_regions_dalam_instans<'a>(
     modules: &[Module],
     env: &GenvarEnv,
     instan: &'a crate::instance::InstanInfo<'a>,
+    packages: &PackageTable,
 ) -> Result<(), ElaborateError> {
     let scope = ScopeBlok {
         prefix: String::new(),
@@ -217,7 +221,9 @@ pub(crate) fn lower_regions_dalam_instans<'a>(
         koneksi: Some(instan.koneksi),
     };
     for region in &module.generates {
-        lower_region(design, symbols, region, params, modules, env, &scope)?;
+        lower_region(
+            design, symbols, region, params, modules, env, &scope, packages,
+        )?;
     }
     Ok(())
 }
@@ -231,9 +237,10 @@ fn lower_region(
     modules: &[Module],
     env: &GenvarEnv,
     scope: &ScopeBlok,
+    packages: &PackageTable,
 ) -> Result<(), ElaborateError> {
     for item in &region.items {
-        lower_item(design, symbols, item, params, modules, env, scope)?;
+        lower_item(design, symbols, item, params, modules, env, scope, packages)?;
     }
     Ok(())
 }
@@ -247,6 +254,7 @@ fn lower_item(
     modules: &[Module],
     env: &GenvarEnv,
     scope: &ScopeBlok,
+    packages: &PackageTable,
 ) -> Result<(), ElaborateError> {
     match item {
         GenerateItem::For(for_gen) => {
@@ -266,6 +274,7 @@ fn lower_item(
                         modules,
                         &env_anak,
                         &scope_anak,
+                        packages,
                     )?;
                 }
             }
@@ -274,7 +283,8 @@ fn lower_item(
         GenerateItem::If(if_gen) => {
             // LRM §27.1: hanya cabang terpilih yang dielaborasi, sehingga
             // sinyal di cabang lain tidak muncul di design.
-            let syarat = crate::konst::konst(&if_gen.condition, env, params, if_gen.span)?;
+            let syarat =
+                crate::konst::konst(&if_gen.condition, env, params, packages, if_gen.span)?;
             if syarat != 0 {
                 let label = label_cabang_opt(&if_gen.then_label);
                 let lokal = nama_lokal_item(&if_gen.then_branch);
@@ -288,6 +298,7 @@ fn lower_item(
                         modules,
                         env,
                         &scope_anak,
+                        packages,
                     )?;
                 }
             } else if let Some(else_branch) = &if_gen.else_branch {
@@ -303,13 +314,15 @@ fn lower_item(
                         modules,
                         env,
                         &scope_anak,
+                        packages,
                     )?;
                 }
             }
             Ok(())
         }
         GenerateItem::Case(case_gen) => {
-            let nilai = crate::konst::konst(&case_gen.selector, env, params, case_gen.span)?;
+            let nilai =
+                crate::konst::konst(&case_gen.selector, env, params, packages, case_gen.span)?;
             // LRM §27.1: lengan pertama yang cocok dipakai; `default` bertindak sebagai
             // jaring pengaman bila tidak ada yang cocok.
             let terpilih = case_gen
@@ -320,7 +333,8 @@ fn lower_item(
                         return false;
                     }
                     arm.labels.iter().any(|label| {
-                        crate::konst::konst(label, env, params, arm.span).map(|v| v == nilai)
+                        crate::konst::konst(label, env, params, packages, arm.span)
+                            .map(|v| v == nilai)
                             == Ok(true)
                     })
                 })
@@ -342,13 +356,14 @@ fn lower_item(
                     modules,
                     env,
                     &scope_anak,
+                    packages,
                 )?;
             }
             Ok(())
         }
         GenerateItem::Decl(decls) => {
             for decl in decls.iter() {
-                let bit = params.lebar(&decl.width, decl.span)?;
+                let bit = params.lebar(&decl.width, packages, decl.span)?;
                 let tipe = DataType::logic(bit as u32).with_signed(decl.signed);
                 let nama = format!("{}{}", scope.prefix, decl.name);
                 let id = symbols.insert(Symbol {
@@ -411,13 +426,15 @@ fn lower_item(
                     }
                 }
             }
-            crate::instance::lower_instance(design, symbols, &inst, modules, env)?;
+            crate::instance::lower_instance(
+                design, symbols, &inst, modules, env, packages, params,
+            )?;
             Ok(())
         }
         GenerateItem::Process(stmt) => {
             // LRM §27.1: genvar dan scope blok disubstitusi pada badan proses
             // agar tiap iterasi menghasilkan proses yang benar-benar berbeda.
-            crate::generate_proses::daftarkan(design, symbols, stmt, scope, params)?;
+            crate::generate_proses::daftarkan(design, symbols, stmt, scope, params, packages)?;
             let sub = crate::generate_proses::subst_statement(stmt, env, scope);
             design
                 .processes
@@ -473,6 +490,9 @@ fn subst_expr(expr: &AstExpr, env: &GenvarEnv, scope: &ScopeBlok) -> AstExpr {
                 None => AstExpr::ident(scope.nama_luar(nama, *span), *span),
             }
         }
+        // Hierarchical ref dan string konstanta tidak berisi genvar yang perlu
+        // disubstitusi, jadi dikembalikan apa adanya.
+        AstExpr::HierarchicalRef { .. } | AstExpr::StringConst { .. } => expr.clone(),
         // Panggilan function sudah ter-expand sebelum elaborasi, tapi nama
         // argumennya tetap perlu disubstitusi bila node ini lolos ke sini.
         AstExpr::FunctionCall { name, args, span } => AstExpr::FunctionCall {

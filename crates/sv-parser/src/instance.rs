@@ -1,4 +1,5 @@
 // Tanggung jawab: parse instansiasi module dengan koneksi bernama.
+use sv_ast::expression::Expr;
 use sv_ast::instance::{Instance, ParamOverride, PortConn, PortIndex};
 use sv_lexer::spanned::SpannedToken;
 use sv_lexer::token::Token;
@@ -35,6 +36,9 @@ pub fn parse_instance(tokens: &[SpannedToken]) -> Result<(Instance, usize), Stri
                 Token::Ident(n) => n.clone(),
                 _ => return Err("expected nama parameter".to_string()),
             };
+            // Span override diambil dari nama parameter agar pesan error saat
+            // evaluasi menunjuk ke letak override (AGENTS.md aturan 3).
+            let span = tokens[idx].span;
             idx += 1;
             if idx >= tokens.len() || tokens[idx].token != Token::LParen {
                 return Err("expected '(' setelah nama parameter".to_string());
@@ -44,9 +48,26 @@ pub fn parse_instance(tokens: &[SpannedToken]) -> Result<(Instance, usize), Stri
                 return Err("expected nilai parameter".to_string());
             }
             let nilai = match &tokens[idx].token {
-                Token::Number(n) => *n,
-                Token::BasedNumber { value, .. } => *value,
-                Token::Ident(_) => 0, // Parameter reference - nilai di-resolve saat elaborasi
+                Token::Number(n) => Expr::Number(*n),
+                Token::BasedNumber {
+                    value,
+                    width,
+                    signed,
+                    ..
+                } => Expr::Sized {
+                    value: *value,
+                    width: *width,
+                    signed: *signed,
+                    unknown_mask: 0,
+                    zmask: 0,
+                },
+                // Referensi parameter induk (misal `.W(.CLK_FREQ(FreqMHz))`):
+                // simpan sebagai Ident; nilainya di-resolve saat elaborasi
+                // dengan tabel parameter modul induk.
+                Token::Ident(n) => Expr::Ident {
+                    name: n.clone(),
+                    span,
+                },
                 _ => {
                     return Err(
                         "nilai override harus literal angka atau referensi parameter".to_string(),
@@ -61,6 +82,7 @@ pub fn parse_instance(tokens: &[SpannedToken]) -> Result<(Instance, usize), Stri
             param_overrides.push(ParamOverride {
                 name: nama,
                 value: nilai,
+                span,
             });
             if idx < tokens.len() && tokens[idx].token == Token::Comma {
                 idx += 1;
@@ -105,7 +127,7 @@ pub fn parse_instance(tokens: &[SpannedToken]) -> Result<(Instance, usize), Stri
         if idx < tokens.len() && tokens[idx].token == Token::LParen {
             idx += 1;
             if idx >= tokens.len() {
-                return Err("expected nama sinyal".to_string());
+                return Err(crate::pesan::harap(tokens, idx, "expected nama sinyal"));
             }
             let signal_span = tokens[idx].span;
             // Baca nama sinyal, mungkin hirarkis dengan titik (mis. `a.b.c`).
@@ -113,7 +135,7 @@ pub fn parse_instance(tokens: &[SpannedToken]) -> Result<(Instance, usize), Stri
             loop {
                 let part = match &tokens[idx].token {
                     Token::Ident(n) => n.clone(),
-                    _ => return Err("expected nama sinyal".to_string()),
+                    _ => return Err(crate::pesan::harap(tokens, idx, "expected nama sinyal")),
                 };
                 signal_parts.push(part);
                 idx += 1;
@@ -243,7 +265,10 @@ mod tests {
         let (inst, _) = parse_instance(&tokens).unwrap();
         assert_eq!(inst.param_overrides.len(), 1);
         assert_eq!(inst.param_overrides[0].name, "WIDTH");
-        assert_eq!(inst.param_overrides[0].value, 16);
+        assert_eq!(
+            inst.param_overrides[0].value,
+            sv_ast::expression::Expr::Number(16)
+        );
     }
 
     #[test]

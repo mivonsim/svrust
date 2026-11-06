@@ -9,6 +9,7 @@ pub mod generate;
 pub mod instance;
 pub mod lvalue;
 pub mod module;
+pub mod package;
 pub mod port;
 pub mod routine;
 pub mod statement;
@@ -29,6 +30,7 @@ pub use generate::{
 pub use instance::{Instance, ParamOverride, PortConn, PortIndex};
 pub use lvalue::{Lvalue, Slice};
 pub use module::Module;
+pub use package::PackageDecl;
 pub use port::{Port, PortDirection};
 pub use routine::{ArgDirection, RoutineDecl, RoutineKind, TaskCall};
 pub use statement::{SequentialStatement, Statement};

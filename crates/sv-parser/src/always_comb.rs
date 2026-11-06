@@ -23,7 +23,13 @@ pub fn parse_always_comb(tokens: &[SpannedToken]) -> Result<(Statement, usize), 
             idx += 1;
         }
         if idx >= tokens.len() {
-            return Err("expected ')'".to_string());
+            // Tandai token terakhir agar diagnostic menunjuk lokasi ')' yang
+            // hilang, bukan baris terakhir berkas (endmodule).
+            return Err(crate::pesan::tandai(
+                tokens,
+                idx.saturating_sub(1),
+                "expected ')'".to_string(),
+            ));
         }
         idx += 1;
     }
@@ -145,6 +151,7 @@ fn statement_memuat_delay(stmt: &CombinationalStatement) -> bool {
         | CombinationalStatement::TaskCall(_)
         | CombinationalStatement::Return { .. }
         | CombinationalStatement::ProceduralAssign { .. }
-        | CombinationalStatement::Deassign { .. } => false,
+        | CombinationalStatement::Deassign { .. }
+        | CombinationalStatement::ExprStmt { .. } => false,
     }
 }

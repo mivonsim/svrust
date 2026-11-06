@@ -32,6 +32,9 @@ pub enum SystemTaskKind {
     DumpVars,
     /// `assert (condition);` — immediate assertion (LRM §20.4).
     Assert,
+    /// `$value$plusargs("nama=%d", var)` — baca nilai plusarg `+nama=...`
+    /// dari baris perintah lalu masukkan ke `var` (LRM §20.9).
+    ValuePlusArgs,
 }
 
 /// Panggilan system task beserta argumennya.

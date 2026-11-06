@@ -18,10 +18,13 @@ pub enum Command {
 pub struct Options {
     pub command: Command,
     pub rtl: Vec<PathBuf>,
+    pub incdir: Vec<PathBuf>,
     pub top: Option<String>,
     pub release: bool,
     pub steps: usize,
     pub vcd: Option<PathBuf>,
+    /// Plusarg `+nama=nilai` dari baris perintah, dipakai `$value$plusargs` (LRM §20.9).
+    pub plusargs: Vec<(String, String)>,
 }
 
 impl Default for Options {
@@ -29,10 +32,12 @@ impl Default for Options {
         Self {
             command: Command::Help,
             rtl: Vec::new(),
+            incdir: Vec::new(),
             top: None,
             release: false,
             steps: 64,
             vcd: None,
+            plusargs: Vec::new(),
         }
     }
 }
@@ -102,6 +107,22 @@ pub fn parse_args(args: Vec<String>) -> Result<Options, String> {
                 }
                 opts.vcd = Some(PathBuf::from(&args[i]));
             }
+            "--incdir" | "-I" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err("--incdir memerlukan path".to_string());
+                }
+                opts.incdir.push(PathBuf::from(&args[i]));
+            }
+            other if other.starts_with('+') => {
+                // Plusarg `+nama=nilai` untuk `$value$plusargs` (LRM §20.9).
+                if let Some((nama, nilai)) = other.strip_prefix('+').and_then(|s| s.split_once('='))
+                {
+                    opts.plusargs.push((nama.to_string(), nilai.to_string()));
+                } else {
+                    return Err(format!("plusarg harus berbentuk +nama=nilai: {}", other));
+                }
+            }
             "--help" | "-h" => opts.command = Command::Help,
             other if other.starts_with('-') => {
                 return Err(format!("opsi tidak dikenal: {}", other))
@@ -143,6 +164,7 @@ Commands:
 
 Options:
   --rtl, -r <FILE>     File RTL SystemVerilog (bisa berulang)
+  --incdir, -I <DIR>   Direktori pencarian file include (bisa berulang)
   --top, -t <NAME>     Batasi modul top (default: semua modul root)
   --release            Build mode release
   --steps <N>          Maksimum langkah simulasi (default: 64)

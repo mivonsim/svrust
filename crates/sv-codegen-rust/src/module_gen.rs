@@ -119,6 +119,13 @@ pub fn generate_module(design: &Design) -> String {
         field_indent.push(&mut out);
         out.push_str("dump_level: Option<u32>,\n");
     }
+    // LRM §20.9: `$value$plusargs` butuh daftar plusarg dari baris perintah.
+    if crate::system_task_gen::has_value_plusargs(design) {
+        field_indent.push(&mut out);
+        out.push_str("plusargs: Vec<(String, String)>,");
+        field_indent.push(&mut out);
+        out.push('\n');
+    }
     indent.push(&mut out);
     out.push_str("}\n\n");
 
@@ -218,6 +225,7 @@ fn write_new(design: &Design, struct_name: &str, inner: &Indent, out: &mut Strin
             sv_ir::process::ProcessKind::Combinational => "Active",
             sv_ir::process::ProcessKind::Sequential => "NonBlocking",
             sv_ir::process::ProcessKind::Initial => "Active",
+            sv_ir::process::ProcessKind::Final => "Active",
             sv_ir::process::ProcessKind::Timed => "Active",
             sv_ir::process::ProcessKind::Latch => "Active",
         };
@@ -281,6 +289,33 @@ fn write_new(design: &Design, struct_name: &str, inner: &Indent, out: &mut Strin
         out.push_str("dump_path: \"\",\n");
         fields.push(out);
         out.push_str("dump_level: None,\n");
+    }
+    // LRM §20.9: kumpulkan plusarg `+nama=nilai` dari baris perintah.
+    if crate::system_task_gen::has_value_plusargs(design) {
+        fields.push(out);
+        out.push_str("plusargs: {\n");
+        let plus_body = fields.child();
+        plus_body.push(out);
+        out.push_str("let mut v = Vec::new();\n");
+        plus_body.push(out);
+        out.push_str("for arg in std::env::args() {\n");
+        let loop_body = plus_body.child();
+        loop_body.push(out);
+        out.push_str("if let Some(rest) = arg.strip_prefix('+') {\n");
+        let if_body = loop_body.child();
+        if_body.push(out);
+        out.push_str("if let Some((nama, nilai)) = rest.split_once('=') {\n");
+        let inner_body = if_body.child();
+        inner_body.push(out);
+        out.push_str("v.push((nama.to_string(), nilai.to_string()));\n");
+        if_body.push(out);
+        out.push_str("}\n");
+        loop_body.push(out);
+        out.push_str("}\n");
+        plus_body.push(out);
+        out.push_str("v\n");
+        fields.push(out);
+        out.push_str("},\n");
     }
     if design.variables.iter().any(|v| v.initial.is_some()) {
         out.push_str("};\n");
@@ -1252,6 +1287,11 @@ fn write_step_scheduler(design: &Design, inner: &Indent, out: &mut String) {
                 // Initial processes are handled by eval_initial with step tracking
                 proc_body.push(out);
                 out.push_str("// Initial process - evaluated via eval_initial in driver\n");
+            }
+            sv_ir::process::ProcessKind::Final => {
+                // Final processes run at end of simulation
+                proc_body.push(out);
+                out.push_str("// Final process - evaluated at end of simulation\n");
             }
             sv_ir::process::ProcessKind::Timed => {
                 proc_body.push(out);

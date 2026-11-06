@@ -35,6 +35,9 @@ pub fn scan_system_task(
     let token = match name.as_str() {
         "display" => Token::SystemTask("display".to_string()),
         "finish" => Token::SystemTask("finish".to_string()),
+        // `$root` adalah referensi hierarki root (LRM §6.6.2), bukan system
+        // task. Perlakukan sebagai ident agar parser tidak error.
+        "root" => Token::Ident("root".to_string()),
         _ => Token::SystemTask(name),
     };
 

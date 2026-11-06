@@ -26,6 +26,11 @@ pub enum WidthExpr {
         /// Batas bawah; `None` untuk `[N]` yang lebarnya `N`.
         lsb: Option<Box<crate::expression::Expr>>,
     },
+    /// Lebar enum tanpa tipe dasar eksplisit (LRM §6.7).
+    ///
+    /// `typedef enum { A, B = 2 } x;` tidak menulis lebar; lebarnya
+    /// di-auto-size saat elaborasi agar muat menampung enumerator terbesar.
+    Auto,
 }
 
 /// Deklarasi satu parameter module, misal `parameter WIDTH = 8`.

@@ -50,6 +50,10 @@ fn statement(stmt: &Statement, table: &TypeTable) -> Result<Statement, Elaborate
             body: comb_list(body, table)?,
             span: *span,
         },
+        Statement::Final { body, span } => Statement::Final {
+            body: comb_list(body, table)?,
+            span: *span,
+        },
     })
 }
 
@@ -297,6 +301,10 @@ fn comb(
             lhs: lhs.clone(),
             span: *span,
         },
+        CombinationalStatement::ExprStmt { expr, span } => CombinationalStatement::ExprStmt {
+            expr: Box::new(table.ganti_literal(expr)),
+            span: *span,
+        },
     })
 }
 
@@ -353,7 +361,7 @@ mod tests {
             span: Span::dummy(),
         };
         let params = crate::param::ParamTable::baru(&[]).expect("params");
-        TypeTable::baru(&[decl], &params).expect("tabel")
+        TypeTable::baru(&[decl], &params, &PackageTable::new()).expect("tabel")
     }
 
     fn module_dari(src: &str) -> Module {

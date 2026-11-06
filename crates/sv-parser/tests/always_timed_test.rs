@@ -23,7 +23,8 @@ fn badan(src: &str) -> Vec<CombinationalStatement> {
     match parse_satu(src) {
         Statement::AlwaysTimed { body, .. }
         | Statement::AlwaysComb { body, .. }
-        | Statement::Initial { body, .. } => body,
+        | Statement::Initial { body, .. }
+        | Statement::Final { body, .. } => body,
         other => panic!("bukan always: {other:?}"),
     }
 }

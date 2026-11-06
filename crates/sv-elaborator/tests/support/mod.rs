@@ -23,14 +23,15 @@ pub fn build_timescale(source: &str, top: &str) -> sv_ir::Design {
     let pp = sv_preprocessor::preprocess(source, None).expect("preprocess");
     let tokens = sv_lexer::lex(&pp.source).expect("lex");
     let parsed = sv_parser::parse_file(&tokens).expect("parse");
-    sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, top).expect("elaborate")
+    sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, &[], top)
+        .expect("elaborate")
 }
 
 /// Error dari build top untuk beberapa module.
 pub fn err_top(source: &str, top: &str) -> String {
     let tokens = sv_lexer::lex(source).expect("lex");
     let parsed = sv_parser::parse_file(&tokens).expect("parse");
-    sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, top)
+    sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, &[], top)
         .expect_err("elaborate harus gagal")
         .to_string()
 }
@@ -39,7 +40,8 @@ pub fn err_top(source: &str, top: &str) -> String {
 pub fn build_top(source: &str, top: &str) -> sv_ir::Design {
     let tokens = sv_lexer::lex(source).expect("lex");
     let parsed = sv_parser::parse_file(&tokens).expect("parse");
-    sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, top).expect("elaborate")
+    sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, &[], top)
+        .expect("elaborate")
 }
 
 /// Bangun satu module lalu jalankan pass optimisasi.

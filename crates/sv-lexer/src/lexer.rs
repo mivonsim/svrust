@@ -24,18 +24,6 @@ pub fn lex(source: &str) -> Result<Vec<SpannedToken>, LexError> {
             Some(&c) => c,
             None => break,
         };
-        // Line continuation: `\` di akhir baris digabung dengan baris berikutnya
-        // (LRM §3.3.2: backslash-newline dihapus sebelum pemrosesan lebih lanjut).
-        if ch == '\\' && chars.peek() == Some(&'\n') {
-            chars.next(); // consume '\'
-            byte_offset += 1;
-            chars.next(); // consume '\n'
-            byte_offset += 1;
-            col = 0;
-            line += 1;
-            continue;
-        }
-        let start_line = line;
         let start_line = line;
         let start_col = col;
         let start_offset = byte_offset;
@@ -125,6 +113,13 @@ pub fn lex(source: &str) -> Result<Vec<SpannedToken>, LexError> {
             ));
             continue;
         }
+        // Line continuation (Verilog-2005): `\` di akhir baris diabaikan.
+        if ch == '\\' {
+            byte_offset += ch.len_utf8();
+            col += 1;
+            chars.next();
+            continue;
+        }
         byte_offset += ch.len_utf8();
         col += 1;
         chars.next();
@@ -174,8 +169,8 @@ fn mulai_based_literal(mut chars: Peekable<std::str::Chars>) -> bool {
         chars.next();
     }
     match chars.peek() {
-        Some('b') | Some('o') | Some('d') | Some('h')
-        | Some('B') | Some('O') | Some('D') | Some('H') => true,
+        Some('b') | Some('o') | Some('d') | Some('h') | Some('B') | Some('O') | Some('D')
+        | Some('H') => true,
         Some(c) if c.is_ascii_digit() || is_unknown_digit(*c) => true,
         _ => false,
     }

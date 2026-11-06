@@ -112,7 +112,11 @@ pub fn parse_lvalue(tokens: &[SpannedToken]) -> Result<(Lvalue, usize), String> 
         }
         if let Token::Ident(nama) = &tokens[start2].token {
             if closing2 != start2 + 1 {
-                return Err("nested genvar index harus satu token".to_string());
+                return Err(crate::pesan::tandai(
+                    tokens,
+                    cursor,
+                    "nested genvar index harus satu token".to_string(),
+                ));
             }
             extra_slices.push(Slice { msb: 0, lsb: 0 });
             // Catat genvar nested sebagai catatan; resolusi dilakukan elaborator.

@@ -61,6 +61,11 @@ pub fn terapkan_module(module: &mut Module, scale: TimeScale) {
                     }
                 }
             }
+            crate::typedef::TypeDefBody::Struct { fields } => {
+                for field in fields {
+                    lebar_expr(&mut field.width, scale);
+                }
+            }
         }
     }
 }
@@ -76,7 +81,8 @@ fn statement_modul(statement: &mut Statement, scale: TimeScale) {
         }
         Statement::AlwaysTimed { body, .. }
         | Statement::AlwaysComb { body, .. }
-        | Statement::Initial { body, .. } => {
+        | Statement::Initial { body, .. }
+        | Statement::Final { body, .. } => {
             for stmt in body {
                 statement_kombinasional(stmt, scale);
             }
@@ -233,6 +239,7 @@ fn statement_kombinasional(statement: &mut CombinationalStatement, scale: TimeSc
                 statement_kombinasional(stmt, scale);
             }
         }
+        CombinationalStatement::ExprStmt { .. } => {}
     }
 }
 
@@ -337,7 +344,11 @@ fn ekspresi(expr: &mut Expr, scale: TimeScale) {
                 *unit_time = scale.unit;
             }
         }
-        Expr::Ident { .. } | Expr::Number(_) | Expr::Sized { .. } => {}
+        Expr::Ident { .. }
+        | Expr::Number(_)
+        | Expr::Sized { .. }
+        | Expr::StringConst { .. }
+        | Expr::HierarchicalRef { .. } => {}
         Expr::Binary { lhs, rhs, .. } => {
             ekspresi(lhs, scale);
             ekspresi(rhs, scale);

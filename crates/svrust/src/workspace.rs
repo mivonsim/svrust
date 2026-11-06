@@ -123,11 +123,16 @@ impl Workspace {
         Ok(())
     }
 
-    pub fn run(&self, release: bool) -> Result<(), String> {
+    pub fn run(&self, release: bool, plusargs: &[(String, String)]) -> Result<(), String> {
         let mut cmd = Command::new("cargo");
         cmd.arg("run");
         if release {
             cmd.arg("--release");
+        }
+        // Kirim plusarg ke binary simulasi lewat `cargo run -- <args>`.
+        cmd.arg("--");
+        for (nama, nilai) in plusargs {
+            cmd.arg(format!("+{nama}={nilai}"));
         }
         cmd.current_dir(&self.sim_dir);
         let status = cmd

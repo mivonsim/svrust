@@ -16,7 +16,10 @@ impl Engine {
         file: &str,
         line_no: usize,
     ) -> Result<String, PreprocessError> {
-        self.expand(line, file, line_no, 0)
+        let hasil = self.expand(line, file, line_no, 0)?;
+        // Direktif kondisional di dalam body makro dievaluasi saat makro
+        // dipakai (LRM §22.5.2), yaitu setelah substitusi baris ini.
+        Ok(self.selesaikan_kondisional(&hasil))
     }
 
     fn expand(
@@ -46,11 +49,31 @@ impl Engine {
                 continue;
             }
             if c == '`' && !in_string {
+                // `` `" `` — kutip ter-escape di dalam body makro (LRM §22.5.1):
+                // hasil ekspansi memuat kutip biasa, bukan backtick.
+                if chars.get(i + 1) == Some(&'"') {
+                    out.push('"');
+                    i += 2;
+                    continue;
+                }
                 let mut j = i + 1;
                 while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '_') {
                     j += 1;
                 }
                 let ident: String = chars[i + 1..j].iter().collect();
+                // Makro bawaan LRM §22.5.1.
+                if ident == "__FILE__" {
+                    out.push('"');
+                    out.push_str(file);
+                    out.push('"');
+                    i = j;
+                    continue;
+                }
+                if ident == "__LINE__" {
+                    out.push_str(&line_no.to_string());
+                    i = j;
+                    continue;
+                }
                 if let Some(mac) = self.macros.get(&ident) {
                     let mut body = mac.body.clone();
                     let mut next = j;
@@ -175,16 +198,11 @@ fn bind_args(
     let mut values: Vec<(&str, String)> = Vec::with_capacity(params.len());
     for (idx, p) in params.iter().enumerate() {
         if idx < args.len() {
-            // Argumen eksplisit "" (mis. `F(1,) ) dianggap kosong -> pakai default.
+            // Argumen eksplisit, bahkan bila kosong (`F(1, , 3)` → argumen ke-2
+            // adalah string kosong, TIDAK memicu default). Default hanya
+            // dipakai bila parameter sama sekali tidak ditulis (idx >= args).
             let given = args[idx].trim();
-            if given.is_empty() {
-                match &p.default {
-                    Some(d) => values.push((&p.name, d.clone())),
-                    None => return Err(missing_arg(&p.name, file, line)),
-                }
-            } else {
-                values.push((&p.name, given.to_string()));
-            }
+            values.push((&p.name, given.to_string()));
         } else {
             match &p.default {
                 Some(d) => values.push((&p.name, d.clone())),
@@ -211,6 +229,18 @@ fn subst_tokens(body: &str, values: &[(&str, String)]) -> String {
     let mut out = String::with_capacity(body.len());
     let mut i = 0usize;
     while i < chars.len() {
+        // `` `` `` — penyambungan token (LRM §22.5.1): kedua sisi body ditempel
+        // tanpa spasi, mis. `bit __name``_cond;`.
+        if chars[i] == '`' && chars.get(i + 1) == Some(&'`') {
+            while out.chars().last().is_some_and(|c| c.is_whitespace()) {
+                out.pop();
+            }
+            i += 2;
+            while i < chars.len() && chars[i].is_whitespace() {
+                i += 1;
+            }
+            continue;
+        }
         if chars[i].is_alphanumeric() || chars[i] == '_' {
             let start = i;
             while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {

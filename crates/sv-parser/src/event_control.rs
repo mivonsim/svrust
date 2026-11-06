@@ -98,7 +98,7 @@ pub(super) fn parse_event_items(
 
         // LRM §9.7: item berikutnya dipisahkan kata `or`.
         match tokens.get(idx).map(|t| &t.token) {
-            Some(Token::Or) => idx += 1,
+            Some(Token::Or) | Some(Token::Comma) => idx += 1,
             Some(Token::RParen) => {
                 idx += 1;
                 break;

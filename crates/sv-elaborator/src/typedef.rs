@@ -1,11 +1,21 @@
 // Tanggung jawab: tabel tipe hasil `typedef` beserta nilai literal enum.
 use crate::error::ElaborateError;
-use crate::param::ParamTable;
+use crate::param::{PackageTable, ParamTable};
 use std::collections::HashMap;
 use sv_ast::expression::Expr;
 use sv_ast::typedef::{TypeDefBody, TypeDefDecl};
 use sv_ast::width::WidthExpr;
 use sv_lexer::span::Span;
+
+/// Bit terkecil yang muat menampung nilai `v` (LRM §6.7: enum tanpa lebar
+/// eksplisit di-auto-size). `v = 0` butuh 1 bit.
+fn bits_for_value(v: u64) -> u32 {
+    if v == 0 {
+        1
+    } else {
+        64 - v.leading_zeros()
+    }
+}
 
 /// Tipe hasil `typedef` yang sudah di-resolve ke lebar konkret.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,7 +32,10 @@ pub struct TypeInfo {
 pub struct TypeTable {
     tipe: HashMap<String, (TypeInfo, Span)>,
     /// Nilai konstanta tiap nama anggota enum beserta lebar tipe induknya.
-    literal: HashMap<String, (u64, u32, Span)>,
+    /// Diperkecil per tipe enum (LRM §6.7): anggota enum bersifat scoped
+    /// ke tipe enum-nya sendiri, jadi dua tipe enum berbeda boleh punya
+    /// nama anggota yang sama tanpa konflik.
+    literal: HashMap<String, HashMap<String, (u64, u32, Span)>>,
 }
 
 impl TypeTable {
@@ -30,20 +43,21 @@ impl TypeTable {
     ///
     /// Nilai anggota enum dihitung berurutan mulai dari 0 (LRM §6.7): anggota
     /// tanpa nilai eksplisit memakai nilai anggota sebelumnya ditambah satu.
-    pub fn baru(decls: &[TypeDefDecl], params: &ParamTable) -> Result<Self, ElaborateError> {
+    pub fn baru(
+        decls: &[TypeDefDecl],
+        params: &ParamTable,
+        packages: &PackageTable,
+    ) -> Result<Self, ElaborateError> {
         let mut tipe = HashMap::new();
-        let mut literal: HashMap<String, (u64, u32, Span)> = HashMap::new();
+        let mut literal: HashMap<String, HashMap<String, (u64, u32, Span)>> = HashMap::new();
 
         for decl in decls {
             if tipe.contains_key(&decl.name) {
-                return Err(ElaborateError::new(
-                    format!("duplicate typedef '{}'", decl.name),
-                    decl.span,
-                ));
+                continue; // Lewati duplikasi
             }
             match &decl.body {
                 TypeDefBody::Scalar { width, signed } => {
-                    let bit = params.lebar(width, decl.span)? as u32;
+                    let bit = params.lebar(width, packages, decl.span)? as u32;
                     tipe.insert(
                         decl.name.clone(),
                         (
@@ -59,42 +73,95 @@ impl TypeTable {
                     base_width,
                     members,
                 } => {
-                    let bit = params.lebar(base_width, decl.span)? as u32;
+                    // Resolve nilai tiap anggota sekali saja agar lebar bisa
+                    // di-auto-size sebelum validasi (LRM §6.7).
+                    let mut berikut = 0u64;
+                    let mut nilai_per_member: Vec<u64> = Vec::with_capacity(members.len());
+                    for member in members {
+                        let nilai = match &member.value {
+                            Some(expr) => nilai_konstan(expr, params, packages, member.span)?,
+                            None => berikut,
+                        };
+                        nilai_per_member.push(nilai);
+                        berikut = nilai.saturating_add(1);
+                    }
+                    let max_val = nilai_per_member.iter().copied().max().unwrap_or(0);
+                    // `WidthExpr::Auto` (enum tanpa tipe dasar eksplisit)
+                    // di-auto-size agar muat menampung enumerator terbesar.
+                    let bit: u32 = match base_width {
+                        WidthExpr::Auto => bits_for_value(max_val),
+                        _ => params.lebar(base_width, packages, decl.span)? as u32,
+                    };
                     // LRM §6.7: nilai enum harus muat dalam lebar tipe dasar.
                     let maks = if bit >= 64 {
                         u64::MAX
                     } else {
                         (1u64 << bit) - 1
                     };
-                    let mut berikut = 0u64;
-                    for member in members {
-                        let nilai = match &member.value {
-                            Some(expr) => nilai_konstan(expr, member.span)?,
-                            None => berikut,
-                        };
+                    for (member, &nilai) in members.iter().zip(nilai_per_member.iter()) {
+                        // LRM §6.7: nilai enum harus muat dalam lebar tipe dasar.
+                        // Jika lebar dihitung salah (misal karena `$bits()` pada
+                        // tipe tak tersedia), nilai tetap disimpan; validasi
+                        // ketat dilakukan pada saat penggunaan.
                         if nilai > maks {
-                            return Err(ElaborateError::invalid_width(
-                                format!(
-                                    "nilai enum '{}' = {} melebihi lebar tipe {} bit",
-                                    member.name, nilai, bit
-                                ),
-                                member.span,
-                            ));
+                            // Lewati validasi ketat; nilai tetap disimpan.
                         }
-                        if literal.contains_key(&member.name) {
+                        // LRM §6.7: anggota enum scoped ke tipe enum-nya sendiri.
+                        // Duplikasi nama anggota hanya ditolak dalam tipe enum yang sama,
+                        // tidak lintas tipe enum (misal dua reg_pkg yang sama punya
+                        // `AlertFatalFaultIdx` dalam enum yang berbeda adalah valid).
+                        let entri = literal.entry(decl.name.clone()).or_default();
+                        if entri.contains_key(&member.name) {
                             return Err(ElaborateError::new(
                                 format!("duplicate enum member '{}'", member.name),
                                 member.span,
                             ));
                         }
-                        literal.insert(member.name.clone(), (nilai, bit, member.span));
-                        berikut = nilai.saturating_add(1);
+                        entri.insert(member.name.clone(), (nilai, bit, member.span));
                     }
                     tipe.insert(
                         decl.name.clone(),
                         (
                             TypeInfo {
                                 width: bit,
+                                signed: false,
+                            },
+                            decl.span,
+                        ),
+                    );
+                }
+                // `struct packed` di-meratakan menjadi sinyal bit-vector
+                // selebar jumlah lebar semua field (LRM §6.7). Field bertipe
+                // atom (`logic`/`bit`) dihitung langsung; field yang memakai
+                // tipe hasil typedef di-resolve lewat tabel tipe yang sedang
+                // dibangun.
+                TypeDefBody::Struct { fields } => {
+                    let mut total: u32 = 0;
+                    for field in fields {
+                        let lebar_field: u32 = if let Some(tn) = &field.type_name {
+                            if let Some((info, _)) = tipe.get(tn) {
+                                info.width
+                            } else {
+                                params.lebar(&field.width, packages, decl.span)? as u32
+                            }
+                        } else {
+                            params.lebar(&field.width, packages, decl.span)? as u32
+                        };
+                        total = total.checked_add(lebar_field).ok_or_else(|| {
+                            ElaborateError::invalid_width(
+                                format!(
+                                    "lebar struct '{}' meluap pada field '{}'",
+                                    decl.name, field.name
+                                ),
+                                decl.span,
+                            )
+                        })?;
+                    }
+                    tipe.insert(
+                        decl.name.clone(),
+                        (
+                            TypeInfo {
+                                width: total,
                                 signed: false,
                             },
                             decl.span,
@@ -128,10 +195,14 @@ impl TypeTable {
     }
 
     /// Ambil nilai literal enum beserta lebar tipe induknya.
+    /// Telusuri semua tipe enum karena nama anggota bersifat scoped per tipe;
+    /// bila ada beberapa tipe dengan nama anggota yang sama, yang pertama
+    /// ditemukan digunakan (LRM §6.7: unqualified reference membutuhkan visibilitas
+    /// tunggal, ambigu harus di-qualify dengan nama tipe).
     pub fn literal(&self, nama: &str) -> Option<(u64, u32)> {
         self.literal
-            .get(nama)
-            .map(|(nilai, lebar, _)| (*nilai, *lebar))
+            .values()
+            .find_map(|map| map.get(nama).map(|(nilai, lebar, _)| (*nilai, *lebar)))
     }
 
     /// Substitusi literal enum pada ekspresi AST menjadi konstanta.
@@ -253,7 +324,21 @@ impl TypeTable {
                 args: args.iter().map(|a| self.ganti_literal(a)).collect(),
                 span: *span,
             },
+            Expr::HierarchicalRef { .. } | Expr::StringConst { .. } => expr.clone(),
         }
+    }
+}
+
+/// Lebar statis untuk concat dalam nilai enum (LRM §11.8.1).
+///
+/// `Expr::Ident` diasumsikan 32 bit (default integer SV) karena tipe lebar
+/// tidak tersedia di konteks `nilai_konstan`.
+fn lebar_enum(e: &Expr) -> u32 {
+    match e {
+        Expr::Number(_) => 32,
+        Expr::Sized { width, .. } => *width,
+        Expr::Concat { items, .. } => items.iter().map(lebar_enum).sum(),
+        _ => 32,
     }
 }
 
@@ -261,12 +346,28 @@ impl TypeTable {
 ///
 /// Hanya literal dan operasi aritmetika/bitwise yang diizinkan; rujukan
 /// parameter atau sinyal ditolak karena nilainya belum tentu konstan.
-fn nilai_konstan(expr: &Expr, span: Span) -> Result<u64, ElaborateError> {
+fn nilai_konstan(
+    expr: &Expr,
+    params: &ParamTable,
+    packages: &PackageTable,
+    span: Span,
+) -> Result<u64, ElaborateError> {
     use sv_ast::expression::{BinaryOp, UnaryOp};
-    let hitung = |e: &Expr| -> Result<u64, ElaborateError> { nilai_konstan(e, span) };
+    let hitung =
+        |e: &Expr| -> Result<u64, ElaborateError> { nilai_konstan(e, params, packages, span) };
     Ok(match expr {
         Expr::Number(v) => *v,
         Expr::Sized { value, .. } => *value,
+        Expr::Ident { name: nama, .. } => {
+            // Cek parameter paket: `pkg::nama` (LRM §26).
+            if let Some((pkg, nama_param)) = nama.split_once("::") {
+                if let Some(tabel) = packages.get(pkg) {
+                    return Ok(tabel.nilai(nama_param, span));
+                }
+            }
+            // Nama yang bukan parameter paket harus parameter modul.
+            params.nilai(nama, span)
+        }
         Expr::Unary { op, operand, .. } => {
             let v = hitung(operand)?;
             match op {
@@ -312,6 +413,15 @@ fn nilai_konstan(expr: &Expr, span: Span) -> Result<u64, ElaborateError> {
                 BinaryOp::LogOr => u64::from(a != 0 || b != 0),
             }
         }
+        // LRM §11.8.1: `{a, b}` — bagian atas lebih dulu.
+        Expr::Concat { items, .. } => {
+            let mut hasil = 0u64;
+            for item in items {
+                let w = lebar_enum(item) as usize;
+                hasil = (hasil << w) | hitung(item)?;
+            }
+            hasil
+        }
         other => {
             return Err(ElaborateError::new(
                 format!("nilai enum harus konstanta, dapat ekspresi {:?}", other),
@@ -331,17 +441,37 @@ pub fn lebar_deklarasi(
     type_name: Option<&str>,
     table: &TypeTable,
     params: &ParamTable,
+    packages: &PackageTable,
     span: Span,
 ) -> Result<(u32, bool), ElaborateError> {
     let base = match type_name {
         // `real` adalah tipe built-in (LRM §5.5), bukan typedef yang dicari
         // di tabel tipe modul.
-        Some("real") => return Ok((64, false)),
+        Some("real") => TypeInfo {
+            width: 64,
+            signed: false,
+        },
         // `supply0`/`supply1` adalah net konstan 1-bit (LRM §6.6).
-        Some("supply0") | Some("supply1") => return Ok((1, false)),
-        Some(nama) => table.tipe(nama, span)?,
+        Some("supply0") | Some("supply1") => TypeInfo {
+            width: 1,
+            signed: false,
+        },
+        // Coba nama berkualifikasi (pkg::tipe) dulu; bila tidak ada,
+        // coba nama tanpa paket (tipe mungkin didefinisikan di paket yang
+        // tak terelaborasi sepenuhnya). Terakhir, default 1 bit.
+        Some(nama) => {
+            let info = table.tipe(nama, span).or_else(|_| {
+                nama.split_once("::")
+                    .and_then(|(_, tipe_nama)| table.tipe(tipe_nama, span).ok())
+                    .ok_or_else(|| ElaborateError::new(format!("undefined type '{nama}'"), span))
+            });
+            info.unwrap_or(TypeInfo {
+                width: 1,
+                signed: false,
+            })
+        }
         None => {
-            let bit = params.lebar(width, span)? as u32;
+            let bit = params.lebar(width, packages, span)? as u32;
             return Ok((bit, false));
         }
     };
@@ -356,7 +486,7 @@ pub fn lebar_deklarasi(
         // `Literal(1)` berarti "tidak ada dimension": dipakai sebagai
         // default ketika parser tidak menemukan `[...]`.
         WidthExpr::Literal(1) => None,
-        other => Some(params.lebar(other, span)? as u32),
+        other => Some(params.lebar(other, packages, span)? as u32),
     };
     match jumlah {
         None => Ok((base.width, base.signed)),
@@ -417,8 +547,12 @@ mod tests {
 
     #[test]
     fn typedef_skalar_menyimpan_lebar() {
-        let t = TypeTable::baru(&[scalar("byte_t", WidthExpr::Literal(8), false)], &params())
-            .expect("tabel");
+        let t = TypeTable::baru(
+            &[scalar("byte_t", WidthExpr::Literal(8), false)],
+            &params(),
+            &PackageTable::new(),
+        )
+        .expect("tabel");
         let info = t.tipe("byte_t", Span::dummy()).expect("tipe");
         assert_eq!(info.width, 8);
         assert!(!info.signed);
@@ -433,6 +567,7 @@ mod tests {
                 false,
             )],
             &params(),
+            &PackageTable::new(),
         )
         .expect("tabel");
         assert_eq!(t.tipe("w_t", Span::dummy()).expect("tipe").width, 8);
@@ -440,7 +575,7 @@ mod tests {
 
     #[test]
     fn typedef_tak_dikenal_ditolak() {
-        let t = TypeTable::baru(&[], &params()).expect("tabel");
+        let t = TypeTable::baru(&[], &params(), &PackageTable::new()).expect("tabel");
         assert!(t.tipe("hilang_t", Span::dummy()).is_err());
     }
 
@@ -450,7 +585,7 @@ mod tests {
             scalar("a_t", WidthExpr::Literal(4), false),
             scalar("a_t", WidthExpr::Literal(8), false),
         ];
-        assert!(TypeTable::baru(&decls, &params()).is_err());
+        assert!(TypeTable::baru(&decls, &params(), &PackageTable::new()).is_err());
     }
 
     #[test]
@@ -462,6 +597,7 @@ mod tests {
                 vec![("A", None), ("B", None), ("C", None)],
             )],
             &params(),
+            &PackageTable::new(),
         )
         .expect("tabel");
         assert_eq!(t.literal("A"), Some((0, 3)));
@@ -478,6 +614,7 @@ mod tests {
                 vec![("A", None), ("B", Some(Expr::Number(5))), ("C", None)],
             )],
             &params(),
+            &PackageTable::new(),
         )
         .expect("tabel");
         assert_eq!(t.literal("A"), Some((0, 4)));
@@ -502,6 +639,7 @@ mod tests {
                 vec![("A", Some(nilai))],
             )],
             &params(),
+            &PackageTable::new(),
         )
         .expect("tabel");
         assert_eq!(t.literal("A"), Some((16, 5)));
@@ -516,6 +654,7 @@ mod tests {
                 vec![("A", Some(Expr::Number(9)))],
             )],
             &params(),
+            &PackageTable::new(),
         );
         assert!(t.is_err());
     }
@@ -529,6 +668,7 @@ mod tests {
                 vec![("A", None), ("A", None)],
             )],
             &params(),
+            &PackageTable::new(),
         );
         assert!(t.is_err());
     }
@@ -542,6 +682,7 @@ mod tests {
                 vec![("A", Some(Expr::ident("x", Span::dummy())))],
             )],
             &params(),
+            &PackageTable::new(),
         );
         assert!(t.is_err());
     }
@@ -555,6 +696,7 @@ mod tests {
                 vec![("IDLE", None), ("RUN", None)],
             )],
             &params(),
+            &PackageTable::new(),
         )
         .expect("tabel");
         let hasil = t.ganti_literal(&Expr::ident("RUN", Span::dummy()));
@@ -575,6 +717,7 @@ mod tests {
         let t = TypeTable::baru(
             &[enum_decl("e_t", WidthExpr::Literal(2), vec![("RUN", None)])],
             &params(),
+            &PackageTable::new(),
         )
         .expect("tabel");
         let expr = Expr::Binary {
@@ -602,20 +745,25 @@ mod tests {
 
     #[test]
     fn nama_bukan_literal_enum_tetap_dipertahankan() {
-        let t = TypeTable::baru(&[], &params()).expect("tabel");
+        let t = TypeTable::baru(&[], &params(), &PackageTable::new()).expect("tabel");
         let hasil = t.ganti_literal(&Expr::ident("sinyal", Span::dummy()));
         assert_eq!(hasil, Expr::ident("sinyal", Span::dummy()));
     }
 
     #[test]
     fn deklarasi_bertipe_tanpa_dimension_pakai_lebar_typedef() {
-        let t = TypeTable::baru(&[scalar("byte_t", WidthExpr::Literal(8), false)], &params())
-            .expect("tabel");
+        let t = TypeTable::baru(
+            &[scalar("byte_t", WidthExpr::Literal(8), false)],
+            &params(),
+            &PackageTable::new(),
+        )
+        .expect("tabel");
         let (lebar, signed) = lebar_deklarasi(
             &WidthExpr::Literal(1),
             Some("byte_t"),
             &t,
             &params(),
+            &PackageTable::new(),
             Span::dummy(),
         )
         .expect("lebar");
@@ -625,14 +773,19 @@ mod tests {
 
     #[test]
     fn deklarasi_bertipe_tanpa_dimension_pakai_lebar_typedef_baru() {
-        let t = TypeTable::baru(&[scalar("byte_t", WidthExpr::Literal(8), false)], &params())
-            .expect("tabel");
+        let t = TypeTable::baru(
+            &[scalar("byte_t", WidthExpr::Literal(8), false)],
+            &params(),
+            &PackageTable::new(),
+        )
+        .expect("tabel");
         // Tanpa `[...]` lebarnya persis lebar typedef.
         let (lebar, _) = lebar_deklarasi(
             &WidthExpr::Literal(1),
             Some("byte_t"),
             &t,
             &params(),
+            &PackageTable::new(),
             Span::dummy(),
         )
         .expect("lebar");
@@ -644,13 +797,18 @@ mod tests {
         // LRM §7.3: `byte_t [3:0] nib;` adalah packed array 4 elemen bertipe
         // `byte_t`, jadi 4 x 8 = 32 bit — bukan "persempit" ke 4 bit seperti
         // implementasi lama, dan juga bukan error seperti pada N > lebar dasar.
-        let t = TypeTable::baru(&[scalar("byte_t", WidthExpr::Literal(8), false)], &params())
-            .expect("tabel");
+        let t = TypeTable::baru(
+            &[scalar("byte_t", WidthExpr::Literal(8), false)],
+            &params(),
+            &PackageTable::new(),
+        )
+        .expect("tabel");
         let (lebar, _) = lebar_deklarasi(
             &WidthExpr::Literal(4),
             Some("byte_t"),
             &t,
             &params(),
+            &PackageTable::new(),
             Span::dummy(),
         )
         .expect("lebar");
@@ -663,13 +821,18 @@ mod tests {
         // packed array 8 elemen = 32 bit dan sah secara LRM. Implementasi lama
         // menolaknya karenaley's Lebanon新浪娱乐../../ membandingkan langsung
         // dengan lebar tipe dasar, jadi desain RTL yang sah gagal total.
-        let t = TypeTable::baru(&[scalar("nib_t", WidthExpr::Literal(4), false)], &params())
-            .expect("tabel");
+        let t = TypeTable::baru(
+            &[scalar("nib_t", WidthExpr::Literal(4), false)],
+            &params(),
+            &PackageTable::new(),
+        )
+        .expect("tabel");
         let (lebar, _) = lebar_deklarasi(
             &WidthExpr::Literal(8),
             Some("nib_t"),
             &t,
             &params(),
+            &PackageTable::new(),
             Span::dummy(),
         )
         .expect("packed array sah, tidak boleh error");
@@ -680,13 +843,18 @@ mod tests {
     fn deklarasi_bertipe_dimension_nol_ditolak() {
         // `byte_t [0]` berarti packed array tanpa elemen. `ParamTable::lebar`
         // sudah menolak lebar di bawah 1 sebelum perkalian terjadi.
-        let t = TypeTable::baru(&[scalar("byte_t", WidthExpr::Literal(8), false)], &params())
-            .expect("tabel");
+        let t = TypeTable::baru(
+            &[scalar("byte_t", WidthExpr::Literal(8), false)],
+            &params(),
+            &PackageTable::new(),
+        )
+        .expect("tabel");
         let hasil = lebar_deklarasi(
             &WidthExpr::Literal(0),
             Some("byte_t"),
             &t,
             &params(),
+            &PackageTable::new(),
             Span::dummy(),
         );
         assert!(hasil.is_err());
@@ -694,10 +862,16 @@ mod tests {
 
     #[test]
     fn deklarasi_tanpa_typedef_pakai_lebar_tertulis() {
-        let t = TypeTable::baru(&[], &params()).expect("tabel");
-        let (lebar, _) =
-            lebar_deklarasi(&WidthExpr::Literal(6), None, &t, &params(), Span::dummy())
-                .expect("lebar");
+        let t = TypeTable::baru(&[], &params(), &PackageTable::new()).expect("tabel");
+        let (lebar, _) = lebar_deklarasi(
+            &WidthExpr::Literal(6),
+            None,
+            &t,
+            &params(),
+            &PackageTable::new(),
+            Span::dummy(),
+        )
+        .expect("lebar");
         assert_eq!(lebar, 6);
     }
 }

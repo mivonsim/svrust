@@ -5,7 +5,7 @@ use crate::cli::{Command, Options};
 use crate::pipeline::generate_rust;
 use crate::workspace::Workspace;
 
-pub fn dispatch(opts: Options) -> Result<(), String> {
+pub fn dispatch(opts: Options) -> Result<(), crate::CliError> {
     let workspace = Workspace::detect()?;
 
     match opts.command {
@@ -25,7 +25,9 @@ pub fn dispatch(opts: Options) -> Result<(), String> {
         Command::Inspect | Command::Elaborate => {
             // Semua modul root diperiksa, sama seperti `check`/`run`: kalau
             // hanya satu, modul root lain tidak pernah dilaporkan.
-            for design in crate::pipeline::compile_semua_root(&opts.rtl, opts.top.as_deref())? {
+            for design in
+                crate::pipeline::compile_semua_root(&opts.rtl, opts.top.as_deref(), &opts.incdir)?
+            {
                 let stats = sv_elaborator::DesignStats::of(&design);
                 println!("{}", stats);
                 if opts.command == Command::Elaborate {
@@ -44,7 +46,9 @@ pub fn dispatch(opts: Options) -> Result<(), String> {
             Ok(())
         }
         Command::Codegen => {
-            for design in crate::pipeline::compile_semua_root(&opts.rtl, opts.top.as_deref())? {
+            for design in
+                crate::pipeline::compile_semua_root(&opts.rtl, opts.top.as_deref(), &opts.incdir)?
+            {
                 let rust = generate_rust(&design);
                 let path = workspace.write_generated(&design.name, &rust)?;
                 println!("generated {}", path.display());
@@ -55,16 +59,19 @@ pub fn dispatch(opts: Options) -> Result<(), String> {
             // LRM §23.1: setiap modul root dielaborasi sebagai top tersendiri,
             // jadi `check` harus memeriksa semuanya — memeriksa satu saja
             // membiarkan modul lain tidak pernah diuji.
-            let collection = crate::pipeline::collect_modules(&opts.rtl)?;
-            let tops = crate::pipeline::tops_dipakai(&collection.modules, opts.top.as_deref())?;
-            for top in &tops {
-                sv_elaborator::elaborate_top(&collection.modules, &collection.typedefs_global, top)
-                    .map_err(|e| e.to_string())?;
-            }
+            let collection =
+                crate::pipeline::collect_modules(&opts.rtl, &opts.incdir, opts.top.as_deref())?;
+            let tops = crate::pipeline::tops_dipakai(&collection.modules, opts.top.as_deref())
+                .map_err(|error| crate::pipeline::diagnostic_top_error(error, &collection))?;
+            let designs = crate::pipeline::elaborate_tops(&collection, &tops)?;
             println!(
                 "check OK ({} module, top {})",
                 collection.modules.len(),
-                tops.join("+")
+                designs
+                    .iter()
+                    .map(|design| design.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join("+")
             );
             Ok(())
         }
@@ -73,7 +80,8 @@ pub fn dispatch(opts: Options) -> Result<(), String> {
             // adalah modul root dan dijalankan sebagai top tersendiri. Versi
             // lama hanya mengelaborasi modul terakhir, jadi output modul root
             // lain hilang tanpa pesan.
-            let designs = crate::pipeline::compile_semua_root(&opts.rtl, opts.top.as_deref())?;
+            let designs =
+                crate::pipeline::compile_semua_root(&opts.rtl, opts.top.as_deref(), &opts.incdir)?;
             // Dua nama modul SV bisa menjadi identik setelah normalisasi
             // (`foo_bar` vs `FOO_BAR`), jadi nama Rust dibuat unik lebih dulu;
             // kalau tidak, kode hasil generate bentrok saat compile.
@@ -107,7 +115,7 @@ pub fn dispatch(opts: Options) -> Result<(), String> {
             workspace.build(opts.release)?;
 
             if opts.command == Command::Run {
-                workspace.run(opts.release)?;
+                workspace.run(opts.release, &opts.plusargs)?;
             } else {
                 println!("build OK");
             }

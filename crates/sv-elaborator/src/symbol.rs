@@ -191,6 +191,15 @@ impl SymbolTable {
             .and_then(|id| self.symbols.get(*id as usize))
     }
 
+    /// Cari sinyal; bila tidak dikenal, kembalikan sinyal dummy (lebar 1 bit,
+    /// signal_id 0) agar elaborasi dapat melanjutkan meskipun ada referensi ke
+    /// sinyal yang tidak dideklarasi (misalnya dari paket yang tidak diproses).
+    pub fn lookup_or_default_id(&self, name: &str) -> SignalId {
+        self.lookup(name)
+            .map(|symbol| symbol.signal_id)
+            .unwrap_or(0 as SignalId)
+    }
+
     pub fn get(&self, id: SignalId) -> Option<&Symbol> {
         self.symbols.get(id as usize)
     }

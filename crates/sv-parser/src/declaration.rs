@@ -279,7 +279,11 @@ fn parse_struct_union(
 
     // Expect `{`
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::LBrace) {
-        return Err(format!("expected '{{' after {}", jenis));
+        return Err(crate::pesan::tandai(
+            tokens,
+            idx,
+            format!("expected '{{' after {}", jenis),
+        ));
     }
     idx += 1;
 

@@ -21,6 +21,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "sv-diag"
+version = "0.1.0"
+
+[[package]]
 name = "sv-elaborator"
 version = "0.1.0"
 dependencies = [
@@ -77,6 +81,7 @@ version = "0.1.0"
 dependencies = [
  "sv-ast",
  "sv-codegen-rust",
+ "sv-diag",
  "sv-elaborator",
  "sv-ir",
  "sv-lexer",

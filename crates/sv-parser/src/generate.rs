@@ -499,6 +499,15 @@ fn parse_generate_body(
         idx = baru;
     }
     idx += 1; // lewati 'end'
+              // Opsional label setelah 'end': `end : nama` (LRM §27.3).
+    if idx < tokens.len() && tokens[idx].token == Token::Colon {
+        idx += 1; // lewati ':'
+        if idx < tokens.len() {
+            if let Token::Ident(_) = tokens[idx].token {
+                idx += 1; // lewati nama label
+            }
+        }
+    }
 
     Ok((label, items, idx))
 }
@@ -507,7 +516,11 @@ fn parse_generate_body(
 fn read_constant(tokens: &[SpannedToken], idx: usize, apa: &str) -> Result<u64, String> {
     match tokens.get(idx).map(|t| &t.token) {
         Some(Token::Number(n)) => Ok(*n),
-        _ => Err(format!("{} harus konstanta", apa)),
+        _ => Err(crate::pesan::tandai(
+            tokens,
+            idx,
+            format!("{} harus konstanta", apa),
+        )),
     }
 }
 

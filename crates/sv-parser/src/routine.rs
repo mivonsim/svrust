@@ -89,13 +89,21 @@ pub fn parse_routine(tokens: &[SpannedToken]) -> Result<(RoutineDecl, usize), St
             }
         }
         if tokens.get(idx).map(|t| &t.token) != Some(&Token::RParen) {
-            return Err("expected ')' closing port list".to_string());
+            return Err(crate::pesan::harap(
+                tokens,
+                idx,
+                "expected ')' closing port list",
+            ));
         }
         idx += 1;
     }
 
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::Semi) {
-        return Err("expected ';' setelah header subrutin".to_string());
+        return Err(crate::pesan::harap(
+            tokens,
+            idx,
+            "expected ';' setelah header subrutin",
+        ));
     }
     idx += 1;
 

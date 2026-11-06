@@ -9,6 +9,8 @@ pub fn keyword_or_ident(s: &str) -> Token {
         "wire" => Token::Wire,
         "reg" => Token::Reg,
         "bit" => Token::Bit,
+        // LRM §6.14: `string` — tipe string dinamis.
+        "string" => Token::String,
         "integer" => Token::Integer,
         "int" => Token::Int,
         "byte" => Token::Byte,
@@ -20,13 +22,29 @@ pub fn keyword_or_ident(s: &str) -> Token {
         "supply1" => Token::Supply1,
         "struct" => Token::Struct,
         "union" => Token::Union,
+        // LRM §25.6: `bind` — binding antarmuka ke instance modul. SVRust
+        // melewati statement `bind ... ;` di isi modul.
+        "bind" => Token::Bind,
+        // LRM §8: `class` / `endclass` — deklarasi kelas OOP. SVRust melewati
+        // isi kelas di level berkas; hanya pasangan kata kunci yang dibutuhkan
+        // agar parser tidak error pada berkas verifikasi (UVM/DV).
+        "class" => Token::Class,
+        "endclass" => Token::Endclass,
         "assert" => Token::Assert,
+        // `package` — deklarasi paket yang berisi definisi tipe, parameter, dan subroutine (LRM §26).
+        "package" => Token::Package,
+        // `endpackage` — penutup deklarasi paket (LRM §26).
+        "endpackage" => Token::Endpackage,
         // `property` — deklarasi properti SVA concurrent assertion (LRM §20/§21).
         "property" => Token::Property,
         "while" => Token::While,
         "repeat" => Token::Repeat,
         // `forever` — loop tak berujung (LRM §12.8).
         "forever" => Token::Forever,
+        // LRM §13.4: `void` — function tanpa nilai balik.
+        "void" => Token::Void,
+        // LRM §12.13: `final` — blok penutup eksekusi akhir simulasi.
+        "final" => Token::Final,
         "initial" => Token::Initial,
         "signed" => Token::Signed,
         "unsigned" => Token::Unsigned,
@@ -153,5 +171,24 @@ mod tests {
     #[test]
     fn property_terpetakan_sebagai_keyword() {
         assert_eq!(keyword_or_ident("property"), Token::Property);
+    }
+
+    // LRM §6.14: `string` adalah tipe string dinamis, bukan identifier bebas.
+    #[test]
+    fn string_terpetakan_sebagai_keyword() {
+        assert_eq!(keyword_or_ident("string"), Token::String);
+    }
+
+    // LRM §8: `class` / `endclass` adalah kata kunci OOP, bukan identifier bebas.
+    #[test]
+    fn class_endclass_terpetakan_sebagai_keyword() {
+        assert_eq!(keyword_or_ident("class"), Token::Class);
+        assert_eq!(keyword_or_ident("endclass"), Token::Endclass);
+    }
+
+    // LRM §25.6: `bind` adalah kata kunci binding, bukan identifier bebas.
+    #[test]
+    fn bind_terpetakan_sebagai_keyword() {
+        assert_eq!(keyword_or_ident("bind"), Token::Bind);
     }
 }

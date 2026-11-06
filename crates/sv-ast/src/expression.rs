@@ -1,7 +1,7 @@
 // Tanggung jawab: node AST untuk expression.
 use sv_lexer::span::Span;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
     /// Identifier; `span` dipakai agar error elaborasi bisa menunjuk ke token
     /// aslinya, bukan ke posisi dummy (AGENTS.md aturan 3).
@@ -44,6 +44,12 @@ pub enum Expr {
         base: Box<Expr>,
         msb: u32,
         lsb: u32,
+        span: Span,
+    },
+    /// Referensi hierarkis dengan titik: `tl_i.a_source`, `a.b.c` (LRM §6.6).
+    /// `parts` berisi semua segmen nama dari kiri ke kanan.
+    HierarchicalRef {
+        parts: Vec<String>,
         span: Span,
     },
     /// Indeks dinamis `a[i]` dengan `i` bukan konstanta (LRM §7.8).
@@ -138,6 +144,12 @@ pub enum Expr {
     /// Menghasilkan konstanta lebar bit ekspresi, bukan nilai runtime.
     Bits {
         operand: Box<Expr>,
+        span: Span,
+    },
+    /// String literal `"teks"` (LRM §5.7.3). Dalam concatenation, setiap byte
+    /// adalah satu digit 8-bit; lebar = jumlah byte × 8.
+    StringConst {
+        value: String,
         span: Span,
     },
 }

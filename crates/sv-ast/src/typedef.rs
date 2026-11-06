@@ -3,10 +3,26 @@ use crate::expression::Expr;
 use crate::width::WidthExpr;
 use sv_lexer::span::Span;
 
+/// Satu field dalam `struct packed` (LRM §6.7).
+///
+/// Lebar field dihitung dari `width` (dan `type_name` bila field memakai tipe
+/// hasil typedef). SVRust meratakan `struct packed` menjadi sinyal bit-vector
+/// selebar jumlah lebar semua field, sehingga yang penting adalah lebar total.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructFieldDef {
+    pub name: String,
+    pub width: WidthExpr,
+    pub signed: bool,
+    /// Nama tipe hasil typedef bila field bukan tipe atom (mis. `byte_t f;`).
+    /// `None` untuk tipe atom seperti `logic`/`bit`.
+    pub type_name: Option<String>,
+}
+
 /// Bentuk tipe yang sedang di-`typedef`.
 ///
-/// LRM §8.20 `typedef` menyalin tipe yang sudah ada; LRM §6.7 menambah satu
-/// bentuk baru, yaitu enumerasi. Bentuk `struct`/`union` belum ada.
+/// LRM §8.20 `typedef` menyalin tipe yang sudah ada; LRM §6.7 menambah
+/// enumerasi; LRM §6.7/`struct packed` ditambahkan untuk dukungan paket
+/// OpenTitan (mis. `prim_alert_pkg::alert_tx_t`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeDefBody {
     /// `typedef logic [7:0] byte_t;` — alias tipe biasa.
@@ -17,6 +33,10 @@ pub enum TypeDefBody {
         base_width: WidthExpr,
         members: Vec<EnumMember>,
     },
+    /// `typedef struct packed { logic a; logic b; } ab_t;` (LRM §6.7).
+    ///
+    /// Di-meratakan menjadi sinyal bit-vector selebar jumlah lebar field.
+    Struct { fields: Vec<StructFieldDef> },
 }
 
 /// Satu anggota enumerasi (LRM §6.7).

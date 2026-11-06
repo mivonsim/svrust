@@ -82,7 +82,7 @@ pub fn parse_combinational_statement(
         }
         Token::Begin => {
             let mut idx = 1; // skip 'begin'
-            // LRM §12.9: `begin : label` bentuk alternatif labeled block.
+                             // LRM §12.9: `begin : label` bentuk alternatif labeled block.
             if idx < tokens.len() && tokens[idx].token == Token::Colon {
                 idx += 1; // skip ':'
                 if idx < tokens.len() {
@@ -128,6 +128,44 @@ pub fn parse_combinational_statement(
                     span: tokens[0].span,
                 },
                 idx,
+            ))
+        }
+        // LRM §6.14: `void'(ekspresi)` — cast ke void, hasil dibuang.
+        // `void'($value$plusargs(...))` adalah pemanggilan system task yang
+        // hasilnya dibuang (LRM §20.9), bukan ekspresi biasa.
+        Token::Void => {
+            if tokens.get(1).map(|t| &t.token) == Some(&Token::Cast) {
+                // `void'( <system_task_call> )` — parsing khusus karena
+                // system task bukan ekspresi yang bisa dibungkus `Cast`.
+                // Tokens: [Void][Cast][LParen][SystemTask ...][RParen][;]
+                if matches!(tokens.get(3).map(|t| &t.token), Some(Token::SystemTask(_))) {
+                    let (task, consumed) =
+                        super::initial::parse_system_task_panggilan(&tokens[3..])?;
+                    // `consumed` hitung dari tokens[3], setelahnya adalah `)`
+                    // penutup void cast lalu `;`.
+                    if tokens.get(3 + consumed).map(|t| &t.token) != Some(&Token::RParen) {
+                        return Err("expected ')' menutup void cast".to_string());
+                    }
+                    if tokens.get(3 + consumed + 1).map(|t| &t.token) != Some(&Token::Semi) {
+                        return Err("expected ';' setelah void cast".to_string());
+                    }
+                    return Ok((CombinationalStatement::SystemTask(task), 3 + consumed + 2));
+                }
+                let (cast, consumed) = super::expression::parse_cast(tokens)?;
+                if tokens.get(consumed).map(|t| &t.token) != Some(&Token::Semi) {
+                    return Err("expected ';' setelah void cast".to_string());
+                }
+                return Ok((
+                    CombinationalStatement::ExprStmt {
+                        expr: Box::new(cast),
+                        span: tokens[0].span,
+                    },
+                    consumed + 1,
+                ));
+            }
+            Err(format!(
+                "unexpected token in combinational statement: {:?}",
+                tokens[0].token
             ))
         }
         Token::Ident(_) => {
@@ -182,7 +220,10 @@ pub fn parse_combinational_statement(
                 let (rhs, consumed) = super::expression::parse_expression(&tokens[idx..])?;
                 idx += consumed;
                 if idx >= tokens.len() || tokens[idx].token != Token::Semi {
-                    return Err("expected ';'".to_string());
+                    return Err(match tokens.get(idx) {
+                        Some(token) => format!("expected ';', ditemukan {:?}", token.token),
+                        None => "expected ';' di akhir input".to_string(),
+                    });
                 }
                 idx += 1;
                 return Ok((
@@ -203,7 +244,10 @@ pub fn parse_combinational_statement(
             if non_blocking {
                 idx += 1;
             } else if idx >= tokens.len() || tokens[idx].token != Token::Eq {
-                return Err("expected '=' atau '<='".to_string());
+                return Err(match tokens.get(idx) {
+                    Some(token) => format!("expected '=' atau '<=', ditemukan {:?}", token.token),
+                    None => "expected '=' atau '<=' di akhir input".to_string(),
+                });
             } else {
                 idx += 1;
             }
@@ -222,7 +266,10 @@ pub fn parse_combinational_statement(
             }
 
             if idx >= tokens.len() || tokens[idx].token != Token::Semi {
-                return Err("expected ';'".to_string());
+                return Err(match tokens.get(idx) {
+                    Some(token) => format!("expected ';', ditemukan {:?}", token.token),
+                    None => "expected ';' di akhir input".to_string(),
+                });
             }
             idx += 1;
 
@@ -453,7 +500,11 @@ fn parse_for(tokens: &[SpannedToken]) -> Result<(CombinationalStatement, usize),
     let init = parse_for_step(tokens, idx)?;
     idx += init.1;
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::Semi) {
-        return Err("expected ';' after for init".to_string());
+        return Err(crate::pesan::harap(
+            tokens,
+            idx,
+            "expected ';' after for init",
+        ));
     }
     idx += 1;
 
@@ -513,18 +564,23 @@ fn parse_for_step(tokens: &[SpannedToken], start: usize) -> Result<(ForStep, usi
     {
         let after_type = tokens.get(start + 1).map(|t| &t.token);
         // Skip optional signedness
-        let after_signedness = if matches!(after_type, Some(Token::Signed) | Some(Token::Unsigned)) {
+        let after_signedness = if matches!(after_type, Some(Token::Signed) | Some(Token::Unsigned))
+        {
             tokens.get(start + 2).map(|t| &t.token)
         } else {
             after_type
         };
         matches!(after_signedness, Some(Token::Ident(_)))
             && tokens
-                .get(start + 2 + if matches!(after_type, Some(Token::Signed) | Some(Token::Unsigned)) {
-                    1
-                } else {
-                    0
-                })
+                .get(
+                    start
+                        + 2
+                        + if matches!(after_type, Some(Token::Signed) | Some(Token::Unsigned)) {
+                            1
+                        } else {
+                            0
+                        },
+                )
                 .map(|t| matches!(t.token, Token::Eq))
                 .unwrap_or(false)
     } else {
@@ -802,10 +858,9 @@ fn parse_case(
     idx += consumed;
 
     if idx >= tokens.len() || tokens[idx].token != Token::RParen {
-        return Err("expected ')'".to_string());
+        return Err(crate::pesan::harap(tokens, idx, "expected ')'"));
     }
     idx += 1;
-
     let mut arms = Vec::new();
     while idx < tokens.len() && tokens[idx].token != Token::Endcase {
         let arm_span = tokens[idx].span;
@@ -886,7 +941,7 @@ fn parse_if(tokens: &[SpannedToken]) -> Result<(CombinationalStatement, usize), 
     idx += consumed;
 
     if idx >= tokens.len() || tokens[idx].token != Token::RParen {
-        return Err("expected ')'".to_string());
+        return Err(crate::pesan::harap(tokens, idx, "expected ')'"));
     }
     idx += 1;
 

@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "crates/sv-lexer",
+  "crates/sv-diag",
   "crates/sv-preprocessor",
   "crates/sv-ast",
   "crates/sv-parser",

@@ -1,11 +1,19 @@
 // Tanggung jawab: node AST untuk instansiasi module.
+use crate::expression::Expr;
 use sv_lexer::span::Span;
 
 /// Override parameter bernama, misal `.WIDTH(16)`.
+///
+/// Nilai disimpan sebagai ekspresi (bukan angka mentah) supaya referensi
+/// parameter seperti `.W(.CLK_FREQ(FreqMHz))` dapat di-resolve saat elaborasi
+/// dengan tabel parameter modul induk (LRM §23.10). Parser hanya mengisi
+/// `Expr::Number` untuk literal; ekspresi yang merujuk parameter induk tetap
+/// berupa `Expr::Ident` dan baru bernilai setelah evaluasi konstanta.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParamOverride {
     pub name: String,
-    pub value: u64,
+    pub value: Expr,
+    pub span: Span,
 }
 
 /// Indeks pada koneksi port, misal `[3]` atau `[7:4]`.

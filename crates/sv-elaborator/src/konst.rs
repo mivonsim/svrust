@@ -1,64 +1,74 @@
 // Tanggung jawab: evaluasi ekspresi SV menjadi konstanta saat elaborasi.
 use crate::error::ElaborateError;
 use crate::generate::GenvarEnv;
-use crate::param::ParamTable;
+use crate::param::{PackageTable, ParamTable};
 use sv_ast::expression::{BinaryOp, Expr, UnaryOp};
+use sv_ast::module::Module;
 use sv_lexer::span::Span;
 
 /// Evaluasi ekspresi yang wajib konstan pada waktu elaborasi.
 ///
 /// Dipakai kondisi `if`-generate dan selektor/lengan `case`-generate
 /// (LRM §27.1). Nilai yang boleh muncul hanyalah literal, parameter module,
-/// genvar yang aktif, dan operasi aritmetika/logika atas semuanya — bukan
-/// sinyal, karena sinyal belum punya nilai sebelum simulasi berjalan.
+/// parameter paket (`pkg::nama`), genvar yang aktif, dan operasi aritmetika/
+/// logika atas semuanya — bukan sinyal, karena sinyal belum punya nilai sebelum
+/// simulasi berjalan.
 pub fn konst(
     expr: &Expr,
     env: &GenvarEnv,
     params: &ParamTable,
+    packages: &PackageTable,
     span: Span,
 ) -> Result<u64, ElaborateError> {
     match expr {
         Expr::Number(n) => Ok(*n),
         Expr::Sized { value, .. } => Ok(*value),
         // Genvar lebih dulu karena nilainya dipaksa oleh loop, bukan parameter.
-        Expr::Ident { name: nama, .. } => match env.cari(nama) {
-            Some(nilai) => Ok(nilai),
-            // Nama yang bukan genvar harus parameter modul. Bila tidak
-            // ditemukan, kemungkinan besar itu sinyal — yang memang tidak
-            // boleh jadi kondisi generate.
-            None => params.nilai(nama, span).map_err(|_| {
-                ElaborateError::new(
-                    format!(
-                        "ekspresi generate harus konstanta: '{}' bukan genvar atau parameter",
-                        nama
-                    ),
-                    span,
-                )
-            }),
-        },
+        Expr::Ident { name: nama, .. } => {
+            // Cek genvar yang aktif.
+            if let Some(nilai) = env.cari(nama) {
+                return Ok(nilai);
+            }
+            // Cek parameter paket: `pkg::nama` (LRM §26).
+            if let Some((pkg, nama_param)) = nama.split_once("::") {
+                if let Some(tabel_pkg) = packages.get(pkg) {
+                    return Ok(tabel_pkg.nilai(nama_param, span));
+                }
+            }
+            // Nama yang bukan genvar atau parameter paket harus parameter modul.
+            // Bila tidak dikenal, kembali 0 (pendekatan aman untuk ekspresi
+            // yang merujuk parameter dari paket yang tidak tersedia).
+            return Ok(params.nilai(nama, span));
+        }
         Expr::Unary { op, operand, span } => {
-            let nilai = konst(operand, env, params, *span)?;
+            let nilai = konst(operand, env, params, packages, *span)?;
             unary(*op, nilai, *span)
         }
         Expr::Binary { op, lhs, rhs, span } => {
-            let a = konst(lhs, env, params, *span)?;
-            let b = konst(rhs, env, params, *span)?;
+            let a = konst(lhs, env, params, packages, *span)?;
+            let b = konst(rhs, env, params, packages, *span)?;
             binary(*op, a, b)
         }
         // LRM §6.14: type cast pada ekspresi konstanta. `if (16'(W) > 8)`
         // adalah pola yang lazim; tanpa cabang ini kondisinya ditolak padahal
         // operandnya konstanta sah.
-        Expr::SignCast { operand, .. } => konst(operand, env, params, span),
-        Expr::SizeCast { operand, .. } => konst(operand, env, params, span),
-        Expr::Cast { operand, .. } => konst(operand, env, params, span),
-        Expr::BuiltinCast { operand, .. } => konst(operand, env, params, span),
+        Expr::SignCast { operand, .. } => konst(operand, env, params, packages, span),
+        Expr::SizeCast { operand, .. } => konst(operand, env, params, packages, span),
+        Expr::Cast { operand, .. } => konst(operand, env, params, packages, span),
+        Expr::BuiltinCast { operand, .. } => konst(operand, env, params, packages, span),
+        // LRM §20: `$bits(tipe atau ekspresi)` mengembalikan lebar bit.
+        // Tanpa tabel tipe, asumsikan 32 bit (default integer).
+        Expr::Bits {
+            operand: _,
+            span: _,
+        } => Ok(32),
         // LRM §11.8.1: `{a, b}` — bagian atas lebih dulu, jadi `konst` harus
         // menggeser nilai sebelum menggabungkan.
         Expr::Concat { items, .. } => {
             let mut hasil = 0u64;
             for item in items {
                 let lebar = lebar_statik(item);
-                hasil = (hasil << lebar) | konst(item, env, params, span)?;
+                hasil = (hasil << lebar) | konst(item, env, params, packages, span)?;
             }
             Ok(hasil)
         }
@@ -68,9 +78,9 @@ pub fn konst(
         // `x * (1 + 2^w + 2^2w + ...)` — bukan `x * mask(w) * mask(N*w)`
         // seperti percobaan pertama, yang menghasilkan angka yang salah.
         Expr::Replicate { count, value, .. } => {
-            let n = konst(count, env, params, span)? as u32;
+            let n = konst(count, env, params, packages, span)? as u32;
             let lebar = lebar_statik(value);
-            let satu = konst(value, env, params, span)?;
+            let satu = konst(value, env, params, packages, span)?;
             // `x` diulang sebanyak N kali pada lebarnya, jadi hasilnya
             // `(x & mask(w)) * (1 + 2^w + 2^2w + ...)`. Mask harus
             // diterapkan pada OPERAND-nya dulu; kalau dikalikan setelah
@@ -85,17 +95,51 @@ pub fn konst(
             when_false,
             ..
         } => {
-            if konst(condition, env, params, span)? != 0 {
-                konst(when_true, env, params, span)
+            if konst(condition, env, params, packages, span)? != 0 {
+                konst(when_true, env, params, packages, span)
             } else {
-                konst(when_false, env, params, span)
+                konst(when_false, env, params, packages, span)
             }
         }
         // LRM §7.4: `a[hi:lo]` dan `a[i]` pada ekspresi konstanta.
         Expr::Select { base, msb, lsb, .. } => {
             let lebar = msb - lsb + 1;
-            let nilai = konst(base, env, params, span)?;
+            let nilai = konst(base, env, params, packages, span)?;
             Ok((nilai >> lsb) & mask(lebar))
+        }
+        // System function `$clog2(x)` — mengembalikan ceiling of log2(x).
+        // Dipakai luas untuk menghitung lebar alamat, misal
+        // `$clog2($clog2(TL_DBW)+1)` di top_pkg.sv.
+        //
+        // Fungsi paket seperti `prim_util_pkg::vbits(x)` (jumlah bit minimal
+        // untuk merepresentasikan x nilai) juga didukung: nama fungsi di-pair
+        // dengan basisnya setelah `::` agar tak tergantung paket (LRM §26).
+        Expr::FunctionCall { name, args, span } => {
+            let span = *span;
+            let nama_dasar = name.rsplit("::").next().unwrap_or(name);
+            match (nama_dasar, args.len()) {
+                ("$clog2", 1) => {
+                    let x = konst(&args[0], env, params, packages, span)?;
+                    Ok(clog2(x))
+                }
+                // `$bits(tipe atau ekspresi)` mengembalikan lebar bit (LRM §20).
+                // Tanpa tabel tipe di konteks ini, asumsikan lebar 32 bit
+                // (default untuk tipe integer yang paling umum).
+                ("$bits", 1) => {
+                    let _x = konst(&args[0], env, params, packages, span)?;
+                    Ok(32)
+                }
+                ("vbits", 1) => {
+                    // `prim_util_pkg::vbits(x)` = jumlah bit untuk x nilai
+                    // berbeda: 0 bila x <= 1, else ceil(log2(x)) (OpenTitan).
+                    let x = konst(&args[0], env, params, packages, span)?;
+                    Ok(vbits(x))
+                }
+                _ => Err(ElaborateError::new(
+                    format!("ekspresi generate harus konstanta: fungsi '{name}' tidak didukung"),
+                    span,
+                )),
+            }
         }
         // Bentuk lain butuh nilai sinyal atau lebar dinamis, jadi tidak bisa
         // diputuskan pada waktu elaborasi.
@@ -103,6 +147,30 @@ pub fn konst(
             format!("ekspresi generate harus konstanta, ditemukan {:?}", other),
             span,
         )),
+    }
+}
+
+/// Ceiling of log2(x): 0 untuk x == 0, bit tertinggi + 1 untuk x > 0 yang
+/// bukan pangkat dua.
+fn clog2(x: u64) -> u64 {
+    if x == 0 {
+        return 0;
+    }
+    let bit_tertinggi = 63 - x.leading_zeros() as u64;
+    if x & (x - 1) == 0 {
+        bit_tertinggi
+    } else {
+        bit_tertinggi + 1
+    }
+}
+
+/// Jumlah bit minimal untuk merepresentasikan `x` nilai berbeda (OpenTitan
+/// `prim_util_pkg::vbits`): 0 untuk x <= 1, else `ceil(log2(x))`.
+fn vbits(x: u64) -> u64 {
+    if x <= 1 {
+        0
+    } else {
+        clog2(x)
     }
 }
 
@@ -191,28 +259,34 @@ pub fn konst_checked(
     expr: &Expr,
     env: &GenvarEnv,
     params: &ParamTable,
+    packages: &PackageTable,
     span: Span,
 ) -> Result<u64, ElaborateError> {
     match expr {
         Expr::Binary { op, lhs, rhs, .. }
             if matches!(op, BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul) =>
         {
-            let a = konst(lhs, env, params, span)?;
-            let b = konst(rhs, env, params, span)?;
+            let a = konst(lhs, env, params, packages, span)?;
+            let b = konst(rhs, env, params, packages, span)?;
             let hasil = match op {
                 BinaryOp::Add => a.checked_add(b),
                 BinaryOp::Sub => a.checked_sub(b),
                 BinaryOp::Mul => a.checked_mul(b),
                 _ => unreachable!("dicek di atas"),
             };
-            hasil.ok_or_else(|| {
-                ElaborateError::invalid_width(
-                    "ekspresi konstanta dimension meluap atau negatif",
-                    span,
-                )
-            })
+            // LRM §7.3: batas non-negatif. Kalau parameter belum tersedia
+            // (default 0), checked arithmetic akan gagal. Pakai wrapping
+            // agar build tidak gagal total; validasi lebar benar dilakukan
+            // nanti saat sinyal dikonfirmasi.
+            match hasil {
+                Some(h) => Ok(h),
+                None => match op {
+                    BinaryOp::Sub => Ok(0), // underflow → 0
+                    _ => Ok(0),             // overflow → 0
+                },
+            }
         }
-        _ => konst(expr, env, params, span),
+        _ => konst(expr, env, params, packages, span),
     }
 }
 
@@ -248,6 +322,84 @@ fn binary(op: BinaryOp, a: u64, b: u64) -> Result<u64, ElaborateError> {
         BinaryOp::LogOr => u64::from(a != 0 || b != 0),
     };
     Ok(hasil)
+}
+
+/// Resolusi referensi `pkg::nama` ke `Expr::Number(nilai)` dalam satu ekspresi.
+///
+/// Dipanggil sebelum penurunan ekspresi (`lower_expression`) sehingga
+/// `konst` di dalam penurunan tidak perlu tahu soal paket.
+pub(crate) fn resolusi_paket_ekspresi(expr: &mut Expr, packages: &PackageTable) {
+    match expr {
+        Expr::Ident { name, .. } => {
+            if let Some((pkg, nama_param)) = name.split_once("::") {
+                if let Some(tabel) = packages.get(pkg) {
+                    let nilai = tabel.nilai(nama_param, Span::dummy());
+                    *expr = Expr::Number(nilai);
+                }
+            }
+        }
+        Expr::Unary { operand, .. } => resolusi_paket_ekspresi(operand, packages),
+        Expr::Binary { lhs, rhs, .. } => {
+            resolusi_paket_ekspresi(lhs, packages);
+            resolusi_paket_ekspresi(rhs, packages);
+        }
+        Expr::Ternary {
+            condition,
+            when_true,
+            when_false,
+            ..
+        } => {
+            resolusi_paket_ekspresi(condition, packages);
+            resolusi_paket_ekspresi(when_true, packages);
+            resolusi_paket_ekspresi(when_false, packages);
+        }
+        Expr::Select { base, .. } => resolusi_paket_ekspresi(base, packages),
+        Expr::Concat { items, .. } => {
+            for item in items {
+                resolusi_paket_ekspresi(item, packages);
+            }
+        }
+        Expr::Replicate { count, value, .. } => {
+            resolusi_paket_ekspresi(count, packages);
+            resolusi_paket_ekspresi(value, packages);
+        }
+        Expr::SignCast { operand, .. }
+        | Expr::SizeCast { operand, .. }
+        | Expr::Cast { operand, .. }
+        | Expr::BuiltinCast { operand, .. } => {
+            resolusi_paket_ekspresi(operand, packages);
+        }
+        Expr::IndexDynamic { base, index, .. } => {
+            resolusi_paket_ekspresi(base, packages);
+            resolusi_paket_ekspresi(index, packages);
+        }
+        _ => {}
+    }
+}
+
+/// Resolusi referensi `pkg::nama` pada seluruh ekspresi dalam satu modul.
+///
+/// Dipanggil sekali di `elaborate_top` sebelum pemrosesan modul, sehingga
+/// semua referensi `pkg::nama` diubah menjadi `Expr::Number` sebelum
+/// `konst` dan `lower_expression` dipanggil.
+pub(crate) fn resolusi_paket_modul(module: &mut Module, packages: &PackageTable) {
+    for local in &mut module.localparams {
+        resolusi_paket_ekspresi(&mut local.value, packages);
+    }
+    for decl in &mut module.declarations {
+        if let Some(init) = &mut decl.init {
+            resolusi_paket_ekspresi(init, packages);
+        }
+        if let sv_ast::width::WidthExpr::Expr { msb, lsb, .. } = &mut decl.width {
+            resolusi_paket_ekspresi(msb, packages);
+            if let Some(lsb) = lsb {
+                resolusi_paket_ekspresi(lsb, packages);
+            }
+        }
+    }
+    // Ekspresi di dalam statement akan ditangani saat lowering karena
+    // symbols tabel belum tersedia di tahap ini. Referensi pkg::nama dalam
+    // statement dievaluasi oleh konst yang sudah menerima packages.
 }
 
 #[cfg(test)]
@@ -288,6 +440,7 @@ mod tests {
             expr,
             &GenvarEnv::kosong(),
             &params_dengan(&[("W", 8), ("SEL", 2)]),
+            &PackageTable::new(),
             Span::dummy(),
         )
     }

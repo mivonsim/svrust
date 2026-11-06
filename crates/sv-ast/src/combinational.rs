@@ -165,6 +165,12 @@ pub enum CombinationalStatement {
         lhs: Lvalue,
         span: Span,
     },
+    /// Ekspresi sebagai statement, misal `void'(ekspresi)` — nilai dibuang,
+    /// hanya efek samping yang diambil (LRM §6.14).
+    ExprStmt {
+        expr: Box<Expr>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

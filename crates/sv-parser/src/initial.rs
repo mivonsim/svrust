@@ -34,24 +34,14 @@ pub fn parse_initial(tokens: &[SpannedToken]) -> Result<(Statement, usize), Stri
     Ok((Statement::Initial { body, span }, idx))
 }
 
-/// Parse statement system task seperti `$display(...)` atau `$finish;`.
-///
-/// LRM §20 tidak membatasi system task pada `initial` saja; jalur `always_ff`
-/// memakai `parse_system_task_mentah` lalu membungkusnya sebagai
-/// `SequentialStatement::SystemTask`.
-pub fn parse_system_task(
-    tokens: &[SpannedToken],
-) -> Result<(sv_ast::combinational::CombinationalStatement, usize), String> {
-    let (task, consumed) = parse_system_task_mentah(tokens)?;
-    Ok((
-        sv_ast::combinational::CombinationalStatement::SystemTask(task),
-        consumed,
-    ))
-}
-
 /// Versi `parse_system_task` yang mengembalikan node `SystemTask` apa adanya,
 /// tanpa membungkusnya ke `CombinationalStatement`.
-pub(crate) fn parse_system_task_mentah(
+///
+/// Parsing berhenti tepat setelah tutup kurung argumen (atau setelah nama
+/// task bila tidak ada kurung), **tidak** memakai titik koma. Dipanggil oleh
+/// `parse_system_task_mentah` (yang menambahi `;`) dan oleh parser `void'()`
+/// di `combinational.rs` (yang menambahi `)`).
+pub(crate) fn parse_system_task_panggilan(
     tokens: &[SpannedToken],
 ) -> Result<(SystemTask, usize), String> {
     if tokens.is_empty() {
@@ -62,8 +52,9 @@ pub(crate) fn parse_system_task_mentah(
         Token::SystemTask(n) => n.clone(),
         _ => return Err("expected system task".to_string()),
     };
-    let kind = SystemTaskKind::from_name(&name)
-        .ok_or_else(|| format!("system task '${}' belum didukung", name))?;
+    let kind = SystemTaskKind::from_name(&name).ok_or_else(|| {
+        crate::pesan::tandai(tokens, 0, format!("system task '${}' belum didukung", name))
+    })?;
 
     let mut idx = 1;
     let mut args = Vec::new();
@@ -100,44 +91,8 @@ pub(crate) fn parse_system_task_mentah(
         if idx >= tokens.len() {
             return Err(format!("expected ')' closing ${}", name));
         }
-        idx += 1;
+        idx += 1; // lewati ')'
     }
-
-    // Bentuk lain menuliskan syarat setelah argumen; keduanya diterima.
-    if condition.is_none() && tokens.get(idx).map(|t| &t.token) == Some(&Token::If) {
-        let (expr, consumed) = parse_kondisi(tokens, idx)?;
-        condition = Some(expr);
-        idx += consumed;
-    }
-
-    // Setelah syarat, argumen boleh ditulis tanpa kurung seperti pada
-    // `$monitor if (c) "a=%d", a;` (LRM §20.2).
-    if condition.is_some() && tokens.get(idx).map(|t| &t.token) != Some(&Token::Semi) {
-        loop {
-            match tokens.get(idx).map(|t| &t.token) {
-                None => return Err(format!("expected ';' after ${}", name)),
-                Some(Token::Semi) => break,
-                Some(Token::Comma) => {
-                    idx += 1;
-                    continue;
-                }
-                Some(Token::StringLiteral(teks)) => {
-                    args.push(SystemArg::Format(teks.clone()));
-                    idx += 1;
-                }
-                Some(_) => {
-                    let (expr, consumed) = super::expression::parse_expression(&tokens[idx..])?;
-                    idx += consumed;
-                    args.push(SystemArg::Value(expr));
-                }
-            }
-        }
-    }
-
-    if tokens.get(idx).map(|t| &t.token) != Some(&Token::Semi) {
-        return Err(format!("expected ';' after ${}", name));
-    }
-    idx += 1;
 
     Ok((
         SystemTask {
@@ -151,6 +106,67 @@ pub(crate) fn parse_system_task_mentah(
         },
         idx,
     ))
+}
+
+/// Parse statement system task seperti `$display(...)` atau `$finish;`.
+///
+/// LRM §20 tidak membatasi system task pada `initial` saja; jalur `always_ff`
+/// memakai `parse_system_task_mentah` lalu membungkusnya sebagai
+/// `SequentialStatement::SystemTask`.
+pub fn parse_system_task(
+    tokens: &[SpannedToken],
+) -> Result<(sv_ast::combinational::CombinationalStatement, usize), String> {
+    let (task, consumed) = parse_system_task_mentah(tokens)?;
+    Ok((
+        sv_ast::combinational::CombinationalStatement::SystemTask(task),
+        consumed,
+    ))
+}
+
+/// Versi `parse_system_task` yang mengembalikan node `SystemTask` apa adanya,
+/// dengan titik koma di akhir (digunakan oleh blok `initial` dan `always_ff`).
+pub(crate) fn parse_system_task_mentah(
+    tokens: &[SpannedToken],
+) -> Result<(SystemTask, usize), String> {
+    let (mut task, mut idx) = parse_system_task_panggilan(tokens)?;
+
+    // Bentuk lain menuliskan syarat setelah argumen; keduanya diterima.
+    if task.condition.is_none() && tokens.get(idx).map(|t| &t.token) == Some(&Token::If) {
+        let (expr, consumed) = parse_kondisi(tokens, idx)?;
+        task.condition = Some(expr);
+        idx += consumed;
+    }
+
+    // Setelah syarat, argumen boleh ditulis tanpa kurung seperti pada
+    // `$monitor if (c) "a=%d", a;` (LRM §20.2).
+    if task.condition.is_some() && tokens.get(idx).map(|t| &t.token) != Some(&Token::Semi) {
+        loop {
+            match tokens.get(idx).map(|t| &t.token) {
+                None => return Err(format!("expected ';' after ${:?}", task.kind)),
+                Some(Token::Semi) => break,
+                Some(Token::Comma) => {
+                    idx += 1;
+                    continue;
+                }
+                Some(Token::StringLiteral(teks)) => {
+                    task.args.push(SystemArg::Format(teks.clone()));
+                    idx += 1;
+                }
+                Some(_) => {
+                    let (expr, consumed) = super::expression::parse_expression(&tokens[idx..])?;
+                    idx += consumed;
+                    task.args.push(SystemArg::Value(expr));
+                }
+            }
+        }
+    }
+
+    if tokens.get(idx).map(|t| &t.token) != Some(&Token::Semi) {
+        return Err(format!("expected ';' after ${:?}", task.kind));
+    }
+    idx += 1;
+
+    Ok((task, idx))
 }
 
 /// Parse `if (ekspresi)` sebagai syarat system task; posisi `idx` menunjuk `if`.

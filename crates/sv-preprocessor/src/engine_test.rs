@@ -16,6 +16,55 @@ fn define_dan_substitusi_sederhana() {
     assert!(!out.contains("`WIDTH"));
 }
 
+// Body makro boleh memuat `ifdef; LRM §22.5.2 mengevaluasinya saat makro
+// dipakai, bukan saat didefinisikan (pola `ASSERT_ERROR` OpenTitan).
+#[test]
+fn ifdef_di_dalam_body_makro_dievaluasi_saat_dipakai() {
+    let src = r"`define PILIH \
+`ifdef UVM \
+  uvm_report \
+`else \
+  $error \
+`endif
+`define UVM
+module m; `PILIH endmodule";
+    let out = run(src);
+    assert!(out.contains("uvm_report"), "hasil: {out}");
+    assert!(!out.contains("$error"), "hasil: {out}");
+    assert!(
+        !out.contains("`ifdef") && !out.contains("`endif"),
+        "hasil: {out}"
+    );
+}
+
+#[test]
+fn ifdef_di_dalam_body_makro_memilih_cabang_lain() {
+    let src = "`define PILIH `ifdef TIDAK_ADA a `else b `endif\nmodule m; `PILIH endmodule";
+    let out = run(src);
+    assert!(out.contains('b'), "hasil: {out}");
+    assert!(!out.contains('a'), "hasil: {out}");
+}
+
+#[test]
+fn file_dan_line_bawaan_lrm_diekspansi() {
+    let out = preprocess(
+        "module m;\n  string f = `__FILE__;\n  int l = `__LINE__;\nendmodule",
+        None,
+    )
+    .unwrap()
+    .source;
+    assert!(out.contains("string f = \"<input>\";"), "hasil: {out}");
+    assert!(out.contains("int l = 3;"), "hasil: {out}");
+}
+
+#[test]
+fn kutip_escape_dan_penyambungan_token() {
+    let src = "`define NAMA(q) `\"q`\"\n`define SUFIKS(n) n``_cond\nmodule m; string s = `NAMA(halo); wire `SUFIKS(flag); endmodule";
+    let out = run(src);
+    assert!(out.contains("string s = \"halo\";"), "hasil: {out}");
+    assert!(out.contains("wire flag_cond;"), "hasil: {out}");
+}
+
 #[test]
 fn define_tanpa_ekstensi_hilang() {
     let out = run("`define FLAG\nmodule m; wire a = `FLAG; endmodule");

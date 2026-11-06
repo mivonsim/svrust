@@ -134,6 +134,10 @@ impl<'a> Inliner<'a> {
                 body: self.comb_list(body)?,
                 span: *span,
             },
+            Statement::Final { body, span } => Statement::Final {
+                body: self.comb_list(body)?,
+                span: *span,
+            },
         };
         Ok(vec![out])
     }
@@ -401,6 +405,10 @@ impl<'a> Inliner<'a> {
                     span: *span,
                 }])
             }
+            CombinationalStatement::ExprStmt { expr, .. } => {
+                let _ = self.expr(expr)?;
+                Ok(Vec::new())
+            }
         }
     }
 
@@ -610,6 +618,10 @@ impl<'a> Inliner<'a> {
                 lhs: self.lvalue(lhs)?,
                 span: *span,
             },
+            CombinationalStatement::ExprStmt { expr, span } => CombinationalStatement::ExprStmt {
+                expr: Box::new(self.expr(expr)?),
+                span: *span,
+            },
         };
         Ok(vec![out])
     }
@@ -635,7 +647,13 @@ impl<'a> Inliner<'a> {
         span: sv_lexer::span::Span,
     ) -> Result<Vec<CombinationalStatement>, ElaborateError> {
         let decl = self.ambil(name, span)?;
-        if decl.kind != RoutineKind::Task {
+        if decl.kind != RoutineKind::Task
+            && !(decl.kind == RoutineKind::Function
+                && matches!(
+                    decl.return_width,
+                    Some(sv_ast::width::WidthExpr::Literal(0))
+                ))
+        {
             return Err(ElaborateError::new(
                 format!("'{name}' adalah function, bukan task; pakai dalam ekspresi"),
                 span,
@@ -716,6 +734,10 @@ impl<'a> Inliner<'a> {
             }
             Expr::Ident { name, span } => Expr::ident(name.clone(), *span),
             Expr::Number(n) => Expr::Number(*n),
+            Expr::StringConst { value, span } => Expr::StringConst {
+                value: value.clone(),
+                span: *span,
+            },
             Expr::Sized {
                 value,
                 width,
@@ -833,6 +855,10 @@ impl<'a> Inliner<'a> {
             },
             Expr::Bits { operand, span } => Expr::Bits {
                 operand: Box::new(self.expr(operand)?),
+                span: *span,
+            },
+            Expr::HierarchicalRef { parts, span } => Expr::HierarchicalRef {
+                parts: parts.clone(),
                 span: *span,
             },
         })
@@ -1094,6 +1120,9 @@ fn eksekusi_stmt_function(
                 let hasil = evaluasi_expr_function(nilai, env)?;
                 env.insert(nama_fungsi.to_string(), hasil);
             }
+        }
+        CombinationalStatement::ExprStmt { expr, .. } => {
+            let _ = evaluasi_expr_function(expr, env)?;
         }
         CombinationalStatement::SystemTask(_) => {
             // System task dalam function dievaluasi sebagai no-op (nilai
@@ -1554,7 +1583,8 @@ fn stmt_span(stmt: &Statement) -> sv_lexer::span::Span {
         | Statement::AlwaysFf { span, .. }
         | Statement::AlwaysTimed { span, .. }
         | Statement::AlwaysComb { span, .. }
-        | Statement::Initial { span, .. } => *span,
+        | Statement::Initial { span, .. }
+        | Statement::Final { span, .. } => *span,
     }
 }
 

@@ -1,6 +1,6 @@
 // Tanggung jawab: mengumpulkan deklarasi variabel lokal di dalam blok prosedural.
 use crate::error::ElaborateError;
-use crate::param::ParamTable;
+use crate::param::{PackageTable, ParamTable};
 use crate::symbol::{Symbol, SymbolTable};
 use sv_ast::combinational::{CaseArm, CombinationalStatement};
 use sv_ast::declaration::Declaration;
@@ -23,9 +23,10 @@ pub fn daftarkan(
     symbols: &mut SymbolTable,
     params: &ParamTable,
     types: &crate::typedef::TypeTable,
+    packages: &PackageTable,
 ) -> Result<(), ElaborateError> {
     for decl in kumpulkan(module) {
-        daftarkan_satu(decl, design, symbols, params, types)?;
+        daftarkan_satu(decl, design, symbols, params, types, packages)?;
     }
     Ok(())
 }
@@ -44,7 +45,8 @@ fn kumpulkan_statement(statement: &Statement) -> Vec<&Declaration> {
     match statement {
         Statement::AlwaysTimed { body, .. }
         | Statement::AlwaysComb { body, .. }
-        | Statement::Initial { body, .. } => kumpulkan_comb(body),
+        | Statement::Initial { body, .. }
+        | Statement::Final { body, .. } => kumpulkan_comb(body),
         Statement::AlwaysFf { body, .. } => kumpulkan_seq(body),
         Statement::ContinuousAssign { .. } => Vec::new(),
     }
@@ -91,7 +93,8 @@ fn kumpulkan_comb(body: &[CombinationalStatement]) -> Vec<&Declaration> {
             | CombinationalStatement::TaskCall(_)
             | CombinationalStatement::Return { .. }
             | CombinationalStatement::ProceduralAssign { .. }
-            | CombinationalStatement::Deassign { .. } => {}
+            | CombinationalStatement::Deassign { .. }
+            | CombinationalStatement::ExprStmt { .. } => {}
         }
     }
     out
@@ -135,12 +138,14 @@ fn daftarkan_satu(
     symbols: &mut SymbolTable,
     params: &ParamTable,
     types: &crate::typedef::TypeTable,
+    packages: &PackageTable,
 ) -> Result<(), ElaborateError> {
     let (bit, signed) = crate::typedef::lebar_deklarasi(
         &decl.width,
         decl.type_name.as_deref(),
         types,
         params,
+        packages,
         decl.span,
     )?;
     let data_type = DataType::logic(bit).with_signed(signed || decl.signed);

@@ -1,10 +1,13 @@
 // Tanggung jawab: membangun IR Design dari AST Module.
 use crate::error::ElaborateError;
+use crate::generate::GenvarEnv;
 use crate::instance::lower_instance;
+use crate::konst;
 use crate::lower_stmt::lower_module_statement;
-use crate::param::ParamTable;
+use crate::param::{PackageTable, ParamTable};
 use crate::symbol::{Symbol, SymbolTable};
 use sv_ast::module::Module;
+use sv_ast::package::PackageDecl;
 use sv_ast::port::PortDirection;
 use sv_ast::typedef::TypeDefDecl;
 use sv_ir::datatype::DataType;
@@ -19,8 +22,9 @@ pub fn elaborate(module: &Module) -> Result<Design, ElaborateError> {
     // statement yang dilihat helper di bawah tidak pernah menemukan panggilan
     // yang belum dikembangkan.
     let module = &crate::routine::expand_module(module)?;
-    let params_awal = ParamTable::untuk_modul(module)?;
-    let types = crate::typedef::TypeTable::baru(&module.typedefs, &params_awal)?;
+    let params_awal = ParamTable::untuk_modul(module, &PackageTable::new())?;
+    let types =
+        crate::typedef::TypeTable::baru(&module.typedefs, &params_awal, &PackageTable::new())?;
     let module = &crate::typedef_walk::expand_literals(module, &types)?;
     let module = &crate::instance::substitusi_parameter(module, &params_awal, "", None)?;
     let mut symbols = SymbolTable::new();
@@ -31,10 +35,10 @@ pub fn elaborate(module: &Module) -> Result<Design, ElaborateError> {
     design.time_scale = Some(map_time_scale(module.time_scale));
     // Tabel lengkap (parameter port + `localparam`) dipakai lagi di sini:
     // lebar dimension dan tipe `typedef` boleh merujuk `localparam`.
-    let params = ParamTable::untuk_modul(module)?;
+    let params = ParamTable::untuk_modul(module, &PackageTable::new())?;
 
     for port in &module.ports {
-        let bit = params.lebar(&port.width, port.span)?;
+        let bit = params.lebar(&port.width, &PackageTable::new(), port.span)?;
         let data_type = DataType::logic(bit as u32).with_signed(port.signed);
         let id = symbols.insert(Symbol {
             name: port.name.clone(),
@@ -59,7 +63,14 @@ pub fn elaborate(module: &Module) -> Result<Design, ElaborateError> {
         });
     }
 
-    isi_body(&mut design, &mut symbols, module, &[], &params)?;
+    isi_body(
+        &mut design,
+        &mut symbols,
+        module,
+        &[],
+        &params,
+        &PackageTable::new(),
+    )?;
 
     // LRM §27: region generate tetap boleh dielabase tanpa modul lain, tetapi
     // instansiasi di dalamnya membutuhkan daftar module.
@@ -69,7 +80,14 @@ pub fn elaborate(module: &Module) -> Result<Design, ElaborateError> {
             module.span,
         ));
     }
-    crate::generate::lower_regions(&mut design, &mut symbols, module, &params, &[])?;
+    crate::generate::lower_regions(
+        &mut design,
+        &mut symbols,
+        module,
+        &params,
+        &[],
+        &PackageTable::new(),
+    )?;
 
     Ok(design)
 }
@@ -78,8 +96,75 @@ pub fn elaborate(module: &Module) -> Result<Design, ElaborateError> {
 pub fn elaborate_top(
     modules: &[Module],
     typedefs_global: &[TypeDefDecl],
+    packages: &[PackageDecl],
     top: &str,
 ) -> Result<Design, ElaborateError> {
+    eprintln!("DEBUG elaborate_top: modules count = {}", modules.len());
+    for m in modules {
+        eprintln!("DEBUG elaborate_top: module = {}", m.name);
+    }
+    eprintln!("DEBUG elaborate_top: calling elaborate for top = {}", top);
+    // Bangun tabel parameter per paket dari deklarasi paket yang dikumpulkan
+    // saat parse. Parameter paket dievaluasi dalam urutan deklarasi karena
+    // boleh merujuk parameter paket yang sebelumnya (LRM §26).
+    // Beberapa paket boleh merujuk parameter paket yang dideklarasikan lebih
+    // lambat (misal bus_params_pkg merujuk top_pkg), jadi evaluasi diulang
+    // hingga tidak ada progress lagi.
+    let mut package_tabel: PackageTable = PackageTable::new();
+    // Ulangi hingga semua parameter paket stabil (tidak ada perubahan lagi).
+    // Paket yang bergantung pada paket lain (mis. `alert_handler_pkg` →
+    // `alert_handler_reg_pkg::NAlerts`) perlu diproses ulang setelah
+    // dependensinya tersedia (LRM §26).
+    let mut changed = true;
+    let mut iterasi = 0;
+    while changed && iterasi < 100 {
+        changed = false;
+        iterasi += 1;
+        for pkg in packages.iter() {
+            let mut tabel = ParamTable::baru(&[])?;
+            let mut paket_ok = false;
+            for local in &pkg.params {
+                match konst::konst(
+                    &local.value,
+                    &GenvarEnv::kosong(),
+                    &tabel,
+                    &package_tabel,
+                    local.span,
+                ) {
+                    Ok(nilai) => match tabel.tambah(&local.name, nilai, local.span) {
+                        Ok(()) => paket_ok = true,
+                        // Duplikasi nama parameter di paket, lewati parameter ini.
+                        Err(_) => {}
+                    },
+                    // Ekspresi parameter tak bisa dievaluasi (misal pemanggilan
+                    // fungsi yang tak didukung), lewati parameter ini.
+                    Err(_) => {}
+                }
+            }
+            // Simpan paket bila minimal satu parameter berhasil dievaluasi.
+            // Jika tabel berubah (nilai parameter berisi karena dependensi
+            // baru tersedia), perbarui dan tandai untuk iterasi berikutnya.
+            let sudah_ada = package_tabel.get(&pkg.name);
+            if paket_ok && (!sudah_ada.is_some() || *sudah_ada.unwrap() != tabel) {
+                package_tabel.insert(pkg.name.clone(), tabel);
+                changed = true;
+            }
+        }
+    }
+
+    // Resolusi referensi `pkg::nama` pada semua modul sebelum pemrosesan lebih
+    // lanjut, sehingga `konst` dan `lower_expression` di dalam penurunan
+    // ekspresi tidak perlu tahu soal paket.
+    let modules_owned: Vec<Module> = modules
+        .iter()
+        .map(|m| {
+            let mut m = m.clone();
+            crate::konst::resolusi_paket_modul(&mut m, &package_tabel);
+            m
+        })
+        .collect();
+    let modules = &modules_owned;
+
     // Setiap module di-expand sebelum instansiasi, sehingga modul anak ikut
     // memakai subrutin yang dideklarasikan di body-nya sendiri.
     let expanded = modules
@@ -92,10 +177,10 @@ pub fn elaborate_top(
     let modules = &modules
         .iter()
         .map(|m| {
-            let params = ParamTable::untuk_modul(m)?;
+            let params = ParamTable::untuk_modul(m, &package_tabel)?;
             let mut semua_typedef = typedefs_global.to_vec();
             semua_typedef.extend_from_slice(&m.typedefs);
-            let types = crate::typedef::TypeTable::baru(&semua_typedef, &params)?;
+            let types = crate::typedef::TypeTable::baru(&semua_typedef, &params, &package_tabel)?;
             crate::typedef_walk::expand_literals(m, &types)
         })
         .collect::<Result<Vec<Module>, ElaborateError>>()?;
@@ -117,7 +202,7 @@ pub fn elaborate_top(
     let module = {
         // `untuk_modul` memasukkan `localparam` (LRM §6.20); `ParamTable::baru`
         // hanya melihat daftar parameter port, jadi `localparam` akan hilang.
-        let params = ParamTable::untuk_modul(module)?;
+        let params = ParamTable::untuk_modul(module, &package_tabel)?;
         module_owned = crate::instance::substitusi_parameter(module, &params, "", None)?;
         &module_owned
     };
@@ -136,10 +221,10 @@ pub fn elaborate_top(
     design.time_scale = Some(TimeScale::new(scale.unit, presisi_paling_kecil));
     // Tabel yang sudah memuat `localparam` dipakai lagi di sini: lebar
     // dimension dan tipe `typedef` boleh merujuknya.
-    let params = ParamTable::untuk_modul(module)?;
+    let params = ParamTable::untuk_modul(module, &package_tabel)?;
 
     for port in &module.ports {
-        let bit = params.lebar(&port.width, port.span)?;
+        let bit = params.lebar(&port.width, &package_tabel, port.span)?;
         let data_type = DataType::logic(bit as u32).with_signed(port.signed);
         let id = symbols.insert(Symbol {
             name: port.name.clone(),
@@ -164,7 +249,14 @@ pub fn elaborate_top(
         });
     }
 
-    isi_body(&mut design, &mut symbols, module, typedefs_global, &params)?;
+    isi_body(
+        &mut design,
+        &mut symbols,
+        module,
+        typedefs_global,
+        &params,
+        &package_tabel,
+    )?;
 
     for inst in &module.instances {
         lower_instance(
@@ -173,12 +265,21 @@ pub fn elaborate_top(
             inst,
             modules,
             &crate::generate::GenvarEnv::kosong(),
+            &package_tabel,
+            &params,
         )?;
     }
 
     // Region generate dielabore setelah instans modul biasa supaya tabel
     // simbol sudah memuat seluruh sinyal yang boleh dirujuknya.
-    crate::generate::lower_regions(&mut design, &mut symbols, module, &params, modules)?;
+    crate::generate::lower_regions(
+        &mut design,
+        &mut symbols,
+        module,
+        &params,
+        modules,
+        &package_tabel,
+    )?;
 
     Ok(design)
 }
@@ -200,19 +301,20 @@ pub(crate) fn daftarkan_tipe(
     module: &Module,
     typedefs_global: &[TypeDefDecl],
     params: &ParamTable,
+    packages: &PackageTable,
     prefix: &str,
 ) -> Result<(), ElaborateError> {
     // Typedef global (compilation-unit scope) didaftarkan tanpa prefix instans,
     // karena tersedia untuk semua module.
     for decl in typedefs_global {
-        let types = crate::typedef::TypeTable::baru(std::slice::from_ref(decl), params)?;
+        let types = crate::typedef::TypeTable::baru(std::slice::from_ref(decl), params, packages)?;
         for (nama, info) in types.iter_tipe() {
             symbols.insert_type(nama, info.width, info.signed, decl.span)?;
         }
     }
     // Typedef module-scoped di-prefix instans.
     for decl in &module.typedefs {
-        let types = crate::typedef::TypeTable::baru(std::slice::from_ref(decl), params)?;
+        let types = crate::typedef::TypeTable::baru(std::slice::from_ref(decl), params, packages)?;
         for (nama, info) in types.iter_tipe() {
             symbols.insert_type(
                 &format!("{prefix}{nama}"),
@@ -232,6 +334,7 @@ fn isi_body(
     module: &Module,
     typedefs_global: &[TypeDefDecl],
     params: &ParamTable,
+    packages: &PackageTable,
 ) -> Result<(), ElaborateError> {
     // LRM §8.20 dan §6.7: typedef di luar module (compilation-unit scope)
     // tersedia untuk semua module, digabung dengan typedef milik module itu
@@ -241,7 +344,7 @@ fn isi_body(
     // lokal, dan biarkan `baru` menangkap duplikasi yang benar-benar ilegal.
     let mut semua_typedef = typedefs_global.to_vec();
     semua_typedef.extend_from_slice(&module.typedefs);
-    let types = crate::typedef::TypeTable::baru(&semua_typedef, params)?;
+    let types = crate::typedef::TypeTable::baru(&semua_typedef, params, packages)?;
 
     for decl in &module.declarations {
         // `struct`/`union` packed: lebar total = jumlah lebar semua field
@@ -294,6 +397,7 @@ fn isi_body(
             decl.type_name.as_deref(),
             &types,
             params,
+            packages,
             decl.span,
         )?;
         // LRM §7.8: array unpacked disimpan sebagai satu sinyal rata selebar
@@ -375,7 +479,7 @@ fn isi_body(
     // yang sudah dipakai sinyal, dan hanya berlaku untuk nama polos (tanpa
     // prefix instans). Nilai awal di bawah memakai cast, jadi pendaftaran ini
     // harus sebelumnya.
-    daftarkan_tipe(symbols, module, typedefs_global, params, "")?;
+    daftarkan_tipe(symbols, module, typedefs_global, params, packages, "")?;
 
     // Nilai awal variabel pada waktu nol (LRM §6.2.2).
     for decl in &module.declarations {
@@ -402,7 +506,7 @@ fn isi_body(
 
     // Variabel lokal harus terdaftar sebelum statement dielaborasi,
     // karena ekspresi di dalam blok sudah merujuk nama tersebut.
-    crate::local_decl::daftarkan(module, design, symbols, params, &types)?;
+    crate::local_decl::daftarkan(module, design, symbols, params, &types, packages)?;
 
     for statement in &module.statements {
         design

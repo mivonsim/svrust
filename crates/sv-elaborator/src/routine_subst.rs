@@ -300,6 +300,10 @@ impl Substitution {
                 lhs: self.ganti_lvalue(lhs),
                 span: *span,
             },
+            CombinationalStatement::ExprStmt { expr, span } => CombinationalStatement::ExprStmt {
+                expr: Box::new(self.ganti(expr)),
+                span: *span,
+            },
             // Deklarasi lokal di dalam badan subrutin tidak boleh ada: nama
             // formal dan nama lokal bisa bentrok setelah di-inline. Parser
             // dan elaborator menolaknya lebih awal.
@@ -574,6 +578,10 @@ fn rename_statement(
             lhs: rename_lvalue(lhs, peta),
             span: *span,
         },
+        CombinationalStatement::ExprStmt { expr, span } => CombinationalStatement::ExprStmt {
+            expr: Box::new(rename_expr(expr, peta)),
+            span: *span,
+        },
     }
 }
 
@@ -621,6 +629,10 @@ fn rename_expr(expr: &Expr, peta: &HashMap<String, String>) -> Expr {
     match expr {
         Expr::Ident { name, span } => Expr::ident(nama(name), *span),
         Expr::Number(v) => Expr::Number(*v),
+        Expr::StringConst { value, span } => Expr::StringConst {
+            value: value.clone(),
+            span: *span,
+        },
         Expr::Sized {
             value,
             width,
@@ -737,6 +749,10 @@ fn rename_expr(expr: &Expr, peta: &HashMap<String, String>) -> Expr {
             operand: Box::new(rename_expr(operand, peta)),
             span: *span,
         },
+        Expr::HierarchicalRef { parts, span } => Expr::HierarchicalRef {
+            parts: parts.clone(),
+            span: *span,
+        },
     }
 }
 
@@ -786,7 +802,8 @@ fn kumpulkan_lokal_dalam(body: &[CombinationalStatement], out: &mut Vec<String>)
             | CombinationalStatement::TaskCall(_)
             | CombinationalStatement::Return { .. }
             | CombinationalStatement::ProceduralAssign { .. }
-            | CombinationalStatement::Deassign { .. } => {}
+            | CombinationalStatement::Deassign { .. }
+            | CombinationalStatement::ExprStmt { .. } => {}
         }
     }
 }

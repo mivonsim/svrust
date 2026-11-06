@@ -16,7 +16,7 @@ fn is_signedness(token: &Token) -> bool {
 }
 
 /// Lewati satu grup `[...]` seimbang; kembalikan indeks sesudah `]`.
-fn lewati_kurung_siku(tokens: &[SpannedToken], mut idx: usize) -> usize {
+pub(crate) fn lewati_kurung_siku(tokens: &[SpannedToken], mut idx: usize) -> usize {
     let mut depth = 0u32;
     while idx < tokens.len() {
         match &tokens[idx].token {
@@ -29,6 +29,83 @@ fn lewati_kurung_siku(tokens: &[SpannedToken], mut idx: usize) -> usize {
             }
             _ => {}
         }
+        idx += 1;
+    }
+    idx
+}
+
+/// Lewati seluruh pernyataan assertion (concurrent `assert property` maupun
+/// `assert` biasa), termasuk label opsional `nama:` dan klausa `else
+/// begin...end`, tanpa mem-parse isinya.
+///
+/// Assertion SVA tidak memengaruhi simulasi fungsional RTL dasar, jadi
+/// dilewati agar tidak memecah parse berkas verifikasi (mis. ekspansi makro
+/// `` `ASSERT_* `` OpenTitan yang menghasilkan `assert property (...) else
+/// begin `ASSERT_ERROR(...) end`).
+fn skip_assert(tokens: &[SpannedToken], mut idx: usize) -> usize {
+    // Lewati label `nama:` opsional.
+    if tokens.get(idx + 1).map(|t| &t.token) == Some(&Token::Colon) {
+        idx += 2;
+    }
+    idx += 1; // lewati 'assert'
+              // Spek properti: `property (...)` atau ekspresi `(...)`.
+    if tokens.get(idx).map(|t| &t.token) == Some(&Token::Property) {
+        idx += 1;
+    }
+    // Lewati hingga ')' penutup spek, dengan depth kurung bersarang.
+    if tokens.get(idx).map(|t| &t.token) == Some(&Token::LParen) {
+        let mut depth = 0i32;
+        loop {
+            match tokens.get(idx).map(|t| &t.token) {
+                Some(Token::LParen) => depth += 1,
+                Some(Token::RParen) => {
+                    depth -= 1;
+                    if depth == 0 {
+                        idx += 1;
+                        break;
+                    }
+                }
+                Some(_) => {}
+                None => break,
+            }
+            idx += 1;
+        }
+    }
+    // Klausa `else` opsional: `else begin...end` atau `else <stmt>;`.
+    if tokens.get(idx).map(|t| &t.token) == Some(&Token::Else) {
+        idx += 1;
+        if tokens.get(idx).map(|t| &t.token) == Some(&Token::Begin) {
+            let mut depth = 0i32;
+            loop {
+                match tokens.get(idx).map(|t| &t.token) {
+                    Some(Token::Begin) => depth += 1,
+                    Some(Token::End) => {
+                        depth -= 1;
+                        if depth == 0 {
+                            idx += 1;
+                            break;
+                        }
+                    }
+                    Some(_) => {}
+                    None => break,
+                }
+                idx += 1;
+            }
+            // Label opsional `end : nama`.
+            if tokens.get(idx).map(|t| &t.token) == Some(&Token::Colon) {
+                idx += 2;
+            }
+        } else {
+            while idx < tokens.len() && tokens[idx].token != Token::Semi {
+                idx += 1;
+            }
+            if idx < tokens.len() {
+                idx += 1; // lewati ';'
+            }
+        }
+    }
+    // Titik koma penutup opsional.
+    if tokens.get(idx).map(|t| &t.token) == Some(&Token::Semi) {
         idx += 1;
     }
     idx
@@ -116,9 +193,15 @@ fn parse_param_body(
                     // `parameter logic [15:0] E = 16'h0001;` — based literal
                     // adalah konstanta yang sah, bukan error.
                     sv_ast::expression::Expr::Sized { value, .. } => (value, None),
-                    _ => return Err(format!(
-                        "nilai default parameter '{name}' harus literal angka atau string di body modul"
-                    )),
+                    _ => {
+                        return Err(crate::pesan::tandai(
+                            tokens,
+                            idx,
+                            format!(
+                                "nilai default parameter '{name}' harus literal angka atau string di body modul"
+                            ),
+                        ))
+                    }
                 }
             }
         };
@@ -130,6 +213,16 @@ fn parse_param_body(
             span,
         });
         if tokens.get(idx).map(|t| &t.token) == Some(&Token::Comma) {
+            // Gaya OpenTitan: tiap baris parameter diawali kata `parameter`
+            // dan diakhiri koma, lalu dilanjutkan `parameter` berikutnya. Koma
+            // di sini bukan pemisah dalam satu list melainkan pemisah antar
+            // statement. Bila setelah koma muncul `parameter`/`localparam`
+            // baru, henti dan serahkan sisa ke loop luar agar tiap `parameter`
+            // di-parse sebagai statement tersendiri.
+            let after = tokens.get(idx + 1).map(|t| &t.token);
+            if matches!(after, Some(Token::Parameter) | Some(Token::LocalParam)) {
+                return Ok((out, idx + 1));
+            }
             idx += 1;
             continue;
         }
@@ -219,6 +312,10 @@ fn parse_localparam(
         idx += eaten;
         out.push(sv_ast::width::LocalParamDecl { name, value, span });
         if tokens.get(idx).map(|t| &t.token) == Some(&Token::Comma) {
+            let after = tokens.get(idx + 1).map(|t| &t.token);
+            if matches!(after, Some(Token::Parameter) | Some(Token::LocalParam)) {
+                return Ok((out, idx + 1));
+            }
             idx += 1;
             continue;
         }
@@ -725,23 +822,18 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                             idx += next;
                         }
                         Err(_) => {
-                            while idx < tokens.len() && tokens[idx].token != Token::Semi {
-                                idx += 1;
-                            }
-                            if idx < tokens.len() {
-                                idx += 1;
-                            }
+                            // SVA `assert property` dengan `disable iff`,
+                            // klausa `else begin...end`, atau sintaks non-
+                            // synthesizable lainnya tidak memengaruhi simulasi
+                            // fungsional RTL dasar. Lewati seluruh pernyataan
+                            // (label + spek + klausa else) agar ekspansi makro
+                            // `` `ASSERT_* `` OpenTitan tidak memecah parse.
+                            idx = skip_assert(tokens, idx);
                         }
                     }
                 } else {
-                    // Plain assert di level modul — lewati hingga ';'.
-                    idx += 1; // skip 'assert'
-                    while idx < tokens.len() && tokens[idx].token != Token::Semi {
-                        idx += 1;
-                    }
-                    if idx < tokens.len() {
-                        idx += 1; // skip ';'
-                    }
+                    // Plain assert di level modul — lewati seluruh klausa.
+                    idx = skip_assert(tokens, idx);
                 }
             }
             Token::Ident(n) if n == "import" => {
@@ -756,6 +848,15 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                 continue;
             }
             Token::Ident(_) => {
+                // Label assertion `nama: assert property (...)` dari ekspansi
+                // makro `` `ASSERT_* `` OpenTitan: lewati label agar cabang
+                // `assert` di bawah yang menangani sisa pernyataan.
+                if tokens.get(idx + 1).map(|t| &t.token) == Some(&Token::Colon)
+                    && tokens.get(idx + 2).map(|t| &t.token) == Some(&Token::Assert)
+                {
+                    idx += 2;
+                    continue;
+                }
                 // `nama_tipe var;` adalah deklarasi bertipe hasil typedef,
                 // sedangkan `nama inst(...)` adalah instansiasi modul. Keduanya
                 // diawali identifier dan tanpa `#(...)`, jadi bedanya terlihat
@@ -786,7 +887,10 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                     continue;
                 }
                 // Kualifikasi tipe dengan paket: `pkg::type nama;` atau
-                // `pkg::type [dim] nama;`
+                // `pkg::type [dim] nama;` (mis. `prim_alert_pkg::alert_tx_t
+                // [NAlerts-1:0] alert_tx;`). Nama tipe berkualifikasi kini
+                // ditangani `parse_typed_declaration`, jadi parse sungguhan
+                // alih-alih dilewati.
                 if tokens
                     .get(idx)
                     .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
@@ -796,32 +900,27 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                         .get(idx + 3)
                         .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
                 {
-                    // `pkg::type [dim] nama;` — lewati pkg :: type [dim] nama,
-                    // cari ';'
-                    idx += 4; // lewati pkg :: type
-                              // Lewati dimensi packed opsional [dim]
-                    while idx < tokens.len() && tokens[idx].token == Token::LBracket {
-                        let mut depth = 1u32;
-                        idx += 1;
-                        while idx < tokens.len() && depth > 0 {
-                            match &tokens[idx].token {
-                                Token::LBracket => depth += 1,
-                                Token::RBracket => depth -= 1,
-                                _ => {}
-                            }
-                            idx += 1;
-                        }
+                    let (_, first, consumed) =
+                        super::typedef::parse_typed_declaration(&tokens[idx..])?;
+                    let type_name = first.type_name.clone().unwrap_or_default();
+                    let (tambahan, akhir) = super::typedef::parse_more_typed_declarators(
+                        &tokens[idx..],
+                        consumed,
+                        &type_name,
+                        &first.width,
+                        first.signed,
+                        first.span,
+                    )?;
+                    declarations.push(first);
+                    declarations.extend(tambahan);
+                    if tokens.get(idx + akhir).map(|t| &t.token) != Some(&Token::Semi) {
+                        return Err(pesan::harap(
+                            tokens,
+                            idx + akhir,
+                            "expected ';' setelah deklarasi bertipe",
+                        ));
                     }
-                    // Nama variabel
-                    if idx < tokens.len() && matches!(tokens[idx].token, Token::Ident(_)) {
-                        idx += 1;
-                    }
-                    while idx < tokens.len() && tokens[idx].token != Token::Semi {
-                        idx += 1;
-                    }
-                    if idx < tokens.len() {
-                        idx += 1; // lewati ';'
-                    }
+                    idx += akhir + 1;
                     continue;
                 }
                 // Instansi modul: coba parse, tapi lewati bila gagal (bisa
@@ -1470,5 +1569,29 @@ mod tests {
             },
             other => panic!("harus for-generate, dapat {:?}", other),
         }
+    }
+
+    // REGRESI: ekspansi makro `` `ASSERT_KNOWN `` OpenTitan menghasilkan
+    // `__name: assert property (@(posedge clk) disable iff (...) (...))
+    // else begin `ASSERT_ERROR end`. Parser dulu gagal di `disable iff`
+    // lalu menelan sisa berkas sampai `endmodule`. Klausa SVA tidak
+    // memengaruhi simulasi fungsional, jadi seluruh pernyataan dilewati.
+    #[test]
+    fn assert_property_label_else_dilewati_tanpa_error() {
+        let src = "module m;\n  logic clk, rst, sig;\n  \
+                   MyAssert: assert property (@(posedge clk) disable iff ((rst) !== '0) (!$isunknown(sig.t))) \
+                     else begin $error(\"x\"); end\nendmodule";
+        let module = parse_module(&lex(src).unwrap()).unwrap();
+        assert_eq!(module.name, "m");
+    }
+
+    // REGRESI: assertion tanpa klausa else (`assert property (...) ;`) tetap
+    // harus dilewati tanpa error.
+    #[test]
+    fn assert_property_tanpa_else_dilewati_tanpa_error() {
+        let src = "module m;\n  logic clk, sig;\n  \
+                   P: assert property (@(posedge clk) (sig == 1'b1));\nendmodule";
+        let module = parse_module(&lex(src).unwrap()).unwrap();
+        assert_eq!(module.name, "m");
     }
 }

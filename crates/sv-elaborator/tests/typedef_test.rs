@@ -373,6 +373,7 @@ fn enum_modul_anak_tidak_bocor_ke_induk() {
             sv_parser::parse_file(&tokens).expect("parse").modules
         },
         &[],
+        &[],
         "top",
     ) {
         Ok(_) => panic!("literal enum anak seharusnya tidak dikenal di induk"),

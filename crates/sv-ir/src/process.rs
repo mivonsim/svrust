@@ -26,6 +26,8 @@ pub enum ProcessKind {
     Latch,
     /// Testbench: berjalan sekali pada waktu nol (LRM §15.2).
     Initial,
+    /// Testbench: berjalan sekali pada akhir simulasi (LRM §15.2).
+    Final,
     /// Proses waktu: badan `#delay` berulang, misal `always #5 clk = ~clk;`
     /// (LRM §9.2.1). Berjalan terus selama simulasi, bukan sekali seperti
     /// `Initial`, dan tidak punya sensitivitas seperti `Combinational`.
@@ -39,6 +41,7 @@ impl std::fmt::Display for ProcessKind {
             ProcessKind::Sequential => write!(f, "sequential"),
             ProcessKind::Latch => write!(f, "latch"),
             ProcessKind::Initial => write!(f, "initial"),
+            ProcessKind::Final => write!(f, "final"),
             ProcessKind::Timed => write!(f, "timed"),
         }
     }

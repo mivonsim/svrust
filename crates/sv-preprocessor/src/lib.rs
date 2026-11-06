@@ -4,4 +4,4 @@ mod engine;
 mod engine_test;
 pub mod error;
 
-pub use engine::{preprocess, Preprocessed};
+pub use engine::{preprocess, preprocess_with_dirs, Preprocessed};

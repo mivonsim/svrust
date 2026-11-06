@@ -1,14 +1,16 @@
 // Tanggung jawab: belah token berkas menjadi daftar module dan typedef global.
 use sv_ast::module::Module;
+use sv_ast::package::PackageDecl;
 use sv_ast::typedef::TypeDefDecl;
 use sv_lexer::spanned::SpannedToken;
 use sv_lexer::token::Token;
 
 /// Hasil parse satu berkas: daftar module beserta `typedef` di luar module
-/// (compilation-unit scope, LRM §8.20).
+/// (compilation-unit scope, LRM §8.20) dan deklarasi paket dengan parameternya.
 pub struct ParseResult {
     pub modules: Vec<Module>,
     pub typedefs_global: Vec<TypeDefDecl>,
+    pub packages: Vec<PackageDecl>,
 }
 
 /// Parse seluruh token berkas menjadi daftar module.
@@ -23,6 +25,7 @@ pub struct ParseResult {
 pub fn parse_file(tokens: &[SpannedToken]) -> Result<ParseResult, String> {
     let mut out = Vec::new();
     let mut typedefs_global = Vec::new();
+    let mut packages = Vec::new();
     let mut idx = 0;
     let mut time_scale = sv_ast::time_scale::TimeScale::default();
     while idx < tokens.len() {
@@ -43,17 +46,16 @@ pub fn parse_file(tokens: &[SpannedToken]) -> Result<ParseResult, String> {
             continue;
         }
         // `package` — deklarasi paket yang berisi definisi tipe, parameter, dan subroutine (LRM §26).
-        // SVRust tidak memproses isi paket; lewati seluruh `package ... endpackage`.
+        // SVRust mengumpulkan parameter paket agar referensi `pkg::nama` (misal
+        // `rram_ctrl_pkg::TotalDataPages`) dapat dievaluasi saat elaborasi. Isi
+        // paket selain parameter dilewati.
         if tokens[idx].token == Token::Package {
-            let mut end_idx = idx;
-            while end_idx < tokens.len() {
-                if tokens[end_idx].token == Token::Endpackage {
-                    end_idx += 1;
-                    break;
-                }
-                end_idx += 1;
+            if let Some((pkg, next)) = parse_package(&tokens[idx..])? {
+                packages.push(pkg);
+                idx += next;
+            } else {
+                idx += 1;
             }
-            idx = end_idx;
             continue;
         }
         // `class` — deklarasi kelas OOP (LRM §8). SVRust tidak memproses isi
@@ -99,6 +101,27 @@ pub fn parse_file(tokens: &[SpannedToken]) -> Result<ParseResult, String> {
             idx = end_idx;
             continue;
         }
+        // `interface` — definisi antarmuka (LRM §25). SVRust tidak memproses
+        // isi interface; lewati seluruh `interface ... endinterface` agar
+        // `typedef` di dalamnya tidak bocor ke scope global (compilation-unit)
+        // yang dielaborasi untuk design `--top` dan memicu error di file DV
+        // yang sebenarnya tak termasuk design.
+        if let Token::Ident(nama) = &tokens[idx].token {
+            if nama == "interface" {
+                let mut end_idx = idx;
+                while end_idx < tokens.len() {
+                    if let Token::Ident(e) = &tokens[end_idx].token {
+                        if e == "endinterface" {
+                            end_idx += 1;
+                            break;
+                        }
+                    }
+                    end_idx += 1;
+                }
+                idx = end_idx;
+                continue;
+            }
+        }
         // Modul SV — parse seluruh `module ... endmodule`.
         if tokens[idx].token == Token::Module {
             let awal = idx;
@@ -136,8 +159,205 @@ pub fn parse_file(tokens: &[SpannedToken]) -> Result<ParseResult, String> {
     }
     Ok(ParseResult {
         modules: out,
-        typedefs_global,
+        typedefs_global: gabung_typedef_paket(typedefs_global, &packages),
+        packages,
     })
+}
+
+/// Gabungkan `typedef` dari paket ke daftar typedef global dengan nama
+/// berkualifikasi `pkg::nama` (LRM §8.20) sehingga deklarasi tipe
+/// `pkg::nama var;` bisa di-resolve ke lebar konkret.
+fn gabung_typedef_paket(
+    mut global: Vec<sv_ast::typedef::TypeDefDecl>,
+    packages: &[sv_ast::package::PackageDecl],
+) -> Vec<sv_ast::typedef::TypeDefDecl> {
+    for pkg in packages {
+        for td in &pkg.typedefs {
+            global.push(sv_ast::typedef::TypeDefDecl {
+                name: format!("{}::{}", pkg.name, td.name),
+                body: td.body.clone(),
+                span: td.span,
+            });
+        }
+    }
+    global
+}
+
+/// Parse satu deklarasi `package Nama ... endpackage` dan kumpulkan
+/// parameternya (LRM §26).
+///
+/// Tokens dimulai pada `Token::Package`. Mengembalikan `(PackageDecl, jumlah
+/// token yang dikonsumsi)`, atau `None` bila paket tidak dapat diparse
+/// lengkap (misal `endpackage` tak ditemukan) — dalam hal itu pemanggil
+/// melompat satu token agar parse tidak gagal total.
+fn parse_package(tokens: &[SpannedToken]) -> Result<Option<(PackageDecl, usize)>, String> {
+    if tokens.is_empty() || tokens[0].token != Token::Package {
+        return Ok(None);
+    }
+    let span = tokens[0].span;
+    let mut idx = 1; // lewati 'package'
+
+    // Nama paket.
+    if idx >= tokens.len() {
+        return Err("expected nama paket setelah 'package'".to_string());
+    }
+    let Token::Ident(nama) = &tokens[idx].token else {
+        return Err("expected nama paket setelah 'package'".to_string());
+    };
+    let nama = nama.clone();
+    idx += 1;
+
+    // Lebarkan tanda `;` setelah nama paket (biasa ada).
+    if idx < tokens.len() && tokens[idx].token == Token::Semi {
+        idx += 1;
+    }
+
+    let mut params: Vec<sv_ast::width::LocalParamDecl> = Vec::new();
+    let mut typedefs: Vec<sv_ast::typedef::TypeDefDecl> = Vec::new();
+
+    // Isi paket: kumpulkan deklarasi `parameter Nama = EXPR;` dan `typedef`
+    // hingga `endpackage`. Konstruk lain (function, import, task, net,
+    // variabel, dll.) dilewati.
+    while idx < tokens.len() && tokens[idx].token != Token::Endpackage {
+        if tokens[idx].token == Token::Parameter || tokens[idx].token == Token::LocalParam {
+            match parse_package_parameter(&tokens[idx..]) {
+                Some((p, next)) => {
+                    params.push(p);
+                    idx += next;
+                }
+                None => {
+                    // Tidak bisa di-parse sebagai parameter; lewati satu token.
+                    idx += 1;
+                }
+            }
+        } else if tokens[idx].token == Token::Typedef {
+            // `typedef` di dalam paket (misal `typedef struct packed {..} t;`)
+            // dikumpulkan agar tipe berkualifikasi `pkg::t` bisa di-resolve.
+            match super::typedef::parse_typedef(&tokens[idx..]) {
+                Ok((decl, next)) => {
+                    typedefs.push(decl);
+                    idx += next;
+                }
+                Err(_) => {
+                    // Tidak bisa di-parse; lewati satu token agar parse tidak
+                    // gagal total.
+                    idx += 1;
+                }
+            }
+        } else {
+            // Lewati konstruk lain di dalam paket (import, function, task, net,
+            // variabel, dll.).
+            idx += 1;
+        }
+    }
+
+    if idx >= tokens.len() {
+        return Err("expected 'endpackage' menutup deklarasi paket".to_string());
+    }
+    idx += 1; // lewati 'endpackage'
+
+    Ok(Some((
+        PackageDecl {
+            name: nama,
+            span,
+            params,
+            typedefs,
+        },
+        idx,
+    )))
+}
+
+/// Parse satu deklarasi `parameter Nama = EXPR;` di dalam paket.
+///
+/// Mengembalikan `Some((decl, consumed))` atau `None` bila bentuknya bukan
+/// deklarasi parameter yang valid. Nilai disimpan sebagai ekspresi (seperti
+/// `localparam`) dan dievaluasi saat elaborasi.
+fn parse_package_parameter(
+    tokens: &[SpannedToken],
+) -> Option<(sv_ast::width::LocalParamDecl, usize)> {
+    if tokens.is_empty()
+        || (tokens[0].token != Token::Parameter && tokens[0].token != Token::LocalParam)
+    {
+        return None;
+    }
+    let mut idx = 1; // lewati 'parameter'
+
+    // Lewati tipe opsional (misal `int unsigned`, `bit [7:0]`).
+    if idx < tokens.len() && sv_lexer::token::tipe::bisa_mulai_deklarasi(&tokens[idx].token) {
+        idx += 1;
+        while idx < tokens.len() && matches!(tokens[idx].token, Token::Signed | Token::Unsigned) {
+            idx += 1;
+        }
+        while idx < tokens.len() && tokens[idx].token == Token::LBracket {
+            idx = crate::module::lewati_kurung_siku(tokens, idx);
+        }
+    } else if idx < tokens.len()
+        && matches!(tokens[idx].token, Token::Ident(_))
+        && tokens
+            .get(idx + 1)
+            .map(|t| t.token == Token::Colon)
+            .unwrap_or(false)
+    {
+        // `parameter pkg::tipe Nama = ...`
+        idx += 1;
+        while idx < tokens.len() && tokens[idx].token == Token::Colon {
+            idx += 1;
+        }
+        if idx < tokens.len() && matches!(tokens[idx].token, Token::Ident(_)) {
+            idx += 1;
+        }
+        while idx < tokens.len() && tokens[idx].token == Token::LBracket {
+            idx = crate::module::lewati_kurung_siku(tokens, idx);
+        }
+    }
+
+    // Nama parameter.
+    let Token::Ident(nama) = tokens.get(idx)?.token.clone() else {
+        return None;
+    };
+    let nama = nama.clone();
+    let span = tokens[idx].span;
+    idx += 1;
+
+    // Lewati signedness setelah nama.
+    if idx < tokens.len() && matches!(tokens[idx].token, Token::Signed | Token::Unsigned) {
+        idx += 1;
+    }
+
+    // Lewati dimensi unpacked setelah nama (misal `Nama [0:15]`).
+    while idx < tokens.len() && tokens[idx].token == Token::LBracket {
+        idx = crate::module::lewati_kurung_siku(tokens, idx);
+    }
+
+    // `= EXPR`.
+    if idx >= tokens.len() || tokens[idx].token != Token::Eq {
+        return None;
+    }
+    idx += 1;
+
+    let (value, eaten) = super::expression::parse_expression(&tokens[idx..]).ok()?;
+    idx += eaten;
+
+    // Lewati sisa hingga `;` atau koma.
+    while idx < tokens.len()
+        && tokens[idx].token != Token::Semi
+        && tokens[idx].token != Token::Comma
+    {
+        idx += 1;
+    }
+    let mut consumed = idx;
+    if consumed < tokens.len() && tokens[consumed].token == Token::Semi {
+        consumed += 1;
+    }
+
+    Some((
+        sv_ast::width::LocalParamDecl {
+            name: nama,
+            value,
+            span,
+        },
+        consumed,
+    ))
 }
 
 /// Parse argumen `timescale` setelah token direktif: `1us/1ps`.

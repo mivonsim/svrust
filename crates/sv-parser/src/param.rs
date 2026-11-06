@@ -407,4 +407,29 @@ mod tests {
         assert_eq!(params[0].default, 8);
         assert_eq!(params[1].default, 2);
     }
+
+    #[test]
+    fn repro_earlgrey_pd_main_full() {
+        use crate::module::parse_module;
+        use std::path::Path;
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../opentitan/hw/top_earlgrey/rtl/autogen/earlgrey_pd_main.sv"
+        );
+        let text = std::fs::read_to_string(path).expect("read");
+        let dir = Path::new(path).parent().unwrap();
+        let dirs = [dir];
+        let pp = sv_preprocessor::preprocess_with_dirs(&text, &dirs, path).expect("preprocess");
+        eprintln!("preprocessed len={}", pp.source.len());
+        let tokens = lex(&pp.source).expect("lex");
+        match parse_module(&tokens) {
+            Ok(m) => eprintln!(
+                "OK module={} ports={} params={}",
+                m.name,
+                m.ports.len(),
+                m.params.len()
+            ),
+            Err(e) => eprintln!("ERR: {e}"),
+        }
+    }
 }

@@ -61,7 +61,8 @@ pub fn unik_nama_modul(statements: &mut [Statement]) {
         match statement {
             Statement::AlwaysTimed { body, .. }
             | Statement::AlwaysComb { body, .. }
-            | Statement::Initial { body, .. } => {
+            | Statement::Initial { body, .. }
+            | Statement::Final { body, .. } => {
                 for stmt in body {
                     jalan_comb(stmt, &mut ctx);
                 }
@@ -208,6 +209,7 @@ fn jalan_comb(stmt: &mut CombinationalStatement, ctx: &mut Ctx) {
         CombinationalStatement::Deassign { lhs, .. } => {
             nama_lvalue(lhs, ctx);
         }
+        CombinationalStatement::ExprStmt { expr, .. } => nama_expr(expr, ctx),
     }
 }
 
@@ -347,6 +349,10 @@ fn nama_expr(expr: &mut Expr, ctx: &Ctx) {
             nama_expr(base, ctx);
             nama_expr(index, ctx);
         }
-        Expr::Number(_) | Expr::Sized { .. } | Expr::SystemTime { .. } => {}
+        Expr::Number(_)
+        | Expr::Sized { .. }
+        | Expr::SystemTime { .. }
+        | Expr::StringConst { .. }
+        | Expr::HierarchicalRef { .. } => {}
     }
 }

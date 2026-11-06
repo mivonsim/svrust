@@ -3,7 +3,11 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use sv_ast::module::Module;
+use sv_ast::package::PackageDecl;
+use sv_ast::typedef::TypeDefDecl;
 use sv_diag::{SourceId, SourceMap};
+use sv_ir::Design;
 
 /// Ekspansi berkas `.f` (file list) menjadi daftar berkas SV konkret.
 /// Baris kosong dan komentar (`//`, `#`) dilewati; path relatif terhadap
@@ -54,15 +58,14 @@ fn expand_f_file(
     }
     Ok(())
 }
-use sv_ast::module::Module;
-use sv_ast::typedef::TypeDefDecl;
-use sv_ir::Design;
 
 /// Hasil kumpulkan module dari semua berkas RTL, termasuk `typedef` di luar
-/// module (compilation-unit scope, LRM §8.20) yang tersedia untuk semua module.
+/// module (compilation-unit scope, LRM §8.20) dan parameter paket yang tersedia
+/// untuk semua module.
 pub struct ModuleCollection {
     pub modules: Vec<Module>,
     pub typedefs_global: Vec<TypeDefDecl>,
+    pub packages: Vec<PackageDecl>,
     diagnostics: Vec<sv_diag::Diagnostic>,
     sources: SourceMap,
     source_preprocessed: HashMap<SourceId, String>,
@@ -87,9 +90,13 @@ pub fn compile_with_top(source: &str, top: Option<&str>) -> Result<Design, Strin
     let tokens = sv_lexer::lex(&pp.source).map_err(|e| e.to_string())?;
     let parsed = sv_parser::parse_file(&tokens)?;
     let nama_top = pilih_top(&parsed.modules, top)?;
-    let mut design =
-        sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, &nama_top)
-            .map_err(|e| e.to_string())?;
+    let mut design = sv_elaborator::elaborate_top(
+        &parsed.modules,
+        &parsed.typedefs_global,
+        &parsed.packages,
+        &nama_top,
+    )
+    .map_err(|e| e.to_string())?;
     optimalkan(&mut design);
     Ok(design)
 }
@@ -117,10 +124,12 @@ pub fn optimalkan(design: &mut Design) -> sv_opt::Report {
 pub fn collect_modules(
     paths: &[PathBuf],
     incdir: &[PathBuf],
+    _top: Option<&str>,
 ) -> Result<ModuleCollection, crate::CliError> {
     let paths = expand_rtl_inputs(paths)?;
     let mut modules = Vec::new();
     let mut typedefs_global = Vec::new();
+    let mut packages = Vec::new();
     let mut diagnostics = Vec::new();
     let mut sources = SourceMap::new();
     let mut source_preprocessed = HashMap::new();
@@ -166,23 +175,29 @@ pub fn collect_modules(
         };
         for m in parsed.modules {
             if let Some(sama) = modules.iter().find(|x: &&Module| x.name == m.name) {
-                let message = format!(
-                    "module duplikat '{}' (ditemukan line {})",
-                    m.name, sama.span.line
-                );
-                let span = baris_sumber_asli(&source_asli, &source, m.span.line).and_then(|line| {
-                    sources.span_at(source_id, line, m.span.col).map(|span| {
-                        sv_diag::Span::new(
-                            source_id,
-                            span.start..span.start + m.span.end.saturating_sub(m.span.start),
-                        )
-                    })
-                });
-                let span = span.unwrap_or_else(|| {
-                    span_fallback(&sources, source_id, m.span.line, m.span.col)
-                        .unwrap_or_else(|| sv_diag::Span::empty(source_id, 0))
-                });
-                diagnostics.push(sv_diag::Diagnostic::error("E0002", message, span));
+                // Dengan `--top`, duplikasi diam-diam dilewati (hanya definisi
+                // pertama yang dipertahankan). Tanpa `--top`, laporkan ambigu.
+                if _top.is_none() {
+                    let message = format!(
+                        "module duplikat '{}' (ditemukan line {})",
+                        m.name, sama.span.line
+                    );
+                    let span =
+                        baris_sumber_asli(&source_asli, &source, m.span.line).and_then(|line| {
+                            sources.span_at(source_id, line, m.span.col).map(|span| {
+                                sv_diag::Span::new(
+                                    source_id,
+                                    span.start
+                                        ..span.start + m.span.end.saturating_sub(m.span.start),
+                                )
+                            })
+                        });
+                    let span = span.unwrap_or_else(|| {
+                        span_fallback(&sources, source_id, m.span.line, m.span.col)
+                            .unwrap_or_else(|| sv_diag::Span::empty(source_id, 0))
+                    });
+                    diagnostics.push(sv_diag::Diagnostic::error("E0002", message, span));
+                }
                 continue;
             }
             let last_line = end_module_line(&tokens, &m.name).unwrap_or(m.span.line);
@@ -197,14 +212,70 @@ pub fn collect_modules(
             modules.push(m);
         }
         typedefs_global.extend(parsed.typedefs_global);
+        packages.extend(parsed.packages);
     }
     if modules.is_empty() && diagnostics.is_empty() {
         return Err("tidak ada module di berkas RTL".into());
     }
+
+    // Dengan `--top`, hanya pertahankan modul yang tercapai dari top.
+    let modules_kept = if let Some(nama_top) = _top {
+        let total_modules = modules.len();
+        let mut reachable = HashSet::new();
+        let mut stack = vec![nama_top.to_string()];
+        let module_by_name: HashMap<&str, &Module> =
+            modules.iter().map(|m| (m.name.as_str(), m)).collect();
+        while let Some(nama) = stack.pop() {
+            if !reachable.insert(nama.clone()) {
+                continue;
+            }
+            if let Some(modul) = module_by_name.get(nama.as_str()) {
+                for inst in &modul.instances {
+                    stack.push(inst.module_name.clone());
+                }
+            }
+        }
+        let kept: Vec<_> = modules
+            .into_iter()
+            .filter(|m| reachable.contains(&m.name))
+            .collect();
+        eprintln!(
+            "DEBUG reachable modules: {} kept out of {} total",
+            kept.len(),
+            total_modules
+        );
+        for m in &kept {
+            eprintln!("  kept: {}", m.name);
+        }
+        kept
+    } else {
+        modules
+    };
+
+    // Filter diagnostics: hanya pertahankan dari sumber yang tercapai top.
+    let diagnostics_filtered = if _top.is_some() {
+        let reachable_sources: HashSet<SourceId> = modules_kept
+            .iter()
+            .filter_map(|m| module_origins.get(&m.name))
+            .map(|o| o.source)
+            .collect();
+        diagnostics
+            .into_iter()
+            .filter(|d| {
+                d.primary.as_ref().map_or(false, |label| {
+                    reachable_sources.contains(&label.span.source)
+                })
+            })
+            .collect()
+    } else {
+        diagnostics
+    };
+
     Ok(ModuleCollection {
-        modules,
+        modules: modules_kept,
         typedefs_global,
-        diagnostics,
+        packages,
+        diagnostics: diagnostics_filtered,
         sources,
         source_preprocessed,
         module_origins,
@@ -227,21 +298,28 @@ pub(crate) fn diagnostic_elaborator(
     collection: &ModuleCollection,
 ) -> crate::CliError {
     let pesan = error.to_string();
+    // Hanya pertahankan origin untuk module yang berada dalam collection
+    // (sudah difilter oleh reachability). Hindari memetakan error ke berkas
+    // DV/lain yang tidak relevan hanya karena nomor baris sama.
+    let kept_names: std::collections::HashSet<&str> =
+        collection.modules.iter().map(|m| m.name.as_str()).collect();
     let mut matching_origins: Vec<_> = collection
         .module_origins
-        .values()
-        .filter(|origin| {
+        .iter()
+        .filter(|(nama, _)| kept_names.contains(nama.as_str()))
+        .filter(|(_, origin)| {
             origin.first_line <= error.span.line && error.span.line <= origin.last_line
         })
-        .copied()
+        .map(|(_, origin)| *origin)
         .collect();
     matching_origins.sort_by_key(|origin| origin.source.0);
     let origin = matching_origins.first().copied().or_else(|| {
         collection
             .module_origins
-            .values()
+            .iter()
+            .filter(|(nama, _)| kept_names.contains(nama.as_str()))
+            .map(|(_, origin)| *origin)
             .min_by_key(|origin| origin.source.0)
-            .copied()
     });
     let Some(origin) = origin else {
         return diagnostic_tanpa_lokasi("E0201", pesan);
@@ -406,11 +484,15 @@ pub fn compile_paths(
     top: Option<&str>,
     incdir: &[PathBuf],
 ) -> Result<Design, String> {
-    let collection = collect_modules(paths, incdir).map_err(|error| error.to_string())?;
+    let collection = collect_modules(paths, incdir, top).map_err(|error| error.to_string())?;
     let nama_top = pilih_top(&collection.modules, top)?;
-    let mut design =
-        sv_elaborator::elaborate_top(&collection.modules, &collection.typedefs_global, &nama_top)
-            .map_err(|e| e.to_string())?;
+    let mut design = sv_elaborator::elaborate_top(
+        &collection.modules,
+        &collection.typedefs_global,
+        &collection.packages,
+        &nama_top,
+    )
+    .map_err(|e| e.to_string())?;
     optimalkan(&mut design);
     Ok(design)
 }
@@ -446,7 +528,7 @@ pub fn compile_semua_root(
     top: Option<&str>,
     incdir: &[PathBuf],
 ) -> Result<Vec<sv_ir::Design>, crate::CliError> {
-    let collection = collect_modules(paths, incdir)?;
+    let collection = collect_modules(paths, incdir, top)?;
     let tops = tops_dipakai(&collection.modules, top)
         .map_err(|error| diagnostic_top_error(error, &collection))?;
     elaborate_tops(&collection, &tops)
@@ -459,7 +541,12 @@ pub(crate) fn elaborate_tops(
     let mut designs = Vec::new();
     let mut diagnostics = collection.diagnostics.clone();
     for nama in tops {
-        match sv_elaborator::elaborate_top(&collection.modules, &collection.typedefs_global, nama) {
+        match sv_elaborator::elaborate_top(
+            &collection.modules,
+            &collection.typedefs_global,
+            &collection.packages,
+            nama,
+        ) {
             Ok(mut design) => {
                 optimalkan(&mut design);
                 designs.push(design);
@@ -868,6 +955,7 @@ mod tests {
         let collection = ModuleCollection {
             modules: parsed.modules,
             typedefs_global: parsed.typedefs_global,
+            packages: Vec::new(),
             diagnostics: Vec::new(),
             sources,
             source_preprocessed: HashMap::from([(source_id, source.to_string())]),
@@ -880,8 +968,9 @@ mod tests {
                 },
             )]),
         };
-        let error = sv_elaborator::elaborate_top(&collection.modules, &[], "m")
-            .expect_err("sinyal y tidak dideklarasikan");
+        let error =
+            sv_elaborator::elaborate_top(&collection.modules, &[], &collection.packages, "m")
+                .expect_err("sinyal y tidak dideklarasikan");
         let report = diagnostic_elaborator(error, &collection)
             .report()
             .expect("error harus dirender");
@@ -903,6 +992,7 @@ mod tests {
         let collection = ModuleCollection {
             modules: parsed.modules,
             typedefs_global: parsed.typedefs_global,
+            packages: Vec::new(),
             diagnostics: Vec::new(),
             sources,
             source_preprocessed: HashMap::from([(source_id, source.to_string())]),

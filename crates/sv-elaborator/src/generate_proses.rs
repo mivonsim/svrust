@@ -1,7 +1,7 @@
 // Tanggung jawab: substitusi genvar dan scope pada proses di dalam generate.
 use crate::error::ElaborateError;
 use crate::generate::{GenvarEnv, ScopeBlok};
-use crate::param::ParamTable;
+use crate::param::{PackageTable, ParamTable};
 use crate::symbol::{Symbol, SymbolTable};
 use sv_ast::combinational::CombinationalStatement;
 use sv_ast::declaration::Declaration;
@@ -48,7 +48,8 @@ fn kumpulkan_dari_statement(stmt: &Statement, out: &mut Vec<Declaration>) {
     match stmt {
         Statement::AlwaysTimed { body, .. }
         | Statement::AlwaysComb { body, .. }
-        | Statement::Initial { body, .. } => kumpulan_comb(body, out),
+        | Statement::Initial { body, .. }
+        | Statement::Final { body, .. } => kumpulan_comb(body, out),
         Statement::AlwaysFf { body, .. } => kumpulan_seq(body, out),
         Statement::ContinuousAssign { .. } => {}
     }
@@ -69,7 +70,8 @@ fn kumpulan_comb(body: &[CombinationalStatement], out: &mut Vec<Declaration>) {
             | CombinationalStatement::TaskCall(_)
             | CombinationalStatement::Return { .. }
             | CombinationalStatement::ProceduralAssign { .. }
-            | CombinationalStatement::Deassign { .. } => {}
+            | CombinationalStatement::Deassign { .. }
+            | CombinationalStatement::ExprStmt { .. } => {}
             // Variabel loop `for` tidak dikumpulkan sebagai deklarasi, sama seperti
             // `local_decl` pada modul biasa.
             CombinationalStatement::For { body, .. } => kumpulan_comb(body, out),
@@ -134,11 +136,12 @@ pub(crate) fn daftarkan(
     stmt: &Statement,
     scope: &ScopeBlok,
     params: &ParamTable,
+    packages: &PackageTable,
 ) -> Result<(), ElaborateError> {
     let mut decls = Vec::new();
     kumpulkan_dari_statement(stmt, &mut decls);
     for decl in decls {
-        let bit = params.lebar(&decl.width, decl.span)?;
+        let bit = params.lebar(&decl.width, packages, decl.span)?;
         let tipe = DataType::logic(bit as u32).with_signed(decl.signed);
         let nama = scope.nama_luar(&decl.name, decl.span);
         let id = symbols.insert(Symbol {
@@ -186,6 +189,10 @@ pub(crate) fn subst_statement(stmt: &Statement, env: &GenvarEnv, scope: &ScopeBl
                 .map(|item| item.dengan_nama(scope.nama_luar(&item.signal, item.span)))
                 .collect(),
             body: subst_seq(body, env, scope),
+            span: *span,
+        },
+        Statement::Final { body, span } => Statement::Final {
+            body: subst_comb(body, env, scope),
             span: *span,
         },
     }
@@ -344,6 +351,9 @@ pub(crate) fn subst_expr(expr: &AstExpr, env: &GenvarEnv, scope: &ScopeBlok) -> 
             operand: Box::new(subst_expr(operand, env, scope)),
             span: *span,
         },
+        // Hierarchical ref dan string konstanta tidak berisi genvar yang perlu
+        // disubstitusi.
+        AstExpr::HierarchicalRef { .. } | AstExpr::StringConst { .. } => expr.clone(),
     }
 }
 
@@ -521,6 +531,7 @@ pub(crate) fn subst_comb(
                 lhs: subst_lvalue(lhs, scope, env),
                 span: *span,
             },
+            CombinationalStatement::ExprStmt { .. } => stmt.clone(),
         })
         .collect()
 }

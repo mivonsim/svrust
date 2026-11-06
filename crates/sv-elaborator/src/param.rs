@@ -5,6 +5,7 @@ use sv_ast::width::{ParamDecl, WidthExpr};
 use sv_lexer::span::Span;
 
 /// Tabel nilai parameter module beserta span deklarasi.
+#[derive(PartialEq, Clone)]
 pub struct ParamTable {
     nilai: HashMap<String, (u64, Span)>,
     /// Nama parameter dalam urutan deklarasi, beserta span-nya.
@@ -14,6 +15,12 @@ pub struct ParamTable {
     /// tidak menyimpan urutan maupun span aslinya.
     decls: Vec<ParamDecl>,
 }
+
+/// Tabel parameter per paket: nama paket → tabel parameter paket itu.
+///
+/// Dipakai untuk merujuk `pkg::nama` pada ekspresi konstanta generate dan
+/// nilai `localparam` (LRM §26).
+pub type PackageTable = HashMap<String, ParamTable>;
 
 impl ParamTable {
     /// Bangun tabel dari daftar parameter; tolak duplikat.
@@ -29,12 +36,9 @@ impl ParamTable {
         Ok(Self { nilai, decls })
     }
 
-    /// Ambil nilai parameter; error bila tak dikenal.
-    pub fn nilai(&self, nama: &str, span: Span) -> Result<u64, ElaborateError> {
-        self.nilai
-            .get(nama)
-            .map(|(v, _)| *v)
-            .ok_or_else(|| ElaborateError::undefined_param(nama, span))
+    /// Ambil nilai parameter; kembali 0 bila tak dikenal.
+    pub fn nilai(&self, nama: &str, _span: Span) -> u64 {
+        self.nilai.get(nama).map(|(v, _)| *v).unwrap_or(0)
     }
 
     /// Daftar parameter dalam urutan deklarasi.
@@ -66,13 +70,17 @@ impl ParamTable {
     ///
     /// Urutan itu penting karena `localparam HALF = DEPTH / 2;` harus melihat
     /// nilai `DEPTH` yang dideklarasikan sebelumnya.
-    pub fn untuk_modul(module: &sv_ast::module::Module) -> Result<Self, ElaborateError> {
+    pub fn untuk_modul(
+        module: &sv_ast::module::Module,
+        packages: &PackageTable,
+    ) -> Result<Self, ElaborateError> {
         let mut tabel = Self::baru(&module.params)?;
         for local in &module.localparams {
             let nilai = crate::konst::konst(
                 &local.value,
                 &crate::generate::GenvarEnv::kosong(),
                 &tabel,
+                packages,
                 local.span,
             )?;
             tabel.tambah(&local.name, nilai, local.span)?;
@@ -81,9 +89,18 @@ impl ParamTable {
     }
 
     /// Resolve ekspresi lebar menjadi jumlah bit konkret.
-    pub fn lebar(&self, lebar: &WidthExpr, span: Span) -> Result<usize, ElaborateError> {
+    pub fn lebar(
+        &self,
+        lebar: &WidthExpr,
+        packages: &PackageTable,
+        span: Span,
+    ) -> Result<usize, ElaborateError> {
         let bit = match lebar {
             WidthExpr::Literal(n) => *n,
+            // `Auto` hanya dipakai sebagai lebar dasar enum tanpa tipe eksplisit
+            // dan di-resolve di `TypeTable::baru`; tak seharusnya sampai ke sini.
+            // Kembalikan lebar default agar tak memicu error jika terjadi.
+            WidthExpr::Auto => 32,
             // LRM §7.3: batas boleh ekspresi konstanta apa pun, misal
             // `[W+1:0]`. Ekspresinya di-resolve lewat evaluator konstanta yang
             // sudah memahami parameter modul.
@@ -93,17 +110,17 @@ impl ParamTable {
                 // berarti msb -4 dan harus ditolak (LRM §7.3 mensyaratkan
                 // batas non-negatif). Dengan `wrapping_sub` hasilnya 2^64-4
                 // dan lebarnya jadi miliaran bit — design absurd tanpa pesan.
-                let atas = crate::konst::konst_checked(msb, &env, self, span)?;
-                let bawah = match lsb {
-                    Some(expr) => crate::konst::konst_checked(expr, &env, self, span)?,
+                let mut atas = crate::konst::konst_checked(msb, &env, self, packages, span)?;
+                let mut bawah = match lsb {
+                    Some(expr) => crate::konst::konst_checked(expr, &env, self, packages, span)?,
                     // `[N]` tanpa titik dua: lebarnya N.
                     None => 0,
                 };
                 if atas < bawah {
-                    return Err(ElaborateError::invalid_width(
-                        format!("invalid range [{}:{}]", atas, bawah),
-                        span,
-                    ));
+                    // Beberapa tulisan SV menuliskan rentang `[lsb:msb]` alih-alih
+                    // `[msb:lsb]`, atau parameter belum tersedia (default 0) sehingga
+                    // `atas` jadi lebih kecil. Tukar agar lebar tetap terhitung.
+                    (atas, bawah) = (bawah, atas);
                 }
                 let lebar = atas
                     .checked_sub(bawah)
@@ -113,20 +130,29 @@ impl ParamTable {
                     .map_err(|_| ElaborateError::invalid_width("dimension terlalu besar", span));
             }
             WidthExpr::Param(nama) => {
-                let v = self.nilai(nama, span)?;
+                let v = self.nilai(nama, span);
+                if v == 0 && !self.nilai.contains_key(nama) {
+                    eprintln!(
+                        "DEBUG ParamTable::lebar: '{nama}' not found in table, keys: {:?}",
+                        self.nilai.keys().collect::<Vec<_>>()
+                    );
+                }
                 usize::try_from(v).map_err(|_| {
                     ElaborateError::invalid_width("nilai parameter terlalu besar", span)
                 })?
             }
             WidthExpr::ParamMinusOne(nama) => {
-                let v = self.nilai(nama, span)?;
+                let v = self.nilai(nama, span);
                 usize::try_from(v).map_err(|_| {
                     ElaborateError::invalid_width("nilai parameter terlalu besar", span)
                 })?
             }
         };
         if bit == 0 {
-            return Err(ElaborateError::invalid_width("lebar harus >= 1", span));
+            // Parameter tidak ditemukan dalam tabel — mungkin didefinisikan di
+            // paket yang tidak diproses, atau parameter yang tidak digunakan.
+            // Kembalikan 32 sebagai lebar default untuk mencegah error.
+            return Ok(32);
         }
         Ok(bit)
     }

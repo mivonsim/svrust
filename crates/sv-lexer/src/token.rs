@@ -36,6 +36,7 @@ pub mod tipe {
                 | Token::Wire
                 | Token::Reg
                 | Token::Bit
+                | Token::String
                 | Token::Integer
                 | Token::Int
                 | Token::Byte
@@ -59,6 +60,10 @@ pub enum Token {
     Wire,
     Reg,
     Bit,
+    /// `string` — tipe string dinamis (LRM §6.14). Tidak ada lebar bit bawaan;
+    /// dielaborasi sebagai vektor lebar default agar kode yang menggunakannya
+    /// tetap bisa di-parse dan di-build.
+    String,
     /// `integer` — integer 32-bit signed (LRM §6.2.2).
     Integer,
     /// `int` — integer 32-bit signed (LRM §6.2.2).
@@ -81,8 +86,19 @@ pub enum Token {
     Struct,
     /// `union` — union packed (LRM §6.7, §8).
     Union,
+    /// `bind` — binding antarmuka ke instance modul (LRM §25.6). Dilewati
+    /// saat parse isi modul; tidak mempengaruhi struktur modul.
+    Bind,
+    /// `class` — kelas OOP SystemVerilog (LRM §8). Dilewati saat parse top-level.
+    Class,
+    /// `endclass` — penutup deklarasi kelas.
+    Endclass,
     /// `assert` — immediate assertion (LRM §20.4).
     Assert,
+    /// `package` — deklarasi paket yang berisi definisi tipe, parameter, dan subroutine (LRM §26).
+    Package,
+    /// `endpackage` — penutup deklarasi paket (LRM §26).
+    Endpackage,
     /// `property` — deklarasi properti SVA concurrent assertion (LRM §20/§21).
     Property,
     Signed,
@@ -115,6 +131,10 @@ pub enum Token {
     /// body harus mengandung penundaan atau event control agar simulasi tidak
     /// hang.
     Forever,
+    /// `void` — tipe balik function tanpa nilai (LRM §13.4).
+    Void,
+    /// `final` — blok penutup eksekusi akhir simulasi (LRM §12.13).
+    Final,
     Initial,
     /// `generate` — pembuka region generate (LRM §27.1).
     Generate,

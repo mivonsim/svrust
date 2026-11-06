@@ -32,6 +32,9 @@ pub enum SystemTaskKind {
     DumpVars,
     /// `assert (condition);` — immediate assertion (LRM §20.4).
     Assert,
+    /// `$value$plusargs("nama=%d", var)` — baca nilai plusarg `+nama=...`
+    /// dari baris perintah lalu masukkan ke `var` (LRM §20.9).
+    ValuePlusArgs,
 }
 
 impl SystemTaskKind {
@@ -46,6 +49,7 @@ impl SystemTaskKind {
             "strobe" => Some(SystemTaskKind::Strobe),
             "dumpfile" => Some(SystemTaskKind::DumpFile),
             "dumpvars" => Some(SystemTaskKind::DumpVars),
+            "value$plusargs" => Some(SystemTaskKind::ValuePlusArgs),
             _ => None,
         }
     }
@@ -94,6 +98,14 @@ mod tests {
     #[test]
     fn task_tidak_dikenal_mengembalikan_none() {
         assert_eq!(SystemTaskKind::from_name("writeln"), None);
+    }
+
+    #[test]
+    fn value_plusargs_dikenali() {
+        assert_eq!(
+            SystemTaskKind::from_name("value$plusargs"),
+            Some(SystemTaskKind::ValuePlusArgs)
+        );
     }
 
     #[test]

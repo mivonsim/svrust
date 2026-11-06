@@ -10,6 +10,7 @@ use sv_ir::Design;
 /// spesifikasi gaya printf yang sudah dipisah dari literalnya, sehingga
 /// kode yang dihasilkan tidak perlu `format!` dinamis.
 pub fn write_system_task(
+    design: &Design,
     kind: SystemTaskKind,
     args: &[SystemArg],
     scale: sv_ir::TimeScale,
@@ -91,7 +92,78 @@ pub fn write_system_task(
             indent.push(out);
             out.push_str("}\n");
         }
+        // LRM §20.9: $value$plusargs("nama=%d", var) baca nilai plusarg
+        // +nama=<nilai> dari baris perintah lalu masukkan ke var.
+        SystemTaskKind::ValuePlusArgs => write_value_plusargs(design, args, out, indent),
     }
+}
+
+/// Tulis `$value$plusargs("nama=fmt", var)`: cari plusarg +nama=<nilai>
+/// lalu tulis ke sinyal target. Format string di-parse untuk nama plusarg
+/// (segmen sebelum =).
+fn write_value_plusargs(design: &Design, args: &[SystemArg], out: &mut String, indent: &Indent) {
+    // Argumen pertama: format string yang berisi nama plusarg.
+    let format_teks = args.iter().find_map(|arg| match arg {
+        SystemArg::Format(teks) => Some(teks.as_str()),
+        SystemArg::Value(_) => None,
+    });
+    let Some(nama_plusarg) =
+        format_teks.and_then(|teks| teks.split('=').next().map(|s| s.trim().to_string()))
+    else {
+        // Tanpa format string, tidak dapat menentukan plusarg; abaikan.
+        return;
+    };
+    // Argumen kedua: variabel target (ekspresi sinyal).
+    let Some(SystemArg::Value(target_expr)) = args.get(1) else {
+        return;
+    };
+    let target_id = match target_expr {
+        sv_ir::expr::Expr::SignalRef { signal, .. } => *signal,
+        _ => return,
+    };
+    let width = design
+        .variables
+        .iter()
+        .find(|v| v.signal_id == target_id)
+        .map(|v| v.data_type.width)
+        .unwrap_or(1);
+    let target_is_real = design
+        .variables
+        .iter()
+        .find(|v| v.signal_id == target_id)
+        .map(|v| v.data_type.kind == sv_ir::datatype::ValueKind::Real)
+        .unwrap_or(false);
+
+    indent.push(out);
+    out.push_str(&format!(
+        "if let Some(nilai) = self.plusargs.iter().find(|(n, _)| n == \\\"{}\\\").map(|(_, v)| v) {{\n",
+        nama_plusarg
+    ));
+    let body = indent.child();
+    body.push(out);
+    if target_is_real {
+        out.push_str(&format!(
+            "self.signals[{}].write(sv_runtime::Bits::<MAX_WIDTH>::from_f64(nilai.parse::<f64>().unwrap_or(0.0)));
+",
+            target_id
+        ));
+    } else {
+        out.push_str(&format!(
+            "self.signals[{}].write(sv_runtime::Bits::<{width}>::from_u64(nilai.parse::<u64>().unwrap_or(0)));
+",
+            target_id
+        ));
+    }
+    indent.push(out);
+    out.push_str(
+        "}
+",
+    );
+}
+
+/// True bila design memanggil $value$plusargs di salah satu prosesnya.
+pub fn has_value_plusargs(design: &Design) -> bool {
+    find_task(design, SystemTaskKind::ValuePlusArgs).is_some()
 }
 
 /// Tulis `$dumpfile("nama.vcd")`; argumen harus berupa string literal.
@@ -334,6 +406,7 @@ mod tests {
     fn render(kind: SystemTaskKind, args: &[SystemArg]) -> String {
         let mut out = String::new();
         write_system_task(
+            &sv_ir::Design::new("t"),
             kind,
             args,
             sv_ir::TimeScale::default(),

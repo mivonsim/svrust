@@ -42,6 +42,13 @@ pub enum Statement {
         body: Vec<CombinationalStatement>,
         span: Span,
     },
+    /// Blok `final begin ... end` pada testbench (LRM §15.2).
+    ///
+    /// Dieksekusi pada akhir simulasi, setelah semua proses selesai.
+    Final {
+        body: Vec<CombinationalStatement>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
