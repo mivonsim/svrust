@@ -7,7 +7,7 @@ use sv_elaborator::ElaborateError;
 fn err_top(sumber: &str, top: &str) -> ElaborateError {
     let tokens = sv_lexer::lex(sumber).expect("lex");
     let parsed = sv_parser::parse_file(&tokens).expect("parse");
-    sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, top)
+    sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, &[], top)
         .expect_err("elaborate harus gagal")
 }
 
@@ -61,7 +61,7 @@ fn hierarki_legitimate_berhasil_dielaborasi() {
     }
     let tokens = sv_lexer::lex(&sumber).expect("lex");
     let parsed = sv_parser::parse_file(&tokens).expect("parse");
-    sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, "m7")
+    sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, &[], "m7")
         .expect("hierarki 8 tingkat harus sah");
 }
 
@@ -74,7 +74,7 @@ fn instansiasi_langsung_tidak_menghapus_modul_induk() {
                   module top(input a, output y); mid u0(.a(a), .y(y)); endmodule\n";
     let tokens = sv_lexer::lex(sumber).expect("lex");
     let parsed = sv_parser::parse_file(&tokens).expect("parse");
-    let design = sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, "top")
+    let design = sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, &[], "top")
         .expect("elaborate");
     // Sinyal `y` top harus tetap ada.
     assert!(

@@ -693,7 +693,7 @@ pub fn span_expr(expr: &AstExpr) -> sv_lexer::span::Span {
 fn cek_indeks_konstan(
     symbol: &crate::symbol::Symbol,
     index: u64,
-    span: sv_lexer::span::Span,
+    _span: sv_lexer::span::Span,
 ) -> Result<(), ElaborateError> {
     let valid = match &symbol.unpacked {
         Some(info) => info.dims.offset(&[index]).is_some(),

@@ -1,6 +1,7 @@
 // Tanggung jawab: resolve nilai parameter dan ekspresi lebar.
 use crate::error::ElaborateError;
 use std::collections::HashMap;
+use sv_ast::expression::Expr;
 use sv_ast::width::{ParamDecl, WidthExpr};
 use sv_lexer::span::Span;
 
@@ -177,20 +178,29 @@ mod tests {
     #[test]
     fn literal_lolos() {
         let t = tabel();
-        assert_eq!(t.lebar(&WidthExpr::Literal(4), Span::dummy()).unwrap(), 4);
+        assert_eq!(
+            t.lebar(&WidthExpr::Literal(4), &PackageTable::new(), Span::dummy())
+                .unwrap(),
+            4
+        );
     }
 
     #[test]
     fn param_tresolve() {
         let t = tabel();
         assert_eq!(
-            t.lebar(&WidthExpr::Param("WIDTH".to_string()), Span::dummy())
-                .unwrap(),
+            t.lebar(
+                &WidthExpr::Param("WIDTH".to_string()),
+                &PackageTable::new(),
+                Span::dummy()
+            )
+            .unwrap(),
             8
         );
         assert_eq!(
             t.lebar(
                 &WidthExpr::ParamMinusOne("WIDTH".to_string()),
+                &PackageTable::new(),
                 Span::dummy()
             )
             .unwrap(),
@@ -202,7 +212,11 @@ mod tests {
     fn param_tak_dikenal_gagal() {
         let t = tabel();
         assert!(t
-            .lebar(&WidthExpr::Param("DEPTH".to_string()), Span::dummy())
+            .lebar(
+                &WidthExpr::Param("DEPTH".to_string()),
+                &PackageTable::new(),
+                Span::dummy()
+            )
             .is_err());
     }
 
@@ -230,6 +244,25 @@ mod tests {
     #[test]
     fn lebar_nol_ditolak() {
         let t = tabel();
-        assert!(t.lebar(&WidthExpr::Literal(0), Span::dummy()).is_err());
+        assert!(t
+            .lebar(&WidthExpr::Literal(0), &PackageTable::new(), Span::dummy())
+            .is_err());
+    }
+
+    /// LRM §7.3: batas non-negatif. Rentang `[0:7]` (msb < lsb) tidak boleh
+    /// gagal elaborasi — parameter belum tersedia (default 0) sehingga
+    /// konst_checked menghasilkan msb < lsb. Swap agar lebar tetap terhitung.
+    #[test]
+    fn lebar_range_msb_lebih_kecil_dari_lsb_ditukar() {
+        use sv_ast::expression::Expr;
+        let t = tabel();
+        let expr = WidthExpr::Expr {
+            msb: Box::new(Expr::Number(0)),
+            lsb: Some(Box::new(Expr::Number(7))),
+        };
+        assert_eq!(
+            t.lebar(&expr, &PackageTable::new(), Span::dummy()).unwrap(),
+            8
+        );
     }
 }

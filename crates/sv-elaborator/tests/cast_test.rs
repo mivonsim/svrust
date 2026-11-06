@@ -692,7 +692,7 @@ module top(input [15:0] a, output [7:0] y);
 endmodule";
     let tokens = sv_lexer::lex(src).expect("lex");
     let parsed = sv_parser::parse_file(&tokens).expect("parse");
-    let err = sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, "top")
+    let err = sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, &[], "top")
         .expect_err("harus gagal");
     assert!(
         err.to_string().contains("undefined type"),

@@ -165,7 +165,8 @@ fn always_comb_sensitivity_collects_all_reads() {
 fn build_top(source: &str, top: &str) -> sv_ir::Design {
     let tokens = sv_lexer::lex(source).expect("lex");
     let parsed = sv_parser::parse_file(&tokens).expect("parse");
-    sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, top).expect("elaborate")
+    sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, &[], top)
+        .expect("elaborate")
 }
 
 #[test]
@@ -205,7 +206,9 @@ fn koneksi_lebar_beda_ditolak() {
     )
     .expect("lex");
     let parsed = sv_parser::parse_file(&tokens).expect("parse");
-    assert!(sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, "top").is_err());
+    assert!(
+        sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, &[], "top").is_err()
+    );
 }
 
 #[test]
@@ -216,7 +219,9 @@ fn port_tak_tersambung_ditolak() {
     )
     .expect("lex");
     let parsed = sv_parser::parse_file(&tokens).expect("parse");
-    assert!(sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, "top").is_err());
+    assert!(
+        sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, &[], "top").is_err()
+    );
 }
 
 #[test]
@@ -334,4 +339,34 @@ fn elaborasi_satuan_tanpa_nama_menjadi_nanosecond() {
         panic!("harus delay");
     };
     assert_eq!(*unit, sv_ir::TimeUnit::NanoSeconds);
+}
+
+/// LRM §26: paket bergantung pada paket lain harus di-resolve secara iteratif
+/// hingga nilai stabil (misal `handler_pkg::NAlerts = reg_pkg::NAlerts`).
+#[test]
+fn paket_tergantung_paket_lain_diresolve_iteratif() {
+    let src = "package reg_pkg; parameter int NAlerts = 66; endpackage\n\
+               package handler_pkg; parameter int NAlerts = reg_pkg::NAlerts; endpackage\n\
+               module top; endmodule";
+    let design = build_top(src, "top");
+    assert_eq!(design.name, "top");
+}
+
+/// Lebar koneksi beda tidak boleh gagal elaborasi (warning saja, runtime
+/// menghasilkan X untuk bit yang tidak terdefinisi).
+#[test]
+fn lebar_koneksi_beda_tidak_gagal() {
+    let src = "module child(output [7:0] y); assign y = 8'hAA; endmodule\n\
+               module top; wire [1:0] w; child c(.y(w)); endmodule";
+    let design = build_top(src, "top");
+    assert_eq!(design.name, "top");
+}
+
+/// Indeks konstanta di luar jangkauan sinyal tidak boleh gagal elaborasi;
+/// runtime akan menghasilkan `X` untuk bit yang tidak terdefinisi.
+#[test]
+fn indeks_keluar_jangkauan_tidak_gagal() {
+    let src = "module m; logic [7:0] a; logic [7:0] b; assign b = a[100]; endmodule";
+    let design = build(src);
+    assert_eq!(design.name, "m");
 }

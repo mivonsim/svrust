@@ -547,10 +547,25 @@ mod tests {
                 &ident("W"),
                 &env,
                 &params_dengan(&[("W", 8)]),
+                &PackageTable::new(),
                 Span::dummy()
             )
             .unwrap(),
             99
+        );
+    }
+
+    /// `$bits(ekspresi)` mengembalikan lebar bit (LRM §20). Tanpa tabel tipe,
+    /// asumsikan 32 bit (default integer).
+    #[test]
+    fn bits_fungsi_mengembalikan_lebar_default() {
+        assert_eq!(
+            eval(&Expr::Bits {
+                operand: Box::new(Expr::Number(0)),
+                span: Span::dummy(),
+            })
+            .unwrap(),
+            32
         );
     }
 

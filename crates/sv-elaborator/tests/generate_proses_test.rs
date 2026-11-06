@@ -6,7 +6,7 @@ use sv_parser::parse_file;
 fn desain(src: &str, top: &str) -> Result<sv_ir::Design, String> {
     let tokens = lex(src).map_err(|e| e.to_string())?;
     let modules = parse_file(&tokens)?.modules;
-    elaborate_top(&modules, &[], top).map_err(|e| e.to_string())
+    elaborate_top(&modules, &[], &[], top).map_err(|e| e.to_string())
 }
 
 // BUG: `always_ff` di dalam loop generate ditolak parser karena genvar belum
@@ -120,4 +120,15 @@ fn genvar_tersubstusi_di_badan_proses() {
                endmodule";
     let d = desain(src, "m").expect("elaborate");
     assert_eq!(d.processes.len(), 4);
+}
+
+/// Indeks LHS yang tidak dapat dievaluasi (bukan genvar dalam loop generate)
+/// tidak boleh gagal elaborasi; pakai indeks 0 sebagai fallback.
+#[test]
+fn indeks_lhs_tidak_terdefinisi_pakai_indeks_nol() {
+    let src = "module m(output [3:0] q); \
+               always_comb q[i_tidak_ada] = 1'b1; \
+               endmodule";
+    let d = desain(src, "m").expect("elaborate");
+    assert_eq!(d.processes.len(), 1);
 }

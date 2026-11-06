@@ -335,6 +335,7 @@ fn task_literal(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::param::PackageTable;
     use sv_ast::typedef::{EnumMember, TypeDefBody, TypeDefDecl};
     use sv_ast::width::WidthExpr;
     use sv_lexer::span::Span;

@@ -385,3 +385,22 @@ fn enum_modul_anak_tidak_bocor_ke_induk() {
         e.message
     );
 }
+
+/// Nilai anggota enum boleh berupa concatenation (LRM §11.8.1), misal
+/// `{prim_mubi_pkg::MuBi4True, prim_mubi_pkg::MuBi4False}` dari OpenTitan.
+#[test]
+fn enum_nilai_concat_diterima() {
+    let src = "package prim_mubi_pkg; parameter bit MuBi4True = 1'b1; parameter bit MuBi4False = 1'b0; endpackage\n\
+               module m;\n\
+               typedef enum logic [2:0] { X = {prim_mubi_pkg::MuBi4True, prim_mubi_pkg::MuBi4False, prim_mubi_pkg::MuBi4False}, Y } e_t;\n\
+               e_t q;\n\
+               always_comb q = X;\n\
+               endmodule";
+    let design = build(src);
+    // X = {1'b1, 1'b0, 1'b0} = 4 (100b), Y = 5
+    let expr = nilai_rhs(&design);
+    assert!(
+        matches!(expr, Expr::Const { value: 4, .. }),
+        "nilai harus 4, dapat {expr:?}"
+    );
+}
