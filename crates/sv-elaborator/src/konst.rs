@@ -274,16 +274,13 @@ pub fn konst_checked(
                 BinaryOp::Mul => a.checked_mul(b),
                 _ => unreachable!("dicek di atas"),
             };
-            // LRM §7.3: batas non-negatif. Kalau parameter belum tersedia
-            // (default 0), checked arithmetic akan gagal. Pakai wrapping
-            // agar build tidak gagal total; validasi lebar benar dilakukan
-            // nanti saat sinyal dikonfirmasi.
+            // LRM §7.3: batas non-negatif. Overflow/underflow dikembalikan
+            // sebagai 0 (bukan error) agar parameter yang belum tersedia
+            // (default 0) tidak membuat elaborasi gagal total. Validasi
+            // lebar sebenarnya dilakukan saat sinyal dikonfirmasi.
             match hasil {
                 Some(h) => Ok(h),
-                None => match op {
-                    BinaryOp::Sub => Ok(0), // underflow → 0
-                    _ => Ok(0),             // overflow → 0
-                },
+                None => Ok(0),
             }
         }
         _ => konst(expr, env, params, packages, span),

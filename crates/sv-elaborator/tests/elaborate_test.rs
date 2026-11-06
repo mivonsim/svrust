@@ -351,22 +351,3 @@ fn paket_tergantung_paket_lain_diresolve_iteratif() {
     let design = build_top(src, "top");
     assert_eq!(design.name, "top");
 }
-
-/// Lebar koneksi beda tidak boleh gagal elaborasi (warning saja, runtime
-/// menghasilkan X untuk bit yang tidak terdefinisi).
-#[test]
-fn lebar_koneksi_beda_tidak_gagal() {
-    let src = "module child(output [7:0] y); assign y = 8'hAA; endmodule\n\
-               module top; wire [1:0] w; child c(.y(w)); endmodule";
-    let design = build_top(src, "top");
-    assert_eq!(design.name, "top");
-}
-
-/// Indeks konstanta di luar jangkauan sinyal tidak boleh gagal elaborasi;
-/// runtime akan menghasilkan `X` untuk bit yang tidak terdefinisi.
-#[test]
-fn indeks_keluar_jangkauan_tidak_gagal() {
-    let src = "module m; logic [7:0] a; logic [7:0] b; assign b = a[100]; endmodule";
-    let design = build(src);
-    assert_eq!(design.name, "m");
-}

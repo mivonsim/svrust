@@ -1,7 +1,6 @@
 // Tanggung jawab: resolve nilai parameter dan ekspresi lebar.
 use crate::error::ElaborateError;
 use std::collections::HashMap;
-use sv_ast::expression::Expr;
 use sv_ast::width::{ParamDecl, WidthExpr};
 use sv_lexer::span::Span;
 

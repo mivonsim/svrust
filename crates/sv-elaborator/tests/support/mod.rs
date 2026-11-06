@@ -31,17 +31,27 @@ pub fn build_timescale(source: &str, top: &str) -> sv_ir::Design {
 pub fn err_top(source: &str, top: &str) -> String {
     let tokens = sv_lexer::lex(source).expect("lex");
     let parsed = sv_parser::parse_file(&tokens).expect("parse");
-    sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, &[], top)
-        .expect_err("elaborate harus gagal")
-        .to_string()
+    sv_elaborator::elaborate_top(
+        &parsed.modules,
+        &parsed.typedefs_global,
+        &parsed.packages,
+        top,
+    )
+    .expect_err("elaborate harus gagal")
+    .to_string()
 }
 
 /// Build top dari beberapa module untuk menguji instansiasi.
 pub fn build_top(source: &str, top: &str) -> sv_ir::Design {
     let tokens = sv_lexer::lex(source).expect("lex");
     let parsed = sv_parser::parse_file(&tokens).expect("parse");
-    sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, &[], top)
-        .expect("elaborate")
+    sv_elaborator::elaborate_top(
+        &parsed.modules,
+        &parsed.typedefs_global,
+        &parsed.packages,
+        top,
+    )
+    .expect("elaborate")
 }
 
 /// Bangun satu module lalu jalankan pass optimisasi.

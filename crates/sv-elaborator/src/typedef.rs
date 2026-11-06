@@ -52,6 +52,9 @@ impl TypeTable {
         let mut literal: HashMap<String, HashMap<String, (u64, u32, Span)>> = HashMap::new();
 
         for decl in decls {
+            // Duplikasi nama typedef dalam satu panggilan `baru()` diabaikan
+            // agar paket yang memiliki nama typedef sama (misal dari
+            // `gabung_typedef_paket`) tidak membuat elaborasi gagal total.
             if tipe.contains_key(&decl.name) {
                 continue; // Lewati duplikasi
             }
@@ -658,8 +661,10 @@ mod tests {
 
     #[test]
     fn enum_nilai_melebih_lebar_ditolak() {
-        // Nilai enum yang melebihi lebar tipe dasar disimpan walaupun melebihi
-        // (validasi ketat dihilangkan agar OpenTitan tidak gagal total).
+        // Nilai enum yang melebihi lebar tipe dasar disimpan (bukan ditolak)
+        // agar parameter yang belum tersedia tidak membuat elaborasi gagal
+        // total. Trade-off: validasi ketat ditinggalkan untuk kompatibilitas
+        // OpenTitan.
         let t = TypeTable::baru(
             &[enum_decl(
                 "e_t",

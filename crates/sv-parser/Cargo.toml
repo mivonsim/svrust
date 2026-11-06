@@ -8,3 +8,6 @@ description = "Parser SystemVerilog: token → AST"
 [dependencies]
 sv-lexer = { path = "../sv-lexer" }
 sv-ast = { path = "../sv-ast" }
+
+[dev-dependencies]
+sv-preprocessor = { path = "../sv-preprocessor" }

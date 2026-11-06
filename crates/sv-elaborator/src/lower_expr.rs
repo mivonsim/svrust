@@ -392,8 +392,6 @@ pub fn lower_expression_dengan_konteks(
             let lebar = lowered_base.data_type().width;
             let msb_clamped = u64::from(*msb).min(lebar.saturating_sub(1).into()) as u32;
             let lsb_clamped = u64::from(*lsb).min(msb_clamped.into()) as u32;
-            // Seleksi di luar lebar sinyal (karena lebar tipe tidak diketahui
-            // saat elaborasi) di-clamp di sini; runtime akan menghasilkan X.
             let data_type = DataType::logic(msb_clamped.saturating_sub(lsb_clamped) + 1);
             Ok(Expr::Select {
                 base: Box::new(lowered_base),

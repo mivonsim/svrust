@@ -11,6 +11,7 @@ fn parse_decl(source: &str) -> (Vec<Declaration>, u32, bool) {
     let d = &decls[0];
     let lebar = match &d.width {
         sv_ast::width::WidthExpr::Literal(n) => *n as u32,
+        sv_ast::width::WidthExpr::Auto => 1,
         sv_ast::width::WidthExpr::Param(_)
         | sv_ast::width::WidthExpr::ParamMinusOne(_)
         | sv_ast::width::WidthExpr::Expr { .. } => {
