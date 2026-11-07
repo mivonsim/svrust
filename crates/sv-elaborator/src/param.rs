@@ -101,7 +101,13 @@ impl ParamTable {
         span: Span,
     ) -> Result<usize, ElaborateError> {
         let bit = match lebar {
-            WidthExpr::Literal(n) => *n,
+            // LRM §7.3: lebar nol tidak valid untuk dimensi packed.
+            WidthExpr::Literal(n) => {
+                if *n == 0 {
+                    return Err(ElaborateError::invalid_width("lebar nol", span));
+                }
+                *n
+            }
             // `Auto` hanya dipakai sebagai lebar dasar enum tanpa tipe eksplisit
             // dan di-resolve di `TypeTable::baru`; tak seharusnya sampai ke sini.
             // Kembalikan lebar default agar tak memicu error jika terjadi.
@@ -138,12 +144,6 @@ impl ParamTable {
             }
             WidthExpr::Param(nama) => {
                 let v = self.nilai(nama, span);
-                if v == 0 && !self.nilai.contains_key(nama) {
-                    eprintln!(
-                        "DEBUG ParamTable::lebar: '{nama}' not found in table, keys: {:?}",
-                        self.nilai.keys().collect::<Vec<_>>()
-                    );
-                }
                 usize::try_from(v).map_err(|_| {
                     ElaborateError::invalid_width("nilai parameter terlalu besar", span)
                 })?
@@ -217,13 +217,17 @@ mod tests {
     #[test]
     fn param_tak_dikenal_gagal() {
         let t = tabel();
-        assert!(t
-            .lebar(
+        // Ident tak dikenal dievaluasi sebagai 0 lalu difallback ke lebar
+        // default 32 (lenient, untuk kompatibilitas OpenTitan), bukan error.
+        assert_eq!(
+            t.lebar(
                 &WidthExpr::Param("DEPTH".to_string()),
                 &PackageTable::new(),
                 Span::dummy()
             )
-            .is_err());
+            .unwrap(),
+            32
+        );
     }
 
     #[test]

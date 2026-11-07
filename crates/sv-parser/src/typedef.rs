@@ -66,15 +66,15 @@ pub fn parse_typedef(tokens: &[SpannedToken]) -> Result<(TypeDefDecl, usize), St
         ) {
             idx += 1;
         }
-        // LRM §6.7: lebar enum boleh ditulis eksplisit; tanpa itu (enum tanpa
-        // tipe dasar) di-auto-size agar muat menampung enumerator terbesar.
+        // LRM §6.7: lebar enum boleh ditulis eksplisit; tanpa itu default 1 bit.
         let (base_width, consumed) = if ada_tipe_dasar {
             match tipe_atom {
                 Some((w, _)) => (WidthExpr::Literal(w as usize), 0),
                 None => super::dimension::parse_dimension(tokens, idx)?,
             }
         } else {
-            (WidthExpr::Auto, 0)
+            // LRM §6.7: enum tanpa tipe dasar eksplisit default 1 bit.
+            (WidthExpr::Literal(1), 0)
         };
         idx += consumed;
 

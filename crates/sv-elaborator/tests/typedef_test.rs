@@ -372,19 +372,18 @@ fn enum_modul_anak_tidak_bocor_ke_induk() {
                logic [7:0] y;\n\
                always_comb y = C;\n\
                endmodule\n";
-    // Dengan perilaku lenient, elaborasi berhasil (C jadi sinyal default 1-bit).
-    // Trade-off: OpenTitan membutuhkan perilaku ini agar tidak gagal total.
-    let design = sv_elaborator::elaborate_top(
-        &{
-            let tokens = sv_lexer::lex(src).expect("lex");
-            sv_parser::parse_file(&tokens).expect("parse").modules
-        },
-        &[],
-        &[],
-        "top",
-    )
-    .expect("elaborasi berhasil (perilaku lenient)");
-    assert_eq!(design.name, "top");
+    // Anggota enum `C` scoped ke modul `anak` (LRM §6.7) dan tidak boleh
+    // terlihat di `top`. `elaborate_top` harus menolak dengan undefined signal,
+    // yang membuktikan enum anak tidak bocor ke induk.
+    let tokens = sv_lexer::lex(src).expect("lex");
+    let parsed = sv_parser::parse_file(&tokens).expect("parse");
+    let err = sv_elaborator::elaborate_top(&parsed.modules, &parsed.typedefs_global, &[], "top")
+        .expect_err("enum anak tak boleh bocor ke induk");
+    assert!(
+        err.message.contains("undefined signal 'C'"),
+        "pesan: {}",
+        err.message
+    );
 }
 
 /// Nilai anggota enum boleh berupa concatenation (LRM §11.8.1).

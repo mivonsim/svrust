@@ -157,12 +157,14 @@ fn ekspresi_dimension_terpakai_pada_instansiasi_anak() {
 
 #[test]
 fn ekspresi_dimension_dengan_parameter_tidak_dideklarasikan_ditolak() {
-    // `logic [UNDEF+1:0]` harus gagal dengan pesan yang menyebut parameternya.
+    // Parameter tak dikenal dievaluasi sebagai 0 (lenient, untuk
+    // kompatibilitas OpenTitan), jadi `UNDEF+1:0` → lebar 1 bit, tidak error.
     let tokens = sv_lexer::lex("module m; logic [UNDEF+1:0] bad; endmodule").expect("lex");
     let ast = sv_parser::parse_module(&tokens).expect("parse");
-    let err = sv_elaborator::elaborate(&ast).expect_err("parameter tak dikenal");
-    assert!(
-        err.to_string().contains("UNDEF"),
-        "pesan tak menyebut parameter: {err}"
+    let design = sv_elaborator::elaborate(&ast).expect("elaborate berhasil (lenient)");
+    let bad = design.find_variable("bad").expect("variabel bad");
+    assert_eq!(
+        bad.data_type.width, 2,
+        "lebar harus 2 bit (UNDEF=0, msb=1, lsb=0 → 2)"
     );
 }

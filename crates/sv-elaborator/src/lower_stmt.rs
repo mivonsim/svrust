@@ -126,10 +126,12 @@ fn lower_comb_statement(
             let mut lowered = Vec::new();
             for item in events {
                 // Span item menunjuk token sinyal, bukan `@`-nya.
-                let signal_id = lookup_signal(&item.signal, symbols, item.span);
+                let symbol = symbols
+                    .lookup(&item.signal)
+                    .ok_or_else(|| ElaborateError::undefined_signal(&item.signal, item.span))?;
                 lowered.push(sv_ir::process::EventItem {
                     edge: map_event_edge(item.edge),
-                    signal: signal_id,
+                    signal: symbol.signal_id,
                 });
             }
             Ok(Statement::EventControl {
@@ -517,8 +519,11 @@ pub fn lower_module_statement(
             let sensitivity = events
                 .iter()
                 .map(|item| {
+                    let symbol = symbols
+                        .lookup(&item.signal)
+                        .ok_or_else(|| ElaborateError::undefined_signal(&item.signal, item.span))?;
                     Ok(SensitivityItem {
-                        signal: lookup_signal(&item.signal, symbols, item.span),
+                        signal: symbol.signal_id,
                         edge: map_event_edge(item.edge),
                     })
                 })
@@ -924,14 +929,12 @@ fn lookup_lvalue(
         width = extra.width() as u64;
     }
     let lebar_sinyal = symbol.data_type.width as u64;
-    // Seleksi di luar lebar sinyal (karena lebar tipe tidak diketahui saat
-    // elaborasi) di-clamp di sini; runtime akan menghasilkan X.
-    let offset = offset.min(lebar_sinyal.saturating_sub(1));
-    let width = width.min(lebar_sinyal.saturating_sub(offset));
-    if offset + width > lebar_sinyal {
+    // Seleksi di luar lebar sinyal adalah error (LRM §10.10.1), bukan clamping
+    // diam-diam yang menghasilkan X di runtime.
+    if offset >= lebar_sinyal || offset + width > lebar_sinyal {
         return Err(ElaborateError::new(
             format!(
-                "seleksi bertingkat ['{}:{}'] melewati lebar sinyal '{}' ({} bit)",
+                "seleksi ['{}:{}'] melewati lebar sinyal '{}' ({} bit)",
                 offset + width - 1,
                 offset,
                 lhs.name,

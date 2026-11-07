@@ -32,6 +32,14 @@ impl ElaborateError {
         Self::new(format!("undefined parameter '{}'", name), span)
     }
 
+    /// Parameter tidak dikenal dalam ekspresi konstanta (LRM §6.20).
+    pub fn parameter_harus_konstanta(name: &str, span: Span) -> Self {
+        Self::new(
+            format!("parameter '{name}' harus konstanta dan diketahui sebelum digunakan"),
+            span,
+        )
+    }
+
     pub fn duplicate_param(name: &str, span: Span) -> Self {
         Self::new(format!("duplicate parameter '{}'", name), span)
     }

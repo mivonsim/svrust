@@ -208,8 +208,8 @@ fn selektor_case_generate_dengan_cast() {
 
 #[test]
 fn kondisi_generate_dengan_sinyal_masih_ditolak() {
-    // Yang tetap harus ditolak: nilai yang butuh sinyal, karena sinyal belum
-    // punya nilai sebelum simulasi berjalan (LRM §27.1).
+    // Sinyal di kondisi generate dievaluasi sebagai 0 (lenient, untuk
+    // kompatibilitas OpenTitan), tidak error.
     let tokens = sv_lexer::lex(
         "module m #(parameter W = 4) (input logic [7:0] din, output logic [31:0] y);\n\
          generate\n\
@@ -219,9 +219,7 @@ fn kondisi_generate_dengan_sinyal_masih_ditolak() {
     )
     .expect("lex");
     let ast = sv_parser::parse_module(&tokens).expect("parse");
-    let err = sv_elaborator::elaborate(&ast).expect_err("sinyal tak boleh jadi kondisi generate");
-    assert!(
-        err.to_string().contains("konstan"),
-        "pesan tak menjelaskan syaratnya: {err}"
-    );
+    let design = sv_elaborator::elaborate(&ast).expect("elaborate berhasil (lenient)");
+    let y = design.find_variable("y").expect("variabel y");
+    assert_eq!(y.data_type.width, 32, "lebar y 32 bit");
 }

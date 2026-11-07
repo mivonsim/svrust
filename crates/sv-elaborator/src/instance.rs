@@ -339,15 +339,18 @@ fn lower_instance_body(
             None => induk.data_type.width,
         };
         if lebar_koneksi != lebar_anak {
-            eprintln!(
-                "PERINGATAN: lebar koneksi beda: {}.{} {} bit vs {}{} {} bit — melanjutkan",
-                child.name,
-                c.port,
-                lebar_anak,
-                c.signal,
-                slice_teks(slice.as_ref()),
-                lebar_koneksi
-            );
+            return Err(ElaborateError::new(
+                format!(
+                    "lebar koneksi port beda: {}.{} {} bit vs {}{} {} bit",
+                    child.name,
+                    c.port,
+                    lebar_anak,
+                    c.signal,
+                    slice_teks(slice.as_ref()),
+                    lebar_koneksi
+                ),
+                inst.span,
+            ));
         }
         // Part-select di luar rentang sinyal parent adalah error, bukan
         // pemotongan diam-diam.

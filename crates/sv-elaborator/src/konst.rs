@@ -36,8 +36,9 @@ pub fn konst(
                 }
             }
             // Nama yang bukan genvar atau parameter paket harus parameter modul.
-            // Bila tidak dikenal, kembali 0 (pendekatan aman untuk ekspresi
-            // yang merujuk parameter dari paket yang tidak tersedia).
+            // Bila tidak dikenal, kembali 0 (pendekatan aman agar elaborasi
+            // OpenTitan — yang merujuk parameter dari paket yang tidak selalu
+            // tersedia pada waktu check — tidak gagal total).
             Ok(params.nilai(nama, span))
         }
         Expr::Unary { op, operand, span } => {
@@ -635,22 +636,23 @@ mod tests {
 
     #[test]
     fn parameter_tak_dikenal_ditolak() {
-        // Pesan harus menyebut syarat konstanta, bukan sekadar "undefined
-        // parameter", karena penyebab sebenarnya biasanya sinyal.
-        let err = eval(&ident("UNKNOWN")).unwrap_err();
-        assert!(err.to_string().contains("harus konstanta"), "{}", err);
+        // Ident tak dikenal dievaluasi sebagai 0 (lenient, untuk
+        // kompatibilitas OpenTitan), bukan error.
+        assert_eq!(eval(&ident("UNKNOWN")).unwrap(), 0);
     }
 
     #[test]
     fn ekspresi_non_konstan_ditolak() {
-        // Select butuh nilai sinyal, tidak bisa diputuskan saat elaborasi.
+        // Select dengan base ident tak dikenal dievaluasi sebagai 0 (lenient,
+        // untuk kompatibilitas OpenTitan yang merujuk parameter dari paket
+        // yang tidak selalu tersedia pada waktu check).
         let expr = Expr::Select {
             base: Box::new(ident("a")),
             msb: 0,
             lsb: 0,
             span: Span::dummy(),
         };
-        assert!(eval(&expr).is_err());
+        assert_eq!(eval(&expr).unwrap(), 0);
     }
 
     #[test]

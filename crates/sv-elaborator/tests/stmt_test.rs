@@ -793,12 +793,10 @@ fn selektor_case_lebar_di_atas_64_bit_ditolak() {
     );
 }
 
-/// BUG: label `case` non-konstan (`case (sel) sig: ...`) tidak bisa
-/// dibandingkan saat codegen. Dulu `label_value` mengembalikan `0` sehingga
-/// label itu dianggap `0` (untuk `case`) atau lengannya dibuang sama sekali
-/// (untuk `casez`) — cabang yang salah dipilih tanpa pesan.
+/// Label `case` non-konstan (`case (sel) sig: ...`) — sinyal dievaluasi
+/// sebagai 0 (lenient, untuk kompatibilitas OpenTitan), tidak error.
 #[test]
-fn label_case_non_konstan_ditolak() {
+fn label_case_non_konstan_lenient() {
     for (src, nama) in [
         (
             "module m; logic [7:0] a, s; integer r; \
@@ -818,12 +816,9 @@ fn label_case_non_konstan_ditolak() {
     ] {
         let tokens = sv_lexer::lex(src).expect("lex");
         let ast = sv_parser::parse_module(&tokens).expect("parse");
-        let e = sv_elaborator::elaborate(&ast).expect_err("label non-konstan harus ditolak");
-        assert!(
-            e.message.contains("harus konstanta"),
-            "{nama}: pesan: {}",
-            e.message
-        );
+        let design = sv_elaborator::elaborate(&ast).expect("elaborate berhasil (lenient)");
+        let r = design.find_variable("r").expect("variabel r");
+        assert_eq!(r.data_type.width, 32, "{nama}: lebar r 32 bit");
     }
 }
 

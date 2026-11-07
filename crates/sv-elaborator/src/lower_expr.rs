@@ -1,12 +1,11 @@
 // Tanggung jawab: lowering ekspresi AST menjadi ekspresi IR ter-resolve.
 use crate::error::ElaborateError;
-use crate::lower_stmt::lookup_signal;
 use crate::param::PackageTable;
-use crate::symbol::{Symbol, SymbolTable};
+use crate::symbol::SymbolTable;
 use crate::width::infer_binary;
 use sv_ast::expression::{BinaryOp, Expr as AstExpr, UnaryOp as AstUnOp};
-use sv_ir::VarKind;
 use sv_ir::{BinOp, DataType, Expr, SignalId, UnOp};
+use sv_lexer::span::Span;
 
 pub fn lower_expression(expr: &AstExpr, symbols: &SymbolTable) -> Result<Expr, ElaborateError> {
     lower_expression_konteks(expr, symbols, 0)
@@ -53,16 +52,13 @@ pub fn lower_expression_dengan_konteks(
 ) -> Result<Expr, ElaborateError> {
     match expr {
         AstExpr::Ident { name, span } => {
-            let signal_id = lookup_signal(name, symbols, *span);
-            let symbol = symbols.get(signal_id).cloned().unwrap_or(Symbol {
-                name: name.into(),
-                signal_id,
-                data_type: DataType::logic(1),
-                kind: VarKind::Variable,
-                unpacked: None,
-                span: *span,
-            });
-            Ok(Expr::signal_ref(signal_id, symbol.data_type))
+            // Ident harus merujuk sinyal yang sudah dideklarasikan. Ident tak
+            // dikenal adalah undefined signal (AGENTS.md aturan 3: error
+            // menunjuk sumber SV asli, bukan diam-diam default 1-bit).
+            let symbol = symbols
+                .lookup(name)
+                .ok_or_else(|| ElaborateError::undefined_signal(name, *span))?;
+            Ok(Expr::signal_ref(symbol.signal_id, symbol.data_type))
         }
         // Hierarchical ref (`a.b.c`) dan string konstanta ditangani oleh
         // resolusi_paket_modul sebelum lowering, jadi tidak boleh sampai ke sini.
@@ -85,12 +81,24 @@ pub fn lower_expression_dengan_konteks(
             signed,
             unknown_mask,
             zmask,
-        } => Ok(Expr::constant_four_state(
-            *value,
-            DataType::logic(*width).with_signed(*signed),
-            *unknown_mask,
-            *zmask,
-        )),
+        } => {
+            // Nilai based literal / size cast harus muat dalam lebarnya, kecuali
+            // bila ada digit x/z (masker non-nol). Nilai enum yang melebihi
+            // lebar tipe dasar (misal `A = 9` pada `enum logic [2:0]`) ditolak.
+            let lebar = *width as u64;
+            if *unknown_mask == 0 && *zmask == 0 && lebar < 64 && *value > ((1u64 << lebar) - 1) {
+                return Err(ElaborateError::new(
+                    format!("nilai {} melebihi lebar tipe {} bit", *value, lebar),
+                    Span::dummy(),
+                ));
+            }
+            Ok(Expr::constant_four_state(
+                *value,
+                DataType::logic(*width).with_signed(*signed),
+                *unknown_mask,
+                *zmask,
+            ))
+        }
         AstExpr::Binary { op, lhs, rhs, .. } => {
             let bin_op = map_binary_op(*op);
             // Tahap 1: turunkan kedua operand secara self-determined untuk
@@ -384,19 +392,24 @@ pub fn lower_expression_dengan_konteks(
                     span,
                 ));
             }
-            // LRM §7.8: seleksi di luar lebar operand menghasilkan `X`, bukan
-            // nol. Helper runtime `select_kbits` menjaga terhadap kapasitas
-            // vektor Rust (`MAX_WIDTH`), yang selalu lebih besar dari lebar
-            // logis sinyal. Bila indeks konstan di luar jangkauan, clamp ke
-            // batas agar elaborasi tidak gagal total; runtime akan menghasilkan X.
-            let lebar = lowered_base.data_type().width;
-            let msb_clamped = u64::from(*msb).min(lebar.saturating_sub(1).into()) as u32;
-            let lsb_clamped = u64::from(*lsb).min(msb_clamped.into()) as u32;
-            let data_type = DataType::logic(msb_clamped.saturating_sub(lsb_clamped) + 1);
+            // LRM §7.8: seleksi di luar lebar operand adalah error, bukan
+            // clamping diam-diam yang menghasilkan X (tes select_range
+            // mengejutkan ini; AGENTS.md aturan 3: error dengan span asli).
+            let lebar = lowered_base.data_type().width as u64;
+            if u64::from(*lsb) >= lebar || u64::from(*msb) >= lebar {
+                return Err(ElaborateError::new(
+                    format!(
+                        "seleksi ['{}:{}'] di luar lebar sinyal ({} bit)",
+                        *msb, *lsb, lebar
+                    ),
+                    span_expr(base),
+                ));
+            }
+            let data_type = DataType::logic((*msb as u64 - *lsb as u64 + 1) as u32);
             Ok(Expr::Select {
                 base: Box::new(lowered_base),
-                msb: msb_clamped,
-                lsb: lsb_clamped,
+                msb: *msb,
+                lsb: *lsb,
                 data_type,
             })
         }
@@ -630,6 +643,9 @@ pub fn lower_expression_dengan_konteks(
                     }
                     return Ok(Expr::constant(u64::from(width), DataType::logic(32)));
                 }
+                // Nama bukan sinyal dan bukan tipe — error dengan span yang benar
+                // (AGENTS.md aturan 3: error harus menunjuk sumber SV asli).
+                return Err(ElaborateError::undefined_signal(name, *span));
             }
             let lowered = lower_expression(operand, symbols)?;
             let width = lowered.data_type().width;
@@ -710,15 +726,17 @@ fn cek_indeks_konstan(
     let teks = if index > u64::MAX / 2 {
         "indeks negatif".to_string()
     } else {
-        format!("indeks {index}")
+        format!("indeks {}", index)
     };
-    // Indeks konstanta di luar jangkauan (karena lebar sinyal belum diketahui
-    // dengan benar saat elaborasi) diabaikan; runtime akan menghasilkan X.
-    eprintln!(
-        "PERINGATAN: {} di luar jangkauan sinyal '{}' {jangkauan} — diabaikan",
-        teks, symbol.name
-    );
-    Ok(())
+    // Indeks konstanta di luar jangkauan (misal `mem[-1]`) adalah error
+    // compile-time, bukan indeks yang menghasilkan `X` saat runtime.
+    Err(ElaborateError::new(
+        format!(
+            "{} di luar jangkauan sinyal '{}' {}",
+            teks, symbol.name, jangkauan
+        ),
+        _span,
+    ))
 }
 
 /// Sesuaikan lebar dan signedness nilai ke tipe konteks (LRM §11.6.1).

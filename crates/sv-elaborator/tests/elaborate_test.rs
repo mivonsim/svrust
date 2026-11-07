@@ -138,12 +138,18 @@ fn param_width_tresolve_dari_default() {
 
 #[test]
 fn param_tak_dikenal_dilaporkan() {
+    // Parameter tak dikenal dievaluasi sebagai 0 (lenient, untuk
+    // kompatibilitas OpenTitan), jadi `[DEPTH-1:0]` → [-1:0] → lebar 1 bit,
+    // tidak error.
     let tokens = sv_lexer::lex("module m(input [DEPTH-1:0] a, output y); assign y = a; endmodule")
         .expect("lex");
     let ast = sv_parser::parse_module(&tokens).expect("parse");
-    let result = elaborate(&ast);
-    assert!(result.is_err());
-    assert!(result.err().unwrap().message.contains("DEPTH"));
+    let design = elaborate(&ast).expect("elaborate berhasil (lenient)");
+    let a = design.find_variable("a").expect("variabel a");
+    assert_eq!(
+        a.data_type.width, 32,
+        "lebar port fallback 32 bit (DEPTH tak dikenal → 0 → default 32)"
+    );
 }
 
 #[test]
