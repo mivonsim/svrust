@@ -418,7 +418,12 @@ mod tests {
         );
         let text = std::fs::read_to_string(path).expect("read");
         let dir = Path::new(path).parent().unwrap();
-        let dirs = [dir];
+        // OpenTitan menyimpan `prim_assert.sv` di `hw/ip/prim/rtl`; tambahkan
+        // agar `include` dari earlgrey_pd_main.sv dapat ditemukan tanpa
+        // --incdir eksplisit (mirip alur `check --rtl opentitan.f`).
+        let rtl_dir = dir.parent().unwrap();
+        let prim_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../opentitan/hw/ip/prim/rtl");
+        let dirs = [dir, rtl_dir, prim_dir.as_ref()];
         let pp = sv_preprocessor::preprocess_with_dirs(&text, &dirs, path).expect("preprocess");
         eprintln!("preprocessed len={}", pp.source.len());
         let tokens = lex(&pp.source).expect("lex");

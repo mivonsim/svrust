@@ -7,6 +7,10 @@ pub enum ValueKind {
     Logic,
     /// Floating point 64-bit IEEE 754 (LRM §5.5 `real`).
     Real,
+    /// Net konstan bernilai 0 (LRM §6.6 `supply0`).
+    Supply0,
+    /// Net konstan bernilai 1 (LRM §6.6 `supply1`).
+    Supply1,
 }
 
 /// Resolusi net multi-driver (LRM §6.6).
@@ -32,6 +36,16 @@ impl ValueKind {
     /// True bila tipe adalah floating point `real` (64-bit IEEE 754).
     pub fn is_real(self) -> bool {
         matches!(self, ValueKind::Real)
+    }
+
+    /// True bila tipe adalah `supply0` (net konstan bernilai 0, LRM §6.6).
+    pub fn is_supply0(self) -> bool {
+        matches!(self, ValueKind::Supply0)
+    }
+
+    /// True bila tipe adalah `supply1` (net konstan bernilai 1, LRM §6.6).
+    pub fn is_supply1(self) -> bool {
+        matches!(self, ValueKind::Supply1)
     }
 }
 
@@ -85,17 +99,17 @@ impl DataType {
     /// Tipe net konstan supply0 (selalu baca 0, LRM §6.6).
     pub fn supply0() -> Self {
         Self {
-            kind: ValueKind::Logic,
+            kind: ValueKind::Supply0,
             width: 1,
             signed: false,
-            net_resolution: NetResolution::None, // supply0/supply1 are constant, not multi-driver
+            net_resolution: NetResolution::None,
         }
     }
 
     /// Tipe net konstan supply1 (selalu baca 1, LRM §6.6).
     pub fn supply1() -> Self {
         Self {
-            kind: ValueKind::Logic,
+            kind: ValueKind::Supply1,
             width: 1,
             signed: false,
             net_resolution: NetResolution::None,
@@ -144,6 +158,8 @@ impl DataType {
         let base = match self.kind {
             ValueKind::Bit => "Bit",
             ValueKind::Logic => "Logic",
+            ValueKind::Supply0 => "Logic",
+            ValueKind::Supply1 => "Logic",
             ValueKind::Real => "Logic",
         };
         let net = match self.net_resolution {

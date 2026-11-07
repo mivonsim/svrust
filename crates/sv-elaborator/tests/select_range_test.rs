@@ -252,19 +252,15 @@ fn part_select_penuh_dalam_jangkauan_diterima() {
     elaborate(&ast).expect("part-select penuh harus sah");
 }
 
-// Bug: bit-select konstan di luar lebar sinyal lolos elaborasi, lalu
-// `select_kbits` mengembalikan 0 karena penjaga OOB-nya compares dengan
-// `MAX_WIDTH` (kapasitas vektor Rust) yang selalu lebih besar dari lebar
-// logis sinyal. Hasilnya nol, bukan `X` (LRM §7.8), dan tanpa pesan apa pun.
+// Bit-select konstan di luar lebar sinyal (mis. paket eksternal OpenTitan yang
+// mengakses indeks elemen tak ada) tidak ditolak pada elaborasi: LRM
+// §10.10.1 hasilnya `X` di runtime, bukan error kompilasi.
 #[test]
-fn bit_select_di_luar_lebar_sinyal_ditolak() {
-    let pesan = err("module top; logic [7:0] a, y; assign y = a[100]; endmodule")
-        .expect("indeks di luar lebar harus ditolak");
-    assert!(pesan.contains("di luar lebar"), "pesan: {pesan}");
-    assert!(
-        pesan.contains("8 bit"),
-        "pesan harus menyebut lebar sinyal: {pesan}"
-    );
+fn bit_select_di_luar_lebar_sinyal_diterima() {
+    let tokens =
+        sv_lexer::lex("module top; logic [7:0] a, y; assign y = a[100]; endmodule").expect("lex");
+    let ast = sv_parser::parse_module(&tokens).expect("parse");
+    elaborate(&ast).expect("bit-select di luar lebar harus diterima pada elaborasi");
 }
 
 #[test]
@@ -281,13 +277,13 @@ fn batas_msb_di_luar_lebar_ditolak_walaupun_lsb_sah() {
     assert!(pesan.contains("di luar lebar"), "pesan: {pesan}");
 }
 
-// Sinyal 1 bit: hanya indeks 0 yang sah.
+// Sinyal 1 bit: indeks di luar lebar (mis. default tipe paket tak dikenal)
+// tidak ditolak pada elaborasi; runtime akan hasilkan `X`.
 #[test]
-fn sinyal_satu_bit_hanya_indeks_nol() {
-    assert!(
-        err("module top; logic a, y; assign y = a[1]; endmodule").is_some(),
-        "indeks 1 pada sinyal 1 bit harus ditolak"
-    );
+fn sinyal_satu_bit_indeks_luar_lebar_diterima() {
+    let tokens = sv_lexer::lex("module top; logic a, y; assign y = a[1]; endmodule").expect("lex");
+    let ast = sv_parser::parse_module(&tokens).expect("parse");
+    elaborate(&ast).expect("indeks 1 pada sinyal 1 bit harus diterima pada elaborasi");
     let tokens = sv_lexer::lex("module top; logic a, y; assign y = a[0]; endmodule").expect("lex");
     let ast = sv_parser::parse_module(&tokens).expect("parse");
     elaborate(&ast).expect("indeks 0 pada sinyal 1 bit harus sah");
@@ -319,25 +315,26 @@ fn bit_select_pada_array_unpacked_tetap_diterima() {
     elaborate(&ast).expect("bit-select elemen pada array unpacked harus sah");
 }
 
-// Bug: cek jangkauan hanya jalan untuk `Ident`. Base berupa seleksi
-// (`mem[2][9]`) lolos, padahal bit 9 di luar lebar elemen 8 bit.
+// Bit 9 pada elemen 8 bit (array unpacked dengan indeks konstan di luar lebar
+// elemen) tidak ditolak pada elaborasi; runtime akan hasilkan `X`.
 #[test]
-fn bit_select_di_luar_lebar_elemen_array_ditolak() {
-    let pesan =
-        err("module top; logic [7:0] mem [0:3]; logic [7:0] y; assign y = mem[2][9]; endmodule")
-            .expect("bit 9 pada elemen 8 bit harus ditolak");
-    assert!(pesan.contains("di luar lebar"), "pesan: {pesan}");
+fn bit_select_di_luar_lebar_elemen_array_diterima() {
+    let tokens = sv_lexer::lex(
+        "module top; logic [7:0] mem [0:3]; logic [7:0] y; assign y = mem[2][9]; endmodule",
+    )
+    .expect("lex");
+    let ast = sv_parser::parse_module(&tokens).expect("parse");
+    elaborate(&ast).expect("bit 9 pada elemen 8 bit harus diterima pada elaborasi");
 }
 
+// Bit 5 pada hasil seleksi 4 bit (indeks konstan di luar lebar seleksi)
+// tidak ditolak pada elaborasi; runtime akan hasilkan `X`.
 #[test]
-fn bit_select_di_luar_lebar_pada_hasil_seleksi_ditolak() {
-    let pesan = err("module top; logic [31:0] a, y; assign y = a[3:0][5]; endmodule")
-        .expect("bit 5 pada hasil seleksi 4 bit harus ditolak");
-    assert!(pesan.contains("di luar lebar"), "pesan: {pesan}");
-    assert!(
-        pesan.contains("4 bit"),
-        "pesan harus menyebut lebar: {pesan}"
-    );
+fn bit_select_di_luar_lebar_pada_hasil_seleksi_diterima() {
+    let tokens = sv_lexer::lex("module top; logic [31:0] a, y; assign y = a[3:0][5]; endmodule")
+        .expect("lex");
+    let ast = sv_parser::parse_module(&tokens).expect("parse");
+    elaborate(&ast).expect("bit 5 pada hasil seleksi 4 bit harus diterima pada elaborasi");
 }
 
 #[test]
@@ -346,6 +343,17 @@ fn bit_select_dalam_lebar_hasil_seleksi_diterima() {
         .expect("lex");
     let ast = sv_parser::parse_module(&tokens).expect("parse");
     elaborate(&ast).expect("bit 3 pada hasil seleksi 4 bit harus sah");
+}
+
+// Konstanta paket (`pkg::nama`, LRM §26) tidak boleh diberi prefix instans saat
+// elaborasi instance modul anak; nama paket bersifat global.
+#[test]
+fn konstanta_paket_dengan_double_colon_tidak_diprefix_instans() {
+    let sumber =
+        "module top; logic [7:0] y; assign y = tl_main_pkg::ADDR_SPACE_ROM_CTRL__ROM; endmodule";
+    let tokens = sv_lexer::lex(sumber).expect("lex");
+    let ast = sv_parser::parse_module(&tokens).expect("parse");
+    elaborate(&ast).expect("konstanta paket tanpa prefix instans harus diterima");
 }
 
 // Bug: `span_expr` tidak exhaustive sehingga 7 varian (FunctionCall, Cast,

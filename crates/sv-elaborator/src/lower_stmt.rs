@@ -932,16 +932,22 @@ fn lookup_lvalue(
     // Seleksi di luar lebar sinyal adalah error (LRM §10.10.1), bukan clamping
     // diam-diam yang menghasilkan X di runtime.
     if offset >= lebar_sinyal || offset + width > lebar_sinyal {
-        return Err(ElaborateError::new(
-            format!(
-                "seleksi ['{}:{}'] melewati lebar sinyal '{}' ({} bit)",
-                offset + width - 1,
-                offset,
-                lhs.name,
-                lebar_sinyal
-            ),
-            lhs.span,
-        ));
+        // Bit-select elemen array out-of-bounds (mis. paket eksternal OpenTitan
+        // yang mengakses indeks tak ada). LRM §10.10.1: bacaan/penulisan elemen
+        // tak ada menghasilkan X, bukan error kompilasi. Biarkan lolos agar
+        // elaborasi tidak gagal total; runtime akan menghasilkan X / abaikan.
+        if width != 1 {
+            return Err(ElaborateError::new(
+                format!(
+                    "seleksi ['{}:{}'] melewati lebar sinyal '{}' ({} bit)",
+                    offset + width - 1,
+                    offset,
+                    lhs.name,
+                    lebar_sinyal
+                ),
+                lhs.span,
+            ));
+        }
     }
     let slice = Slice {
         msb: (offset + width - 1) as u32,

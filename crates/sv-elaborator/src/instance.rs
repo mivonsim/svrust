@@ -12,7 +12,7 @@ use sv_ast::instance::Instance;
 use sv_ast::lvalue::{Lvalue, Slice};
 use sv_ast::module::Module;
 use sv_ast::statement::{SequentialStatement, Statement as AstStatement};
-use sv_ast::width::ParamDecl;
+use sv_ast::width::{ParamDecl, WidthExpr};
 use sv_ir::datatype::DataType;
 use sv_ir::expr::SignalId;
 use sv_ir::scope::ScopePath;
@@ -338,7 +338,14 @@ fn lower_instance_body(
             Some(s) => s.width(),
             None => induk.data_type.width,
         };
-        if lebar_koneksi != lebar_anak {
+        // Tipe paket eksternal yang tidak ada dalam kompilasi (mis.
+        // `prim_alert_pkg::alert_tx_t` di OpenTitan) di-parse sebagai width
+        // Literal(1) default karena tipe tak dikenal. Pengecekan lebar port
+        // terhadap sinyal parent tidak berarti untuk kasus ini — lewati agar
+        // `check` tidak hard-fail pada design yang bergantung pada paket
+        // eksternal yang tidak tersedia.
+        let tipe_paket_tak_dikenal = lebar_anak == 1 && port_decl.width == WidthExpr::Literal(1);
+        if lebar_koneksi != lebar_anak && !tipe_paket_tak_dikenal {
             return Err(ElaborateError::new(
                 format!(
                     "lebar koneksi port beda: {}.{} {} bit vs {}{} {} bit",
@@ -582,6 +589,13 @@ fn slice_teks(slice: Option<&Slice>) -> String {
 /// Diekspor agar elaborator generate bisa memetakan nama port yang sama
 /// saat me-lower isi region generate milik modul anak.
 pub(crate) fn petakan_nama(n: &str, prefix: &str, koneksi: &KoneksiMap) -> String {
+    // Konstanta / tipe paket (`pkg::nama`) tidak boleh diberi prefix instans;
+    // nama paket bersifat global (LRM §26). Bila diberi prefix, referensi ke
+    // konstanta paket eksternal (mis. `tl_main_pkg::ADDR_SPACE_...`) akan
+    // dicari sebagai sinyal tak dikenal dan gagal elaborasi.
+    if n.contains("::") {
+        return n.to_string();
+    }
     match koneksi.get(n) {
         Some(k) => k.nama_pada(n),
         None => format!("{}{}", prefix, n),

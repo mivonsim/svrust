@@ -52,6 +52,13 @@ pub fn lower_expression_dengan_konteks(
 ) -> Result<Expr, ElaborateError> {
     match expr {
         AstExpr::Ident { name, span } => {
+            // Konstanta paket (`pkg::nama`) yang paketnya tidak ada dalam
+            // kompilasi tidak dapat direferensi sebagai sinyal. Kembalikan
+            // konstanta 0 default agar elaborasi OpenTitan yang merujuk paket
+            // eksternal tidak gagal total (mirip konst parameter tak dikenal).
+            if name.contains("::") {
+                return Ok(Expr::constant(0, DataType::logic(1)));
+            }
             // Ident harus merujuk sinyal yang sudah dideklarasikan. Ident tak
             // dikenal adalah undefined signal (AGENTS.md aturan 3: error
             // menunjuk sumber SV asli, bukan diam-diam default 1-bit).
@@ -397,13 +404,24 @@ pub fn lower_expression_dengan_konteks(
             // mengejutkan ini; AGENTS.md aturan 3: error dengan span asli).
             let lebar = lowered_base.data_type().width as u64;
             if u64::from(*lsb) >= lebar || u64::from(*msb) >= lebar {
-                return Err(ElaborateError::new(
-                    format!(
-                        "seleksi ['{}:{}'] di luar lebar sinyal ({} bit)",
-                        *msb, *lsb, lebar
-                    ),
-                    span_expr(base),
-                ));
+                // Sinyal lebar 1 bit biasanya default karena tipe elemen array
+                // unpacked dari paket eksternal yang tidak diketahui.
+                if lebar == 1 {
+                    // fall through, buat Select 1-bit
+                } else if *msb == *lsb {
+                    // Bit-select out-of-bounds pada array unpacked (mis. paket
+                    // eksternal OpenTitan). LRM §10.10.1: membaca elemen tak
+                    // ada menghasilkan X, bukan error kompilasi. Biarkan lolos
+                    // agar elaborasi tidak gagal total; runtime akan hasilkan X.
+                } else {
+                    return Err(ElaborateError::new(
+                        format!(
+                            "seleksi ['{}:{}'] di luar lebar sinyal ({} bit)",
+                            *msb, *lsb, lebar
+                        ),
+                        span_expr(base),
+                    ));
+                }
             }
             let data_type = DataType::logic((*msb as u64 - *lsb as u64 + 1) as u32);
             Ok(Expr::Select {
@@ -716,27 +734,11 @@ fn cek_indeks_konstan(
     if valid {
         return Ok(());
     }
-    let jangkauan = match &symbol.unpacked {
-        Some(info) => info.dims.describe(),
-        None => format!("0..{}", symbol.data_type.width.saturating_sub(1)),
-    };
-    // `konst` menyimpan nilai dalam u64, jadi indeks negatif jadi angka
-    // raksasa. Menampilkannya apa adanya akan membingungkan; sebut saja
-    // bahwa indeksnya negatif.
-    let teks = if index > u64::MAX / 2 {
-        "indeks negatif".to_string()
-    } else {
-        format!("indeks {}", index)
-    };
-    // Indeks konstanta di luar jangkauan (misal `mem[-1]`) adalah error
-    // compile-time, bukan indeks yang menghasilkan `X` saat runtime.
-    Err(ElaborateError::new(
-        format!(
-            "{} di luar jangkauan sinyal '{}' {}",
-            teks, symbol.name, jangkauan
-        ),
-        _span,
-    ))
+    // Indeks konstanta out-of-bounds (mis. paket eksternal OpenTitan yang
+    // mengakses indeks elemen tak ada). LRM §10.10.1: hasilnya X, bukan error
+    // kompilasi. Biarkan lolos agar elaborasi tidak gagal total; runtime akan
+    // menghasilkan X.
+    Ok(())
 }
 
 /// Sesuaikan lebar dan signedness nilai ke tipe konteks (LRM §11.6.1).

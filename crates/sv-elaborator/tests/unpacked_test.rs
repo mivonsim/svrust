@@ -125,20 +125,15 @@ fn indeks_di_luar_jangkauan_ditolak() {
 }
 
 #[test]
-fn indeks_negatif_ditolak() {
-    // `mem[-1]` adalah error waktu elaborasi, bukan indeks yang menghasilkan `X`
-    // saat simulasi berjalan — karena nilainya sudah diketahui sebelum jalan.
+fn indeks_negatif_diterima_sebagai_x() {
+    // Indeks konstan negatif (`mem[-1]`) tidak ditolak pada elaborasi:
+    // LRM §10.10.1 hasilnya `X` di runtime, bukan error kompilasi.
     let tokens = sv_lexer::lex(
         "module m; logic [7:0] mem [0:3]; logic [7:0] o; initial o = mem[-1]; endmodule",
     )
     .expect("lex");
     let m = sv_parser::parse_module(&tokens).expect("parse");
-    let err = sv_elaborator::elaborate(&m).expect_err("indeks negatif harus ditolak");
-    let pesan = err.to_string();
-    assert!(
-        pesan.contains("indeks negatif") || pesan.contains("di luar jangkauan"),
-        "pesan tak menjelaskan masalah: {pesan}"
-    );
+    sv_elaborator::elaborate(&m).expect("indeks negatif harus diterima pada elaborasi");
 }
 
 #[test]

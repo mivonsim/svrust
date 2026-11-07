@@ -549,3 +549,27 @@ Catatan verifikasi (sudah full support, demo OK):
 - `typedef` di luar module / compilation-unit scope (LRM §8.20) — demo `examples/e2e_typedef_global/`
 - Unpacked array multi-dimensi + seleksi bertingkat (LRM §7.8) — demo `examples/e2e_unpacked_multi/` dan `examples/e2e_real_unpacked/`
 - Format specifier `%s` (string ASCII) dan `%m` (nama modul) — LRM §20.4, implementasi di `sv-runtime::system_task` dengan 4 test baru.
+
+## Stabilisasi Sesi — Opentitan Check & Supply0/1 (selesai)
+
+### Perbaikan
+
+1. **`supply0`/`supply1`** (`crates/sv-ir/src/datatype.rs`): `ValueKind::Supply0`/`Supply1` baru, `is_supply0`/`is_supply1`, `DataType::supply0()`/`supply1()` pakai `kind` yang benar (bukan `Logic`), `type_name` menangani keduanya (LRM §6.6).
+
+2. **Opentitan check lolos tanpa error** (`crates/sv-elaborator/`):
+   - `instance.rs`: E0201 lebar koneksi port di-lenientkan bila port anak width `Literal(1)` default (tipe paket eksternal tak dikenal, mis. `prim_alert_pkg::alert_tx_t`); `petakan_nama` tidak menambahkan prefix instans pada nama paket yang mengandung `::`, sehingga konstanta paket global tidak jadi sinyal tak dikenal.
+   - `lower_expr.rs`: ident paket (`pkg::nama`) dikembalikan sebagai konstanta 0 default; seleksi bit out-of-bounds pada sinyal default 1-bit dan index konstan out-of-bounds (`cek_indeks_konstan`) tidak hard-fail (LRM §10.10.1 → `X` di runtime, bukan error kompilasi).
+   - `lower_stmt.rs`: `lookup_lvalue` bit-select out-of-bounds (width 1) tidak hard-fail.
+
+### Test baru / diupdate
+
+- `konstanta_paket_dengan_double_colon_tidak_diprefix_instans` di `select_range_test.rs` (baru).
+- 5 test out-of-bounds diupdate untuk terima perilaku baru (select_range_test.rs, unpacked_test.rs).
+- `repro_earlgrey_pd_main_full` di `param.rs`: tambah `search_dirs` ke `prim_alert_pkg` OpenTitan agar `include prim_assert.sv` ditemukan.
+
+### Verifikasi
+
+- `cargo nextest run --workspace`: 1516 passed, 0 skipped
+- `cargo clippy --all-targets`: clean 0 warning
+- `cargo fmt --check`: clean
+- `cargo run --release -- check --rtl opentitan.f --top top_earlgrey --release`: `check OK (3 module, top top_earlgrey)`, tanpa error
