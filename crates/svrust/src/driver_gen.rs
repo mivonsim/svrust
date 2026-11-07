@@ -345,14 +345,27 @@ fn generate_vcd_driver_named(
     // Nilai sebelum loop: belum ada `#delay` yang jalan, jadi waktunya nol.
     let waktu_dawal = "0".to_string();
 
+    // LRM §23.2: `$dumpvars(n)` membatasi hierarki yang direkam. level 0 =
+    // hanya root, level 1 = top + anak langsung, dst. Tanpa argumen (`None`),
+    // semua hierarki direkam.
+    let dump_level = design.dump_level;
+    let variabel_vcd: Vec<&sv_ir::variable::VarDecl> = match dump_level {
+        Some(n) => design
+            .variables
+            .iter()
+            .map(|v| v.as_ref())
+            .filter(|v| v.path.segments.len() <= n as usize + 1)
+            .collect(),
+        None => design.variables.iter().map(|v| v.as_ref()).collect(),
+    };
+
     // LRM §21.8: header VCD memakai `timeprecision` modul top, bukan
     // nanosecond tetap — kalau tidak, pembaca VCD akan salah menafsirkan
     // nilai waktu.
-    out.push_str(&format!(
-        "    let mut trace = sv_trace::VcdWriter::new({:?});\n",
-        crate::vcd_timescale::vcd_timescale(design)
-    ));
-    for var in &design.variables {
+    out.push_str("    let mut trace = sv_trace::VcdWriter::new(\"");
+    out.push_str(&crate::vcd_timescale::vcd_timescale(design));
+    out.push_str("\");\n");
+    for var in &variabel_vcd {
         let field = var.name.to_lowercase();
         out.push_str(&format!(
             "    let id_{} = trace.add_signal(\"{}\", {});\n",
@@ -364,8 +377,6 @@ fn generate_vcd_driver_named(
     // Nilai awal setelah settle.
     out.push_str("\n    design.eval_comb();\n");
     out.push_str("    design.commit_pending();\n");
-    // LRM §15.2: blok `initial` berjalan sekali pada waktu nol, sebelum
-    // capture VCD sehingga stimulus testbench ikut terekam.
     let ada_initial = sv_codegen_rust::module_gen::has_initial(design);
     if ada_initial {
         out.push_str("    design.eval_initial(0);\n");
@@ -390,7 +401,7 @@ fn generate_vcd_driver_named(
     out.push_str("    trace.initial(");
     out.push_str(&waktu_dawal);
     out.push_str(", &[\n");
-    for var in &design.variables {
+    for var in &variabel_vcd {
         let field = var.name.to_lowercase();
         out.push_str(&format!(
             "            (id_{}, &design.{}().to_vcd_string()),\n",
@@ -481,10 +492,11 @@ fn generate_vcd_driver_named(
         out.push_str("        if !dumping && design.dump_requested() {\n");
         out.push_str("            dumping = true;\n");
         out.push_str("            trace.initial({waktu}, &[");
-        for var in &design.variables {
+        for var in &variabel_vcd {
             let field = var.name.to_lowercase();
             out.push_str(&format!(
-                "                (id_{field}, &design.{field}().to_vcd_string()),\n"
+                "                (id_{0}, &design.{1}().to_vcd_string()),\n",
+                field, field
             ));
         }
         out.push_str("            ]);\n");
@@ -534,8 +546,8 @@ fn generate_vcd_driver_named(
     out.push_str(";\n");
 
     out.push_str("        if dumping {\n");
-    out.push_str("            trace.advance({waktu}, &[\n");
-    for var in &design.variables {
+    out.push_str("            trace.advance({waktu}, &[");
+    for var in &variabel_vcd {
         let field = var.name.to_lowercase();
         out.push_str(&format!(
             "                (id_{}, &design.{}().to_vcd_string()),\n",

@@ -99,7 +99,79 @@ pub fn elaborate(module: &Module) -> Result<Design, ElaborateError> {
         &PackageTable::new(),
     )?;
 
+    // LRM §23.2: `$dumpvars(n)` membatasi hierarki yang direkam. Scan semua
+    // proses untuk mencari `$dumpvars(n)` dan simpan level ke Design.
+    design.dump_level = cari_dump_level(&design.processes);
+
     Ok(design)
+}
+
+/// Cari level `$dumpvars(n)` dari semua proses. `None` = semua hierarki,
+/// `Some(n)` = hanya level 0..n dari root.
+fn cari_dump_level(proses: &[sv_ir::process::Process]) -> Option<u32> {
+    for p in proses {
+        if let Some(level) = cari_dump_level_dalam_statement(&p.body) {
+            return Some(level);
+        }
+    }
+    None
+}
+
+/// Cari `$dumpvars(n)` dalam daftar statement secara rekursif.
+fn cari_dump_level_dalam_statement(statements: &[sv_ir::process::Statement]) -> Option<u32> {
+    for stmt in statements {
+        match stmt {
+            sv_ir::process::Statement::SystemTask {
+                kind: sv_ir::system_task::SystemTaskKind::DumpVars,
+                ref args,
+                ..
+            } => {
+                for arg in args {
+                    if let sv_ir::system_task::SystemArg::Value(sv_ir::expr::Expr::Const {
+                        value,
+                        ..
+                    }) = arg
+                    {
+                        return Some(*value as u32);
+                    }
+                }
+            }
+            sv_ir::process::Statement::Block { ref body, .. } => {
+                if let Some(level) = cari_dump_level_dalam_statement(body) {
+                    return Some(level);
+                }
+            }
+            sv_ir::process::Statement::If {
+                ref then_branch,
+                ref else_branch,
+                ..
+            } => {
+                if let Some(level) = cari_dump_level_dalam_statement(then_branch) {
+                    return Some(level);
+                }
+                if let Some(level) = cari_dump_level_dalam_statement(else_branch) {
+                    return Some(level);
+                }
+            }
+            sv_ir::process::Statement::Case { ref arms, .. } => {
+                for arm in arms {
+                    if let Some(level) = cari_dump_level_dalam_statement(&arm.body) {
+                        return Some(level);
+                    }
+                }
+            }
+            sv_ir::process::Statement::For { ref body, .. }
+            | sv_ir::process::Statement::Repeat { ref body, .. }
+            | sv_ir::process::Statement::While { ref body, .. }
+            | sv_ir::process::Statement::Forever { ref body, .. } => {
+                if let Some(level) = cari_dump_level_dalam_statement(body) {
+                    return Some(level);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Elaborate top dari daftar module seberkas; instansi di-flatten.
@@ -109,11 +181,6 @@ pub fn elaborate_top(
     packages: &[PackageDecl],
     top: &str,
 ) -> Result<Design, ElaborateError> {
-    eprintln!("DEBUG elaborate_top: modules count = {}", modules.len());
-    for m in modules {
-        eprintln!("DEBUG elaborate_top: module = {}", m.name);
-    }
-    eprintln!("DEBUG elaborate_top: calling elaborate for top = {}", top);
     // Bangun tabel parameter per paket dari deklarasi paket yang dikumpulkan
     // saat parse. Parameter paket dievaluasi dalam urutan deklarasi karena
     // boleh merujuk parameter paket yang sebelumnya (LRM §26).
@@ -298,6 +365,10 @@ pub fn elaborate_top(
         modules,
         &package_tabel,
     )?;
+
+    // LRM §23.2: `$dumpvars(n)` membatasi hierarki yang direkam. Scan semua
+    // proses untuk mencari `$dumpvars(n)` dan simpan level ke Design.
+    design.dump_level = cari_dump_level(&design.processes);
 
     Ok(design)
 }

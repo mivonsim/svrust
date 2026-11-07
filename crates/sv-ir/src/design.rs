@@ -48,6 +48,9 @@ pub struct Design {
     /// pada sinyal rata saat codegen. Setiap entri: (signal_id, daftar
     /// (first, size, descending) dari luar ke dalam).
     pub unpacked_dims: Vec<(SignalId, Vec<UnpackedElem>)>,
+    /// Level hierarki `$dumpvars(n)` (LRM §23.2). `None` = semua hierarki,
+    /// `Some(n)` = hanya level 0..n dari root.
+    pub dump_level: Option<u32>,
 }
 
 impl Design {

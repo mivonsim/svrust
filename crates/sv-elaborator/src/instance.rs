@@ -449,7 +449,7 @@ fn lower_instance_body(
         }
         design.add_variable(VarDecl::new(
             nama.clone(),
-            ScopePath::root().child(nama),
+            ScopePath::root().child(&inst.inst_name).child(nama),
             tipe,
             VarKind::Variable,
             id,
@@ -508,7 +508,7 @@ fn lower_instance_body(
         }
         design.add_variable(VarDecl::new(
             nama.clone(),
-            ScopePath::root().child(nama),
+            ScopePath::root().child(&inst.inst_name).child(nama),
             tipe,
             VarKind::Variable,
             id,
