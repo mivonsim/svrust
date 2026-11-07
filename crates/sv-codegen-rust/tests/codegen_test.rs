@@ -1191,6 +1191,32 @@ fn monitoroff_mematikan_flag_pemantau() {
 }
 
 #[test]
+fn monitor_on_off_gabungan_mengaktifkan_dan_matikan() {
+    // `$monitoron` setelah `$monitoroff` harus menyalakan flag kembali, dan
+    // `$monitoroff` terakhir harus mematikan flag.
+    let code = generate(
+        "module tb; logic [7:0] c; initial begin \
+          $monitor(\"c=%d\", c); $monitoroff; $monitoron; end endmodule",
+    );
+    assert!(
+        code.contains("self.monitor_active = true;"),
+        "monitor nyala: {code}"
+    );
+    assert!(
+        code.contains("self.monitor_active = false;"),
+        "monitor mati: {code}"
+    );
+    // Terakhir dijalankan: $monitoron → monitor_active = true pada akhir.
+    let terakhir = code
+        .rfind("self.monitor_active = ")
+        .expect("terdapat asign flag");
+    assert!(
+        &code[terakhir..].contains("true"),
+        "monitoron terakhir harus nyalakan: {code}"
+    );
+}
+
+#[test]
 fn strobe_mengantrekan_panggilan_bukan_boolean() {
     // LRM §20.3: beberapa $strobe dalam satu timestep harus semuanya
     // dicetak, jadi penandanya berupa antrean, bukan flag tunggal.
@@ -1198,6 +1224,10 @@ fn strobe_mengantrekan_panggilan_bukan_boolean() {
     assert!(code.contains("self.strobe_pending.push(("), "code:\n{code}");
     assert!(
         code.contains("pub fn run_strobe(&mut self)"),
+        "code:\n{code}"
+    );
+    assert!(
+        code.contains("std::mem::take(&mut self.strobe_pending)"),
         "code:\n{code}"
     );
 }

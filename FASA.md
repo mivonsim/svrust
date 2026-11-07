@@ -448,6 +448,26 @@ Semua 10 fase telah selesai.
 ### Commit
 - `fix: VCD marker waktu akhir ditulis saat $finish` (driver_gen + sv-trace).
 
+## Tahap Stabilisasi §25 Testbench — `$monitor` dievaluasi setiap langkah (selesai)
+
+### Perbaikan
+- `driver_gen`: pindahkan `pantau_monitor!()` dan `run_strobe()` keluar dari `while step_scheduler()` ke setelah loop, dievaluasi setiap langkah setelah `eval_initial` + `eval_comb` (LRM §20.2). Sebelumnya `$monitor` hanya mencetak saat scheduler punya event, sehingga perubahan sinyal pada segmen berikutnya tidak terdeteksi.
+
+### Test baru
+- `monitor_on_off_gabungan_mengaktifkan_dan_matikan` di `crates/sv-codegen-rust/tests/codegen_test.rs` (+1 test).
+
+### Verifikasi
+- `$monitor` dasar: mencetak semua perubahan (0, 5, 9) ✓
+- `$monitor` on/off gabungan: monitoron/monitoroff berfungsi ✓
+- `$strobe` isolasi: `S cnt=5` ✓
+- `cargo test -p sv-codegen-rust --test codegen_test`: 94 passed (+1 baru).
+- `cargo test --workspace`: 307 passed, 0 failed (1 environment issue OpenTitan).
+- `cargo clippy --all-targets`: clean (0 warning).
+- `cargo fmt --check`: clean.
+
+### Commit
+- `fix: $monitor dievaluasi setiap langkah, bukan hanya saat scheduler ada event`.
+
 ## Catatan Akhir
 
 SVRust telah mencapai dukungan fitur utama SystemVerilog LRM melalui 8 fase. Fitur-fitur utama yang didukung:

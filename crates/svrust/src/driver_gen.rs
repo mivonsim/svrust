@@ -209,16 +209,19 @@ fn generate_plain_driver_named(
                 out.push_str("                break;\n");
                 out.push_str("            }\n");
             }
-            if sv_codegen_rust::system_task_gen::uses_monitor_flag(design) {
-                out.push_str("            pantau_monitor!();\n");
-            }
-            if sv_codegen_rust::system_task_gen::has_strobe(design) {
-                out.push_str("            design.run_strobe();\n");
-            }
             if perlu_prev {
                 out.push_str("            design.sample_edge();\n");
             }
             out.push_str("        }\n");
+            // LRM §20.2: `$monitor` dievaluasi setiap langkah setelah segmen
+            // `initial` dievaluasi, bukan hanya saat scheduler punya event.
+            // `$strobe` juga dicetak di akhir setiap timestep.
+            if sv_codegen_rust::system_task_gen::uses_monitor_flag(design) {
+                out.push_str("        pantau_monitor!();\n");
+            }
+            if sv_codegen_rust::system_task_gen::has_strobe(design) {
+                out.push_str("        design.run_strobe();\n");
+            }
             if sv_codegen_rust::system_task_gen::has_finish(design) {
                 out.push_str("        if design.is_finished() {\n");
                 out.push_str("            break;\n");
@@ -235,16 +238,18 @@ fn generate_plain_driver_named(
                 out.push_str("            break;\n");
                 out.push_str("        }\n");
             }
-            if sv_codegen_rust::system_task_gen::uses_monitor_flag(design) {
-                out.push_str("        pantau_monitor!();\n");
-            }
-            if sv_codegen_rust::system_task_gen::has_strobe(design) {
-                out.push_str("        design.run_strobe();\n");
-            }
             if perlu_prev {
                 out.push_str("        design.sample_edge();\n");
             }
             out.push_str("    }\n\n");
+            // LRM §20.2: `$monitor` dievaluasi setiap langkah setelah scheduler
+            // idle, bukan hanya saat scheduler punya event.
+            if sv_codegen_rust::system_task_gen::uses_monitor_flag(design) {
+                out.push_str("    pantau_monitor!();\n");
+            }
+            if sv_codegen_rust::system_task_gen::has_strobe(design) {
+                out.push_str("    design.run_strobe();\n");
+            }
         }
     }
 
