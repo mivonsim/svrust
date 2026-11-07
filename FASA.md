@@ -573,3 +573,4 @@ Catatan verifikasi (sudah full support, demo OK):
 - `cargo clippy --all-targets`: clean 0 warning
 - `cargo fmt --check`: clean
 - `cargo run --release -- check --rtl opentitan.f --top top_earlgrey --release`: `check OK (3 module, top top_earlgrey)`, tanpa error
+- Demo baru `examples/e2e_supply01/`: supply0=0, supply1=1, implicit net Z, variabel belum ditulis X (LRM §6.6 / §4.3.1), DEMO OK

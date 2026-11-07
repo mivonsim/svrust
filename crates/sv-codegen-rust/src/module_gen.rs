@@ -1,7 +1,7 @@
 // Tanggung jawab: generate struct Rust untuk satu design module.
 use crate::indent::Indent;
 use crate::stmt_gen::write_statements;
-use sv_ir::datatype::NetResolution;
+use sv_ir::datatype::{NetResolution, ValueKind};
 use sv_ir::expr::Expr;
 use sv_ir::process::{ProcessKind, Statement};
 use sv_ir::variable::VarKind;
@@ -206,9 +206,15 @@ fn write_new(design: &Design, struct_name: &str, inner: &Indent, out: &mut Strin
     let inits = body.child();
     inits.push(out);
     for (i, var) in design.variables.iter().enumerate() {
-        let init = match var.kind {
-            VarKind::Net if var.initial.is_none() => "Bits::all(Logic::Z)",
-            _ => "Bits::all(Logic::X)",
+        let init = if matches!(var.data_type.kind, ValueKind::Supply0) {
+            // supply0/supply1 adalah net konstan 1-bit (LRM §6.6).
+            "Bits::zero()"
+        } else if matches!(var.data_type.kind, ValueKind::Supply1) {
+            "Bits::from_u64(1)"
+        } else if matches!(var.kind, VarKind::Net) && var.initial.is_none() {
+            "Bits::all(Logic::Z)"
+        } else {
+            "Bits::all(Logic::X)"
         };
         inits.push(out);
         out.push_str(&format!("    // signal {i}: {}\n", var.name));

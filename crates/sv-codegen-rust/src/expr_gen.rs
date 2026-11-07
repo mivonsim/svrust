@@ -1,5 +1,6 @@
 // Tanggung jawab: generate kode Rust untuk ekspresi IR.
 use crate::indent::Indent;
+use sv_ir::datatype::ValueKind;
 use sv_ir::{BinOp, DataType, Expr, UnOp};
 
 /// Tulis ekspresi IR sebagai Rust ke writer.
@@ -63,7 +64,13 @@ fn write_bits_expr(expr: &Expr, out: &mut String, indent: &Indent) {
             out.push_str(&format!("Bits::<MAX_WIDTH>::from_u64({value})"));
         }
         Expr::SignalRef { signal, .. } => {
-            out.push_str(&format!("self.signals[{}].read()", signal));
+            // supply0/supply1 adalah net konstan 1-bit (LRM §6.6): selalu
+            // baca 0 / 1, bukan nilai default sinyal (X/Z).
+            match expr.data_type().kind {
+                ValueKind::Supply0 => out.push_str("Bits::<MAX_WIDTH>::zero()"),
+                ValueKind::Supply1 => out.push_str("Bits::<MAX_WIDTH>::from_u64(1)"),
+                _ => out.push_str(&format!("self.signals[{}].read()", signal)),
+            }
         }
         Expr::Bin {
             op,
