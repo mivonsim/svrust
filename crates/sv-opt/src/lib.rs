@@ -41,6 +41,7 @@ mod tests {
             name: "p0".to_string(),
             kind: ProcessKind::Combinational,
             sensitivity: Vec::new(),
+            level_sensitive: false,
             body,
             span: Default::default(),
         });

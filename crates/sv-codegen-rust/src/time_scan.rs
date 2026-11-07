@@ -287,6 +287,7 @@ mod tests {
             name: "kosong".to_string(),
             kind: ProcessKind::Combinational,
             sensitivity: Vec::new(),
+            level_sensitive: false,
             body: vec![Statement::Noop {
                 span: Span::default(),
             }],

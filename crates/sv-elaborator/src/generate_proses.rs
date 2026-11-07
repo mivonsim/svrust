@@ -175,9 +175,10 @@ pub(crate) fn subst_statement(stmt: &Statement, env: &GenvarEnv, scope: &ScopeBl
             body: subst_comb(body, env, scope),
             span: *span,
         },
-        Statement::AlwaysComb { body, span } => Statement::AlwaysComb {
+        Statement::AlwaysComb { body, span, events } => Statement::AlwaysComb {
             body: subst_comb(body, env, scope),
             span: *span,
+            events: events.clone(),
         },
         Statement::Initial { body, span } => Statement::Initial {
             body: subst_comb(body, env, scope),

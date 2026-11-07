@@ -126,9 +126,10 @@ impl<'a> Inliner<'a> {
                 body: self.comb_list(body)?,
                 span: *span,
             },
-            Statement::AlwaysComb { body, span } => Statement::AlwaysComb {
+            Statement::AlwaysComb { body, span, events } => Statement::AlwaysComb {
                 body: self.comb_list(body)?,
                 span: *span,
+                events: events.clone(),
             },
             Statement::Initial { body, span } => Statement::Initial {
                 body: self.comb_list(body)?,

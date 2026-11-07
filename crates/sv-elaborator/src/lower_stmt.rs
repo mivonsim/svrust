@@ -436,6 +436,7 @@ pub fn lower_module_statement(
                         edge: EdgeSensitivity::AnyChange,
                     })
                     .collect(),
+                level_sensitive: false,
                 body: vec![Statement::Assign {
                     assignment: Assignment {
                         target,
@@ -467,26 +468,50 @@ pub fn lower_module_statement(
                         edge: EdgeSensitivity::AnyChange,
                     })
                     .collect(),
+                level_sensitive: false,
                 body: lowered,
                 span: to_ir_span(*span),
             })
         }
-        AstStatement::AlwaysComb { body, span } => {
+        AstStatement::AlwaysComb { body, span, events } => {
             let lowered = lower_comb_block(body, symbols)?;
-            let mut reads = Vec::new();
-            for statement in &lowered {
-                collect_statement_reads(statement, &mut reads);
-            }
-            Ok(Process {
-                name: "always_comb".to_string(),
-                kind: ProcessKind::Combinational,
-                sensitivity: reads
+            let sensitivity = if events.is_empty() {
+                // Sensitivitas implisit (`always` tanpa `@` atau `always @*`):
+                // semua sinyal yang dibaca di body.
+                let mut reads = Vec::new();
+                for statement in &lowered {
+                    collect_statement_reads(statement, &mut reads);
+                }
+                reads
                     .into_iter()
                     .map(|signal| SensitivityItem {
                         signal,
                         edge: EdgeSensitivity::AnyChange,
                     })
-                    .collect(),
+                    .collect()
+            } else {
+                // Level-sensitive `always @(clk)`: dievaluasi saat salah satu
+                // sinyal dalam `events` berubah nilai (LRM §9.2.1).
+                events
+                    .iter()
+                    .map(|e| {
+                        let symbol = symbols
+                            .lookup(&e.signal)
+                            .ok_or_else(|| {
+                                ElaborateError::undefined_signal(&e.signal, e.span)
+                            })?;
+                        Ok(SensitivityItem {
+                            signal: symbol.signal_id,
+                            edge: EdgeSensitivity::AnyChange,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ElaborateError>>()?
+            };
+            Ok(Process {
+                name: "always_comb".to_string(),
+                kind: ProcessKind::Combinational,
+                sensitivity,
+                level_sensitive: !events.is_empty(),
                 body: lowered,
                 span: to_ir_span(*span),
             })
@@ -498,6 +523,7 @@ pub fn lower_module_statement(
                 name: "initial".to_string(),
                 kind: ProcessKind::Initial,
                 sensitivity: vec![],
+                level_sensitive: false,
                 body: lowered,
                 span: to_ir_span(*span),
             })
@@ -509,6 +535,7 @@ pub fn lower_module_statement(
                 name: "final".to_string(),
                 kind: ProcessKind::Final,
                 sensitivity: vec![],
+                level_sensitive: false,
                 body: lowered,
                 span: to_ir_span(*span),
             })
@@ -544,6 +571,7 @@ pub fn lower_module_statement(
                 name: format!("always_ff_{}", nama_proses),
                 kind: ProcessKind::Sequential,
                 sensitivity,
+                level_sensitive: false,
                 body: lowered,
                 span: to_ir_span(*span),
             })
@@ -1014,6 +1042,7 @@ fn map_event_edge(edge: sv_ast::event_edge::EventEdge) -> EdgeSensitivity {
         Ast::Posedge => EdgeSensitivity::Posedge,
         Ast::Negedge => EdgeSensitivity::Negedge,
         Ast::AnyChange => EdgeSensitivity::AnyChange,
+        Ast::Level => EdgeSensitivity::AnyChange,
     }
 }
 

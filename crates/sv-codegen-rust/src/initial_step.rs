@@ -180,6 +180,7 @@ mod tests {
             name: "initial".to_string(),
             kind: ProcessKind::Initial,
             sensitivity: Vec::new(),
+            level_sensitive: false,
             body,
             span: Span::default(),
         }

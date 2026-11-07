@@ -10,6 +10,9 @@ pub enum EventEdge {
     Negedge,
     /// `edge` — perubahan apa pun.
     AnyChange,
+    /// Tingkat (level) sinyal — proses dievaluasi setiap kali sinyal berubah
+    /// nilai, misalnya `always @(clk)` tanpa edge keyword (LRM §9.2.1).
+    Level,
 }
 
 impl EventEdge {

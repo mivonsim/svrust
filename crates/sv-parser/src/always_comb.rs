@@ -35,7 +35,7 @@ pub fn parse_always_comb(tokens: &[SpannedToken]) -> Result<(Statement, usize), 
     }
 
     let (body, next) = parse_comb_body(tokens, idx)?;
-    Ok((Statement::AlwaysComb { body, span }, next))
+    Ok((Statement::AlwaysComb { events: vec![], body, span }, next))
 }
 
 /// Parse body proses combinational: blok `begin...end` atau satu statement.

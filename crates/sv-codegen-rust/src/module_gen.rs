@@ -70,6 +70,11 @@ pub fn generate_module(design: &Design) -> String {
         field_indent.push(&mut out);
         out.push_str("edge_prev: Vec<u64>,\n");
     }
+    // Nilai sensitivity sebelumnya untuk proses `always @(sinyal)` level-sensitive.
+    if ada_sensitivitas_level(design) {
+        field_indent.push(&mut out);
+        out.push_str("comb_edge_prev: Vec<u64>,\n");
+    }
     // Waktu simulasi dibutuhkan oleh `#delay`, `$time`, DAN `eval_initial` —
     // driver membandingkan titik waktu antar proses pada setiap langkah, jadi
     // field ini wajib ada begitu ada blok `initial` meski desainnya tanpa
@@ -312,6 +317,12 @@ fn write_new(design: &Design, struct_name: &str, inner: &Indent, out: &mut Strin
         fields.push(out);
         out.push_str("edge_prev: vec![0; signal_count],\n");
     }
+    // Nilai sensitivity sebelumnya untuk proses `always @(sinyal)` level-sensitive,
+    // agar proses baru dievaluasi bila sinyalnya berubah (bukan setiap langkah).
+    if ada_sensitivitas_level(design) {
+        fields.push(out);
+        out.push_str("comb_edge_prev: vec![0; signal_count],\n");
+    }
     // time_now SELALU ada (scheduler butuhnya)
     fields.push(out);
     out.push_str("time_now: SimTime::ZERO,\n");
@@ -483,7 +494,40 @@ fn write_eval_comb(design: &Design, inner: &Indent, out: &mut String) {
         // LRM §20.3: setelah `$finish`, statement berikutnya tidak jalan lagi.
         // Penjaga hanya 필요 kalau design memang punya `$finish`; tanpa itu
         // field `finished` tidak dibangkitkan dan rujukan akan gagal compile.
+        // Proses `always @(sinyal)` level-sensitive baru dievaluasi bila salah
+        // satu sinyal sensitivity berubah nilai (LRM §9.2.1). Bila tidak,
+        // lewati agar tidak dievaluasi setiap langkah.
+        if process.level_sensitive {
+            out.push_str("let mut __berubah = false;\n");
+            for item in &process.sensitivity {
+                out.push_str(&format!(
+                    "let __skrg{} = self.signals[{}].read().to_u64() & 1;\n",
+                    item.signal, item.signal
+                ));
+                out.push_str(&format!(
+                    "if __skrg{} != self.comb_edge_prev[{}] {{\n",
+                    item.signal, item.signal
+                ));
+                out.push_str("__berubah = true;\n");
+                out.push_str("}\n");
+            }
+            out.push_str("if __berubah {\n");
+        }
         write_statements(design, &process.body, out, &body);
+        if process.level_sensitive {
+            out.push_str("}\n");
+        }
+    }
+    // Simpan nilai sensitivity untuk pemanggilan berikutnya (level-sensitive).
+    for process in &combinational {
+        if process.level_sensitive {
+            for item in &process.sensitivity {
+                out.push_str(&format!(
+                    "self.comb_edge_prev[{}] = self.signals[{}].read().to_u64() & 1;\n",
+                    item.signal, item.signal
+                ));
+            }
+        }
     }
     inner.push(out);
     out.push_str("}\n\n");
@@ -714,6 +758,12 @@ fn ada_event_gabungan(design: &Design) -> bool {
         .iter()
         .filter(|p| p.kind == ProcessKind::Sequential)
         .any(|p| p.sensitivity.len() > 1)
+}
+
+/// True bila ada proses combinational dengan sensitivity eksplisit
+/// (`always @(clk)` level-sensitive) yang butuh pelacakan nilai sebelumnya.
+fn ada_sensitivitas_level(design: &Design) -> bool {
+    design.processes.iter().any(|p| p.level_sensitive)
 }
 
 /// Tulis method `sample_edge` bila design menyimpan `edge_prev`.
@@ -1966,6 +2016,7 @@ mod tests {
             name: "p_comb".to_string(),
             kind: ProcessKind::Combinational,
             sensitivity: Vec::new(),
+            level_sensitive: false,
             body: vec![Statement::Assign {
                 assignment: sv_ir::process::Assignment {
                     target: 1,

@@ -270,6 +270,33 @@ fn continuous_assign_ke_wire_tulis_langsung() {
     );
 }
 
+/// `always @(sinyal)` level-sensitive (LRM §9.2.1) harus menggunakan
+/// `comb_edge_prev` agar dievaluasi hanya saat sinyal berubah, bukan setiap
+/// langkah driver.
+#[test]
+fn always_level_sensitive_menggunakan_comb_edge_prev() {
+    let code = generate("module m; logic clk; logic [7:0] cnt; always @(clk) cnt <= cnt + 1; endmodule");
+    assert!(
+        code.contains("comb_edge_prev"),
+        "always @(clk) harus pakai comb_edge_prev:\n{code}"
+    );
+    assert!(
+        code.contains("__berubah"),
+        "always @(clk) harus cek perubahan sensitivity:\n{code}"
+    );
+}
+
+/// `always` tanpa `@` (sensitivitas implisit) tidak boleh menggunakan
+/// `comb_edge_prev` — dievaluasi setiap langkah.
+#[test]
+fn always_tanpa_sensitivitas_tidak_menggunakan_comb_edge_prev() {
+    let code = generate("module m; logic clk; logic [7:0] cnt; always cnt <= cnt + 1; endmodule");
+    assert!(
+        !code.contains("comb_edge_prev"),
+        "always tanpa @ tidak boleh pakai comb_edge_prev:\n{code}"
+    );
+}
+
 // --- sized literal, unary, reduction, ternary, select ---
 
 #[test]

@@ -42,9 +42,10 @@ fn statement(stmt: &Statement, table: &TypeTable) -> Result<Statement, Elaborate
                 .collect::<Result<Vec<_>, ElaborateError>>()?,
             span: *span,
         },
-        Statement::AlwaysComb { body, span } => Statement::AlwaysComb {
+        Statement::AlwaysComb { body, span, events } => Statement::AlwaysComb {
             body: comb_list(body, table)?,
             span: *span,
+            events: events.clone(),
         },
         Statement::Initial { body, span } => Statement::Initial {
             body: comb_list(body, table)?,

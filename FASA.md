@@ -579,3 +579,13 @@ Catatan verifikasi (sudah full support, demo OK):
 - Perbaikan stabilitas proses waktu `always #N` (LRM §9.2.1): variabel target proses waktu diinisialisasi ke 0 (bukan X) agar clock generator `always #5 clk = ~clk;` dapat toggle; proses waktu dijadwalkan ulang di `step_scheduler` setelah dievaluasi; jalur driver tanpa `initial` dibatasi langkah dan memanggil `eval_comb` agar continuous assign bekerja
 - **Resolusi multi-driver wired-AND/wired-OR (LRM §6.6)**: continuous assign ke `wand`/`wor`/`tri` di-routing ke `pending` sehingga `commit_pending` menyelesaikan AND/OR bitwise (bukan last-wins). Demo baru `examples/e2e_wired/`: wire last-wins, wand AND, wor OR, tri OR — semua sesuai ekspektasi, DEMO OK
 - Test baru: `continuous_assign_ke_wand_masuk_pending` dan `continuous_assign_ke_wire_tulis_langsung` di `codegen_test.rs` memverifikasi routing continuous assign ke pending vs write langsung
+- **`always @(sinyal)` level-sensitive (LRM §9.2.1)**: proses dievaluasi setiap kali sinyal sensitivity berubah nilai (bukan setiap langkah driver). Variabel `level_sensitive` ditambahkan ke `Process` IR; codegen generate cek `comb_edge_prev` hanya untuk proses level-sensitive. Demo baru `examples/e2e_always_level/`: `cnt=3` setelah 3 kali toggle `clk`, DEMO OK
+- Test baru: `always_level_sensitive_menggunakan_comb_edge_prev` dan `always_tanpa_sensitivitas_tidak_menggunakan_comb_edge_prev` di `codegen_test.rs`
+
+### Verifikasi (ini)
+
+- `cargo nextest run --workspace`: 1522 passed, 0 skipped
+- `cargo clippy --all-targets`: clean 0 warning
+- `cargo fmt --check`: clean
+- `cargo run --release -- check --rtl opentitan.f --top top_earlgrey --release`: `check OK (3 module, top top_earlgrey)`, tanpa error
+- Demo baru `examples/e2e_always_level/`: `always @(clk)` level-sensitive, `cnt=3`, DEMO OK

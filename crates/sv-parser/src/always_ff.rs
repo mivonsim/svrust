@@ -51,14 +51,14 @@ pub fn parse_always(tokens: &[SpannedToken]) -> Result<(Statement, usize), Strin
         if super::always_comb::mengandung_delay(&body) {
             return Ok((Statement::AlwaysTimed { body, span }, next));
         }
-        return Ok((Statement::AlwaysComb { body, span }, next));
+        return Ok((Statement::AlwaysComb { events: vec![], body, span }, next));
     }
     idx += 1; // '@'
 
     // `always @*` — tanda `*` tanpa kurung.
     if tokens.get(idx).map(|t| &t.token) == Some(&Token::Star) {
         let (body, next) = super::always_comb::parse_comb_body(tokens, idx + 1)?;
-        return Ok((Statement::AlwaysComb { body, span }, next));
+        return Ok((Statement::AlwaysComb { events: vec![], body, span }, next));
     }
 
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::LParen) {
@@ -71,7 +71,7 @@ pub fn parse_always(tokens: &[SpannedToken]) -> Result<(Statement, usize), Strin
             return Err("expected ')' after '@(*'".to_string());
         }
         let (body, next) = super::always_comb::parse_comb_body(tokens, idx + 3)?;
-        return Ok((Statement::AlwaysComb { body, span }, next));
+        return Ok((Statement::AlwaysComb { events: vec![], body, span }, next));
     }
 
     // Item pertama menentukan: edge → sekuensial, nama sinyal → level (comb).
@@ -84,29 +84,34 @@ pub fn parse_always(tokens: &[SpannedToken]) -> Result<(Statement, usize), Strin
         return parse_seq_body(tokens, next, events, span);
     }
 
-    // Level-sensitive `always @(a or b)`: lewati seluruh daftar lalu parse
-    // body sebagai combinational.
+    // Level-sensitive `always @(a or b)`: kumpulkan nama sinyal sebagai
+    // sensitivity level-sensitive (`EventEdge::Level`), lalu parse body
+    // sebagai combinational. Proses baru dievaluasi bila salah satu sinyal
+    // berubah nilai (LRM §9.2.1).
+    let mut events = Vec::new();
+    let mut pos = idx + 1; // setelah '('
     let mut kedalaman = 0usize;
-    let mut pos = idx;
-    while pos < tokens.len() {
-        match tokens[pos].token {
-            Token::LParen => kedalaman += 1,
-            Token::RParen => {
-                kedalaman -= 1;
-                if kedalaman == 0 {
-                    pos += 1;
-                    break;
-                }
+    loop {
+        match tokens.get(pos) {
+            Some(t) if t.token == Token::LParen => kedalaman += 1,
+            Some(t) if t.token == Token::RParen && kedalaman == 0 => {
+                pos += 1;
+                break;
             }
-            _ => {}
+            Some(t) if t.token == Token::RParen => kedalaman -= 1,
+            Some(SpannedToken { token: Token::Ident(nama), span }) => {
+                events.push(EventItem::dengan_span(EventEdge::Level, nama, *span));
+                pos += 1;
+            }
+            Some(_) => { pos += 1; } // lewati koma / `or`
+            None => return Err("expected ')' closing event list".to_string()),
         }
-        pos += 1;
     }
     if kedalaman != 0 {
         return Err("expected ')' closing event list".to_string());
     }
     let (body, next) = super::always_comb::parse_comb_body(tokens, pos)?;
-    Ok((Statement::AlwaysComb { body, span }, next))
+    Ok((Statement::AlwaysComb { events, body, span }, next))
 }
 
 /// Parse `@(event list)` setelah keyword; `idx` menunjuk token sesudah keyword.

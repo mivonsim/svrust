@@ -1251,7 +1251,7 @@ pub(crate) fn substitusi_parameter(
 fn substitusi_local_decl_stmt(s: &mut AstStatement, prefix: &str, koneksi: &KoneksiMap) {
     let (body, span) = match s {
         AstStatement::AlwaysTimed { body, span }
-        | AstStatement::AlwaysComb { body, span }
+        | AstStatement::AlwaysComb { body, span, .. }
         | AstStatement::Initial { body, span }
         | AstStatement::Final { body, span } => (body, *span),
         AstStatement::AlwaysFf { body, .. } => {
@@ -1335,9 +1335,10 @@ fn lingkup_statement(s: &AstStatement, prefix: &str, koneksi: &KoneksiMap) -> As
             body: lingkup_comb(body, prefix, koneksi),
             span: *span,
         },
-        AstStatement::AlwaysComb { body, span } => AstStatement::AlwaysComb {
+        AstStatement::AlwaysComb { body, span, events } => AstStatement::AlwaysComb {
             body: lingkup_comb(body, prefix, koneksi),
             span: *span,
+            events: events.clone(),
         },
         // Blok initial milik instans juga ikut di-prefix.
         AstStatement::Initial { body, span } => AstStatement::Initial {

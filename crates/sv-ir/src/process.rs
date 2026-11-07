@@ -102,6 +102,10 @@ pub struct Process {
     pub name: String,
     pub kind: ProcessKind,
     pub sensitivity: Vec<SensitivityItem>,
+    /// `true` bila proses `always @(sinyal)` level-sensitive (sensitivitas
+    /// eksplisit dari event list, bukan implisit dari bacaan body). Proses
+    /// ini baru dievaluasi saat salah satu sinyal sensitivity berubah.
+    pub level_sensitive: bool,
     pub body: Vec<Statement>,
     pub span: Span,
 }

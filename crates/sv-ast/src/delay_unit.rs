@@ -494,6 +494,7 @@ mod tests {
             ports: Vec::new(),
             declarations: Vec::new(),
             statements: vec![Statement::AlwaysComb {
+                events: vec![],
                 body: vec![dalam],
                 span: Span::dummy(),
             }],

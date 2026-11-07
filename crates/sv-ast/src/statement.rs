@@ -21,7 +21,17 @@ pub enum Statement {
         body: Vec<SequentialStatement>,
         span: Span,
     },
+    /// Blok `always @*` / `always` tanpa `@` (LRM §9.2.1): dievaluasi setiap
+    /// perubahan sinyal dalam body (sensitivitas implisit).
+    /// Blok `always @(sinyal)` level-sensitive: dievaluasi setiap kali salah
+    /// satu sinyal dalam `events` berubah nilai.
+    ///
+    /// Jika `events` kosong, berarti sensitivitas implisit (`always` tanpa
+    /// `@` atau `always @*`): dievaluasi setiap langkah.
+    /// Jika `events` berisi sinyal (misal `always @(clk)`), proses baru
+    /// dievaluasi bila salah satu sinyal itu berubah.
     AlwaysComb {
+        events: Vec<crate::event_item::EventItem>,
         body: Vec<CombinationalStatement>,
         span: Span,
     },
