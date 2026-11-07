@@ -584,9 +584,10 @@ Catatan verifikasi (sudah full support, demo OK):
 
 ### Verifikasi (ini)
 
-- `cargo nextest run --workspace`: 1522 passed, 0 skipped
+- `cargo nextest run --workspace`: 1523 passed, 0 skipped
 - `cargo clippy --all-targets`: clean 0 warning
 - `cargo fmt --check`: clean
 - `cargo run --release -- check --rtl opentitan.f --top top_earlgrey --release`: `check OK (3 module, top top_earlgrey)`, tanpa error
 - `LRM_COMPLIANCE.md`: tandai Elaborator (§23-24: parameter/sized literal, hierarchy/flatten, parameter inline, infer lebar ternary/unary/reduction) sebagai `[x]` — semua sub-item terverifikasi working (sized literal `8'd8`, hierarki 5 level, parameter inline di badan anak, ternary/unary/reduction width infer); update summary sisa item `[~]`
 - Demo baru `examples/e2e_always_level/`: `always @(clk)` level-sensitive, `cnt=3`, DEMO OK
+- **Driver jalur sekuensial pakai `step_scheduler()` (LRM §4.4)**: `driver_gen.rs` jalur sekuensial sekarang memanggil `design.step_scheduler()` sebagai pengganti manual `eval_timed`/`eval_comb`/`eval_seq`, sehingga scheduler region event (Active → NonBlocking → Monitor → Postponed) diterapkan penuh. Demo baru `examples/e2e_ff_counter/`: counter bertambah karena `step_scheduler` memanggil `eval_seq`. DEMO OK

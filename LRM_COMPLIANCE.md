@@ -174,6 +174,5 @@ Commit: `b88f153 fix: stabilkan error handling dan OpenTitan kompatibilitas` (pu
 
 Sisa item `[~]` untuk 100% IEEE-1800 (lihat FASA.md untuk prioritas fase berikutnya):
 
-- §25 Testbench batasan: `Scheduler`/`Region` di sv-runtime belum dipakai sepenuhnya, jadi urutan dua proses pada waktu yang sama belum ditentukan LRM; delay di dalam loop atau `if` belum menangguhkan proses.
+- §25 Testbench batasan: `Scheduler`/`Region` di sv-runtime sekarang dipakai oleh driver jalur sekuensial (step_scheduler), jadi urutan proses per region event diterapkan. Tetapi urutan dua proses pada waktu yang sama belum sepenuhnya ditentukan LRM; delay di dalam loop atau `if` belum menangguhkan proses.
 - §26 VCD/PLI: PLI/dpi belum
-- IR/opt/codegen/runtime: Scheduler belum tersambung sepenuhnya ke codegen
