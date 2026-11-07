@@ -439,7 +439,7 @@ Semua 10 fase telah selesai.
 - `advance_tanpa_perubahan_nilai_tetap_tulis_marker_waktu` di `crates/sv-trace/src/vcd.rs` (+1 test).
 
 ### Verifikasi
-- Demo `examples/e2e_vcd/demo.sh`: DEOK, timestamp #0 #10 #20 #30, marker akhir $finish #15, $dumpfile/$dumpvars di SV, --vcd tidak menimpa $dumpfile.
+- Demo `examples/e2e_vcd/demo.sh`: DEOK, timestamp #0 #10 #20 #30, marker akhir $finish #15, $dumpfile/$dumpvars di SV, --vcd tidak menimpa $dumpfile, sufiks dual-root (`sama.vcd` + `sama.vcd_r2`) diverifikasi di driver level.
 - `cargo test -p sv-trace`: 8 passed (+1 baru).
 - `cargo test --workspace`: 307 passed, 0 failed (1 environment issue OpenTitan).
 - `cargo clippy --all-targets`: clean (0 warning).
