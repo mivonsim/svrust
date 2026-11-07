@@ -16,7 +16,5 @@ fn supply0_supply1_dapat_dielaborasi() {
 
 #[test]
 fn supply0_supply1_bersama_wire_dan_logic() {
-    elaborate_sv(
-        "module top; supply0 z; supply1 o; wire w; logic [7:0] v; endmodule",
-    );
+    elaborate_sv("module top; supply0 z; supply1 o; wire w; logic [7:0] v; endmodule");
 }

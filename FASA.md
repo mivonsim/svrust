@@ -576,3 +576,4 @@ Catatan verifikasi (sudah full support, demo OK):
 - Demo baru `examples/e2e_supply01/`: supply0=0, supply1=1, implicit net Z, variabel belum ditulis X (LRM §6.6 / §4.3.1), DEMO OK
 - Demo baru `examples/e2e_task_ff/`: task di dalam `always_ff` dievaluasi pada edge clock (LRM §13.3), `cnt=42`, DEMO OK
 - Perbaikan regresi `examples/e2e_param/demo.sh`: multidimensi unpacked `[0:1][0:3]` diterima (fase 14), bukan ditolak
+- Perbaikan stabilitas proses waktu `always #N` (LRM §9.2.1): variabel target proses waktu diinisialisasi ke 0 (bukan X) agar clock generator `always #5 clk = ~clk;` dapat toggle; proses waktu dijadwalkan ulang di `step_scheduler` setelah dievaluasi; jalur driver tanpa `initial` dibatasi langkah dan memanggil `eval_comb` agar continuous assign bekerja

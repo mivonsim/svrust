@@ -141,6 +141,20 @@ fn generate_plain_driver_named(
         );
 
         if ada_sequential {
+            // LRM §4.3.1: variabel clock yang ditugasi oleh proses waktu
+            // (`always #N clk = ~clk`) bernilai `X` pada awal simulasi, sehingga
+            // `~X = X` dan clock tidak pernah toggle. Inisialisasikan ke 0 agar
+            // edge clock terbentuk dan `always_ff @(posedge clk)` dapat terpicu.
+            // Hanya diperlukan bila tidak ada blok `initial` yang dapat
+            // menginisialisasi clock sendiri.
+            if ada_proses_waktu && !sv_codegen_rust::module_gen::has_initial(design) {
+                if let Some((cf, cw)) = &clock_var(design) {
+                    out.push_str(&format!(
+                        "    design.set_{}(Bits::<{}>::from_u64(0));\n",
+                        cf, cw
+                    ));
+                }
+            }
             // Design dengan proses sekuensial: gunakan loop clock + step_scheduler
             out.push_str(&format!(
                 "    for __step in 1..{}::INITIAL_STEPS {{\n",
@@ -230,8 +244,14 @@ fn generate_plain_driver_named(
             out.push_str("    }\n\n");
         } else {
             // Design TANPA proses sekuensial dan TANPA blok `initial`:
-            // gunakan scheduler event-driven sampai idle (LRM §4).
-            out.push_str("    while design.step_scheduler() {\n");
+            // gunakan scheduler event-driven sampai idle atau batas langkah
+            // (LRM §4). Proses waktu (`always #N`) dijadwalkan ulang, jadi
+            // butuh batas langkah untuk mencegah infinite loop.
+            out.push_str("    let mut __langkah = 0usize;\n");
+            out.push_str("    while __langkah < STEPS && design.step_scheduler() {\n");
+            out.push_str("        __langkah += 1;\n");
+            out.push_str("        design.commit_pending();\n");
+            out.push_str("        design.eval_comb();\n");
             out.push_str("        design.commit_pending();\n");
             if sv_codegen_rust::system_task_gen::has_finish(design) {
                 out.push_str("        if design.is_finished() {\n");

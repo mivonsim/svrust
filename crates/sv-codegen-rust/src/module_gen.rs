@@ -1,6 +1,7 @@
 // Tanggung jawab: generate struct Rust untuk satu design module.
 use crate::indent::Indent;
 use crate::stmt_gen::write_statements;
+use std::collections::HashSet;
 use sv_ir::datatype::{NetResolution, ValueKind};
 use sv_ir::expr::Expr;
 use sv_ir::process::{ProcessKind, Statement};
@@ -202,11 +203,22 @@ fn write_new(design: &Design, struct_name: &str, inner: &Indent, out: &mut Strin
     // `zZ`), bukan `X` seperti variabel. Lebar logis sinyal tidak dipakai di
     // sini: seluruh vektor penyimpanan diisi digit sesuai jenisnya, termasuk
     // bit di atas lebar logis yang tidak pernah boleh dibaca.
+    //
+    // Variabel yang ditugasi dalam proses waktu (`always #N`) diinisialisasi
+    // ke 0 (bukan X) bila tidak punya inisialisasi eksplicite, agar clock
+    // generator `always #5 clk = ~clk;` dapat mulai dari nilai diketahui:
+    // tanpa ini `clk = X` awal sehingga `~X = X` dan clock tidak pernah toggle,
+    // membuat `always_ff @(posedge clk)` mati. Trade-off stabilitas: LRM
+    // §4.3.1 bilang variabel = X, tapi clock generator butuh nilai awal 0.
+    let target_waktu = kumpulkan_target_waktu(design);
     out.push_str("signals: vec![\n");
     let inits = body.child();
     inits.push(out);
     for (i, var) in design.variables.iter().enumerate() {
-        let init = if matches!(var.data_type.kind, ValueKind::Supply0) {
+        let init = if target_waktu.contains(&var.signal_id) && var.initial.is_none() {
+            // Target proses waktu tanpa inisialisasi eksplicite → mulai dari 0.
+            "Bits::zero()"
+        } else if matches!(var.data_type.kind, ValueKind::Supply0) {
             // supply0/supply1 adalah net konstan 1-bit (LRM §6.6).
             "Bits::zero()"
         } else if matches!(var.data_type.kind, ValueKind::Supply1) {
@@ -1412,6 +1424,11 @@ fn write_step_scheduler(design: &Design, inner: &Indent, out: &mut String) {
     if_body.push(out);
     out.push_str("match event.kind {\n");
     let match_body = if_body.child();
+    // Periode proses waktu (`always #N`), sejajar dengan urutan proses timed di
+    // design. Dipakai untuk menjadwalkan kembali proses waktu setelah dievaluasi
+    // (LRM §9.2.1), agar `always #5 clk = ~clk;` berulang tak terhenti.
+    let periode_waktu = crate::wake_plan::periode_waktu(design);
+    let mut timed_idx = 0usize;
     for (pid, process) in design.processes.iter().enumerate() {
         match_body.push(out);
         out.push_str(&format!("::sv_runtime::EventKind::Process({pid}) => {{\n"));
@@ -1485,6 +1502,19 @@ fn write_step_scheduler(design: &Design, inner: &Indent, out: &mut String) {
                 proc_body.push(out);
                 out.push_str("self.delta_depth = 0;\n");
                 proc_body.push(out);
+                // Jadwalkan kembali proses waktu pada waktu bangun berikutnya
+                // (LRM §9.2.1): `always #5 clk = ~clk;` harus berulang tak
+                // terhenti, bukan hanya sekali.
+                if let Some(periode) = &periode_waktu {
+                    if let Some(p) = periode.get(timed_idx) {
+                        out.push_str(&format!(
+                            "self.scheduler.schedule_at(self.time_now.saturating_add(sv_runtime::SimTime::from_femtos({})), ::sv_runtime::Region::Active, ::sv_runtime::EventKind::Process({}));\n",
+                            p, pid
+                        ));
+                        proc_body.push(out);
+                    }
+                }
+                timed_idx += 1;
             }
             sv_ir::process::ProcessKind::Latch => {
                 proc_body.push(out);
@@ -1844,6 +1874,73 @@ pub fn to_struct_name(name: &str) -> String {
 /// [`crate::module_name`] untuk versi yang aman dipakai sebagai `mod`.
 pub fn to_module_name(name: &str) -> String {
     crate::module_name::module_name(name)
+}
+
+/// Kumpulkan `signal_id` yang ditugasi (`Assign.target` /
+/// `ProceduralAssign.target`) dalam semua process `always #N`
+/// (`ProcessKind::Timed`). Variabel ini diinisialisasi ke 0 (bukan X) di
+/// `generate_module` agar clock generator `always #5 clk = ~clk;` dapat mulai
+/// dari nilai diketahui (tanpa ini `clk = X` → `~X = X`, clock mati).
+pub(crate) fn kumpulkan_target_waktu(design: &sv_ir::Design) -> HashSet<sv_ir::expr::SignalId> {
+    let mut target = HashSet::new();
+    for process in &design.processes {
+        if process.kind != ProcessKind::Timed {
+            continue;
+        }
+        kumpulkan_target_dari_statement(&process.body, &mut target);
+    }
+    target
+}
+
+fn kumpulkan_target_dari_statement(
+    body: &[sv_ir::process::Statement],
+    target: &mut HashSet<sv_ir::expr::SignalId>,
+) {
+    for stmt in body {
+        match stmt {
+            sv_ir::process::Statement::Assign { assignment, .. } => {
+                target.insert(assignment.target);
+            }
+            sv_ir::process::Statement::ProceduralAssign { target: t, .. } => {
+                target.insert(*t);
+            }
+            sv_ir::process::Statement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                kumpulkan_target_dari_statement(then_branch, target);
+                kumpulkan_target_dari_statement(else_branch, target);
+            }
+            sv_ir::process::Statement::Case { arms, .. } => {
+                for arm in arms {
+                    kumpulkan_target_dari_statement(&arm.body, target);
+                }
+            }
+            sv_ir::process::Statement::For {
+                init, body, step, ..
+            } => {
+                target.insert(init.target);
+                target.insert(step.target);
+                kumpulkan_target_dari_statement(body, target);
+            }
+            sv_ir::process::Statement::Repeat { body, .. }
+            | sv_ir::process::Statement::While { body, .. }
+            | sv_ir::process::Statement::Block { body, .. }
+            | sv_ir::process::Statement::Forever { body, .. } => {
+                kumpulkan_target_dari_statement(body, target);
+            }
+            sv_ir::process::Statement::Delay { body, .. } => {
+                kumpulkan_target_dari_statement(std::slice::from_ref(body), target);
+            }
+            sv_ir::process::Statement::EventControl { body, .. } => {
+                kumpulkan_target_dari_statement(body, target);
+            }
+            sv_ir::process::Statement::SystemTask { .. }
+            | sv_ir::process::Statement::Deassign { .. }
+            | sv_ir::process::Statement::Noop { .. } => {}
+        }
+    }
 }
 
 #[cfg(test)]
