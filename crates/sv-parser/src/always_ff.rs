@@ -51,14 +51,28 @@ pub fn parse_always(tokens: &[SpannedToken]) -> Result<(Statement, usize), Strin
         if super::always_comb::mengandung_delay(&body) {
             return Ok((Statement::AlwaysTimed { body, span }, next));
         }
-        return Ok((Statement::AlwaysComb { events: vec![], body, span }, next));
+        return Ok((
+            Statement::AlwaysComb {
+                events: vec![],
+                body,
+                span,
+            },
+            next,
+        ));
     }
     idx += 1; // '@'
 
     // `always @*` — tanda `*` tanpa kurung.
     if tokens.get(idx).map(|t| &t.token) == Some(&Token::Star) {
         let (body, next) = super::always_comb::parse_comb_body(tokens, idx + 1)?;
-        return Ok((Statement::AlwaysComb { events: vec![], body, span }, next));
+        return Ok((
+            Statement::AlwaysComb {
+                events: vec![],
+                body,
+                span,
+            },
+            next,
+        ));
     }
 
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::LParen) {
@@ -71,7 +85,14 @@ pub fn parse_always(tokens: &[SpannedToken]) -> Result<(Statement, usize), Strin
             return Err("expected ')' after '@(*'".to_string());
         }
         let (body, next) = super::always_comb::parse_comb_body(tokens, idx + 3)?;
-        return Ok((Statement::AlwaysComb { events: vec![], body, span }, next));
+        return Ok((
+            Statement::AlwaysComb {
+                events: vec![],
+                body,
+                span,
+            },
+            next,
+        ));
     }
 
     // Item pertama menentukan: edge → sekuensial, nama sinyal → level (comb).
@@ -99,11 +120,16 @@ pub fn parse_always(tokens: &[SpannedToken]) -> Result<(Statement, usize), Strin
                 break;
             }
             Some(t) if t.token == Token::RParen => kedalaman -= 1,
-            Some(SpannedToken { token: Token::Ident(nama), span }) => {
+            Some(SpannedToken {
+                token: Token::Ident(nama),
+                span,
+            }) => {
                 events.push(EventItem::dengan_span(EventEdge::Level, nama, *span));
                 pos += 1;
             }
-            Some(_) => { pos += 1; } // lewati koma / `or`
+            Some(_) => {
+                pos += 1;
+            } // lewati koma / `or`
             None => return Err("expected ')' closing event list".to_string()),
         }
     }

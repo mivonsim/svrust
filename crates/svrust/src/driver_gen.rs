@@ -105,7 +105,7 @@ fn generate_plain_driver_named(
     // `initial` atau proses sekuensial dengan event control gabungan.
     let perlu_prev = sv_codegen_rust::module_gen::perlu_edge_prev(design);
     if sv_codegen_rust::module_gen::has_initial(design) {
-        let clock_id = clock_signal_id(design);
+        let _clock_id = clock_signal_id(design);
         // LRM §9.7: `@(posedge clk)` hanya boleh lanjut kalau clock benar-benar
         // berubah, jadi clock ditoggle tiap langkah pada desain yang menunggu.
         let ada_tunggu = sv_codegen_rust::initial_step::total_tunggu(design) > 0;
@@ -179,17 +179,13 @@ fn generate_plain_driver_named(
                 out.push_str("            break;\n");
                 out.push_str("        }\n");
             }
-            out.push_str("        design.eval_comb();\n");
-            out.push_str("        design.commit_pending();\n");
-            if let Some(id) = clock_id {
-                out.push_str(&format!("        design.eval_seq({});\n", id));
-                out.push_str("        design.commit_pending();\n");
-            }
-            if sv_codegen_rust::system_task_gen::has_finish(design) {
-                out.push_str("        if design.is_finished() {\n");
-                out.push_str("            break;\n");
-                out.push_str("        }\n");
-            }
+            // LRM §4.4: step_scheduler menjalankan semua proses per region event
+            // (Active → NonBlocking → Monitor → Postponed): proses waktu,
+            // combinational (delta-cycle), sekuensial (eval_seq), latch, final,
+            // dan akhiri setiap proses dengan commit_pending sebagai
+            // NonBlocking phase. Diganti manual eval_timed/eval_comb/eval_seq
+            // agar jadwal region event benar.
+            out.push_str("        design.step_scheduler();\n");
             if sv_codegen_rust::system_task_gen::uses_monitor_flag(design) {
                 out.push_str("        pantau_monitor!();\n");
             }

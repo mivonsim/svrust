@@ -275,7 +275,8 @@ fn continuous_assign_ke_wire_tulis_langsung() {
 /// langkah driver.
 #[test]
 fn always_level_sensitive_menggunakan_comb_edge_prev() {
-    let code = generate("module m; logic clk; logic [7:0] cnt; always @(clk) cnt <= cnt + 1; endmodule");
+    let code =
+        generate("module m; logic clk; logic [7:0] cnt; always @(clk) cnt <= cnt + 1; endmodule");
     assert!(
         code.contains("comb_edge_prev"),
         "always @(clk) harus pakai comb_edge_prev:\n{code}"

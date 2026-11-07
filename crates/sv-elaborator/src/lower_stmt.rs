@@ -497,9 +497,7 @@ pub fn lower_module_statement(
                     .map(|e| {
                         let symbol = symbols
                             .lookup(&e.signal)
-                            .ok_or_else(|| {
-                                ElaborateError::undefined_signal(&e.signal, e.span)
-                            })?;
+                            .ok_or_else(|| ElaborateError::undefined_signal(&e.signal, e.span))?;
                         Ok(SensitivityItem {
                             signal: symbol.signal_id,
                             edge: EdgeSensitivity::AnyChange,
