@@ -82,6 +82,12 @@ pub fn generate_module(design: &Design) -> String {
     // waktu simulasi saat ini, jadi field ini SELALU ada.
     field_indent.push(&mut out);
     out.push_str("time_now: SimTime,\n");
+    // Kedalaman delta-cycle berturut-turut untuk proses combinational.
+    // Dinaikkan setiap kali combinational di-reschedule karena sinyal berubah,
+    // direset ke 0 saat event non-combinational diproses. Mencegah infinite loop
+    // bila logika kombinasi terus-menerus mengubah dirinya sendiri (LRM §4.4).
+    field_indent.push(&mut out);
+    out.push_str("delta_depth: usize,\n");
     // LRM §9.2.1: tiap proses `always #N` punya waktu bangun sendiri; dua
     // proses `#5` harus keduanya menambah 5 dari waktu yang sama.
     //
@@ -291,6 +297,10 @@ fn write_new(design: &Design, struct_name: &str, inner: &Indent, out: &mut Strin
     // time_now SELALU ada (scheduler butuhnya)
     fields.push(out);
     out.push_str("time_now: SimTime::ZERO,\n");
+    // Batas delta-cycle per tiupan clock agar komputasi kombinasi yang berekursi
+    // (misal `assign a = ~a`) tidak menyebabkan infinite loop di step_scheduler.
+    fields.push(out);
+    out.push_str("delta_depth: 0,\n");
     if crate::time_scan::jumlah_proses_waktu(design) > 0 {
         fields.push(out);
         out.push_str(&format!(
@@ -1380,7 +1390,10 @@ fn write_commit_pending(inner: &Indent, out: &mut String) {
 }
 
 /// Step scheduler: ambil event berikutnya dan eksekusi proses yang sesuai.
-/// Mengembalikan `true` bila ada event yang dieksekusi, `false` bila scheduler idle.
+/// Mengembalikan `true` bila ada event yang dieksekusi, `false` bila scheduler
+/// idle. Proses combinational dievaluasi dan bila sinyal berubah, dijadwalkan
+/// kembali ke Active region (delta-cycle, LRM §4.4) dengan batasan
+/// `delta_depth` untuk mencegah infinite loop.
 fn write_step_scheduler(design: &Design, inner: &Indent, out: &mut String) {
     inner.push(out);
     out.push_str("pub fn step_scheduler(&mut self) -> bool {\n");
@@ -1401,45 +1414,73 @@ fn write_step_scheduler(design: &Design, inner: &Indent, out: &mut String) {
         out.push_str(&format!("// {}\n", process.name));
         match process.kind {
             sv_ir::process::ProcessKind::Combinational => {
-                // Combinational process dievaluasi oleh driver melalui
-                // `eval_comb()` setiap langkah, bukan di-reschedule otomatis
-                // di scheduler. Reschedule otomatis tanpa pemeriksaan "sinyal
-                // berubah" menyebabkan infinite loop (step_scheduler selalu
-                // true karena event Active di waktu yang sama tidak pernah
-                // habis). Delta-cycle semantics lengkap (re-eval bila sinyal
-                // berubah dalam delta cycle yang sama) ditangguhkan ke fase
-                // berikutnya.
+                // Delta-cycle (LRM §4.4): evaluasi combinational, lalu bandingkan
+                // snapshot sebelum/sesudah. Bila ada sinyal yang berubah,
+                // jadwalkan kembali ke Active region untuk delta cycle berikutnya,
+                // dengan batasan delta_depth untuk mencegah infinite loop.
+                out.push_str("if self.delta_depth < 64 {\n");
+                let d_body = proc_body.child();
+                d_body.push(out);
+                out.push_str("let sebelum = self.snapshot();\n");
+                d_body.push(out);
+                out.push_str("self.eval_comb();\n");
+                d_body.push(out);
+                out.push_str("self.commit_pending();\n");
+                d_body.push(out);
+                out.push_str("let sesudah = self.snapshot();\n");
+                d_body.push(out);
+                out.push_str("if sebelum != sesudah {\n");
+                let delta_body = d_body.child();
+                delta_body.push(out);
+                out.push_str("self.delta_depth += 1;\n");
+                delta_body.push(out);
+                out.push_str(&format!(
+                    "self.scheduler.schedule_at(self.time_now, ::sv_runtime::Region::Active, ::sv_runtime::EventKind::Process({}));\n",
+                    pid
+                ));
+                delta_body.push(out);
+                out.push_str("}\n");
+                d_body.push(out);
+                out.push_str("} else {\n");
+                d_body.push(out);
+                out.push_str("self.delta_depth = 0;\n");
+                d_body.push(out);
+                out.push_str("}\n");
                 proc_body.push(out);
-                out.push_str("// Combinational: dievaluasi oleh driver via eval_comb()\n");
             }
             sv_ir::process::ProcessKind::Sequential => {
-                // Sequential processes are triggered by edge detection in driver
-                // Here we just evaluate if triggered
+                // Sequential dipicu oleh edge di driver melalui eval_seq.
                 proc_body.push(out);
-                out.push_str("// Sequential process - evaluated via eval_seq in driver\n");
+                out.push_str("self.delta_depth = 0;\n");
+                proc_body.push(out);
             }
             sv_ir::process::ProcessKind::Initial => {
-                // Initial processes are handled by eval_initial with step tracking
                 proc_body.push(out);
-                out.push_str("// Initial process - evaluated via eval_initial in driver\n");
+                out.push_str("self.delta_depth = 0;\n");
+                proc_body.push(out);
             }
             sv_ir::process::ProcessKind::Final => {
-                // Final processes run at end of simulation
                 proc_body.push(out);
-                out.push_str("// Final process - evaluated at end of simulation\n");
+                out.push_str("self.delta_depth = 0;\n");
+                proc_body.push(out);
             }
             sv_ir::process::ProcessKind::Timed => {
                 proc_body.push(out);
                 out.push_str("self.eval_timed();\n");
                 proc_body.push(out);
                 out.push_str("self.commit_pending();\n");
-                // Timed process reschedules itself in eval_timed
+                proc_body.push(out);
+                out.push_str("self.delta_depth = 0;\n");
+                proc_body.push(out);
             }
             sv_ir::process::ProcessKind::Latch => {
                 proc_body.push(out);
                 out.push_str("self.eval_comb();\n");
                 proc_body.push(out);
                 out.push_str("self.commit_pending();\n");
+                proc_body.push(out);
+                out.push_str("self.delta_depth = 0;\n");
+                proc_body.push(out);
             }
         }
         match_body.push(out);
@@ -1817,9 +1858,19 @@ mod tests {
             panic!("step_scheduler harus ada: {kode}");
         };
         let sched = &kode[awal..];
+        // Delta-cycle: combinational sekarang bisa dijadwalkan kembali (schedule_at)
+        // bila sinyal berubah, dengan batasan delta_depth agar tidak infinite loop.
         assert!(
-            !sched.contains("schedule_at"),
-            "design tanpa proses timed tidak boleh schedule_at di step_scheduler:\n{kode}"
+            sched.contains("schedule_at"),
+            "combinational harus bisa reschedule lewat schedule_at:\n{kode}"
+        );
+        assert!(
+            sched.contains("delta_depth"),
+            "delta_depth harus ada untuk mencegah infinite loop:\n{kode}"
+        );
+        assert!(
+            sched.contains("if self.delta_depth < 64"),
+            "batas delta_depth harus ada:\n{kode}"
         );
     }
 }

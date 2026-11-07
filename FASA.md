@@ -488,6 +488,23 @@ Semua 10 fase telah selesai.
 ### Commit
 - `feat: port tanpa tipe = net dengan nilai awal Z (LRM §6.5)`.
 
+## Tahap Stabilisasi — Scheduler-codegen delta-cycle (LRM §4.4) (selesai dasar)
+
+### Perbaikan
+- `sv-codegen-rust::write_step_scheduler`: scheduler sekarang mengeksekusi proses sesuai region event (Active/NBA/Postponed/Monitor/Postponed). Combinational dievaluasi via `eval_comb()` + `commit_pending()`, dan bila sinyal berubah (snapshot sebelum/sesudah berbeda), dijadwalkan kembali ke Active region untuk delta cycle berikutnya.
+- Struct design: field `delta_depth: usize` (awal 0) untuk melacak kedalaman delta-cycle berturut-turut. Dinaikkan setiap reschedule combinational, direset ke 0 pada event non-combinational. Batas 64 mencegah infinite loop (misal `assign a = ~a;`).
+- Test baru: `combinational_tidak_reschedule_otomatis_di_step_scheduler` diupdate untuk memastikan `schedule_at` + `delta_depth` + batasan 64 ada di `step_scheduler`.
+
+### Verifikasi
+- `assign a = ~a;` (self-loop combinational) tidak造成 infinite loop, berhenti pada delta_depth=64 ✓
+- Rantai combinational `a=1; b=a; c=b` menyebarkan perubahan melalui scheduler ✓
+- `cargo test --workspace`: 307 passed, 0 failed (1 environment issue OpenTitan).
+- `cargo clippy --all-targets`: clean (0 warning).
+- `cargo fmt --check`: clean.
+
+### Commit
+- `feat: scheduler-codegen delta-cycle dengan deteksi perubahan + batasan delta_depth`.
+
 ## Catatan Akhir
 
 SVRust telah mencapai dukungan fitur utama SystemVerilog LRM melalui 8 fase. Fitur-fitur utama yang didukung:
