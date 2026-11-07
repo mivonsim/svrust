@@ -241,6 +241,35 @@ fn commit_pending_selalu_memakai_masker() {
     );
 }
 
+/// LRM §6.6: continuous assign ke net wired (wand/wor/tri) harus ditulis
+/// lewat `pending` agar `commit_pending` melakukan resolusi wired-AND /
+/// wired-OR, bukan last-wins langsung.
+#[test]
+fn continuous_assign_ke_wand_masuk_pending() {
+    let code = generate("module m; wand [7:0] w; assign w = 8'hAA; endmodule");
+    // Pernyataan assign dalam `eval_comb` harus route lewat pending, bukan
+    // `self.signals[...].write(...)` langsung (last-wins).
+    assert!(
+        code.contains("self.pending.push(PendingWrite::new("),
+        "wand assign harus pakai pending (resolusi wired-AND):\n{code}"
+    );
+}
+
+/// Continuous assign ke net wire (bukan wired) tetap write langsung
+/// (last-wins), bukan pending.
+#[test]
+fn continuous_assign_ke_wire_tulis_langsung() {
+    let code = generate("module m; wire [7:0] w; assign w = 8'hAA; endmodule");
+    assert!(
+        code.contains(".write("),
+        "wire assign harus write langsung:\n{code}"
+    );
+    assert!(
+        !code.contains("PendingWrite::new("),
+        "wire assign tidak boleh pakai pending:\n{code}"
+    );
+}
+
 // --- sized literal, unary, reduction, ternary, select ---
 
 #[test]

@@ -2,6 +2,7 @@
 use crate::expr_gen::{write_expr, write_truthy_pub as write_truthy};
 use crate::indent::Indent;
 use crate::system_task_gen::write_system_task;
+use sv_ir::datatype::NetResolution;
 use sv_ir::process::{AssignStyle, Assignment, CaseArm, CaseKind, Statement};
 
 /// Tulis `casez`/`casex` sebagai rantai if-else dengan perbandingan bermasker.
@@ -457,6 +458,20 @@ fn write_assignment(
         .find(|v| v.signal_id == assignment.target)
         .map(|v| v.data_type.kind == sv_ir::datatype::ValueKind::Real)
         .unwrap_or(false);
+    // Target net dengan resolusi multi-driver (wand/wor/tri) harus ditulis
+    // lewat `pending` agar `commit_pending` melakukan resolusi wired-AND /
+    // wired-OR (LRM §6.6), bukan last-wins secara langsung.
+    let target_is_wired = design
+        .variables
+        .iter()
+        .find(|v| v.signal_id == assignment.target)
+        .map(|v| {
+            matches!(
+                v.data_type.net_resolution,
+                NetResolution::WiredAnd | NetResolution::WiredOr
+            )
+        })
+        .unwrap_or(false);
     let konstruktor = if target_is_real {
         // Integer harus dikonversi ke float terlebih dahulu: `(x as i64 as f64).to_bits()`
         // menghasilkan bit pattern IEEE 754 untuk nilai float x.
@@ -470,7 +485,22 @@ fn write_assignment(
     match assignment.style {
         AssignStyle::Blocking => {
             indent.push(out);
-            if seluruh {
+            if target_is_wired {
+                // Continuous assign ke net wired (wand/wor/tri): masukkan ke
+                // `pending` agar `commit_pending` melakukan resolusi wired-AND
+                // / wired-OR (LRM §6.6), bukan last-wins secara langsung.
+                if seluruh {
+                    out.push_str(&format!(
+                        "self.pending.push(PendingWrite::new({}, {}));\n",
+                        assignment.target, konstruktor
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "self.pending.push(PendingWrite::new_masked({}, {}, {}));\n",
+                        assignment.target, konstruktor, mask
+                    ));
+                }
+            } else if seluruh {
                 out.push_str(&format!(
                     "self.signals[{}].write({});\n",
                     assignment.target, konstruktor

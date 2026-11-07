@@ -569,7 +569,7 @@ Catatan verifikasi (sudah full support, demo OK):
 
 ### Verifikasi
 
-- `cargo nextest run --workspace`: 1518 passed, 0 skipped
+- `cargo nextest run --workspace`: 1520 passed, 0 skipped
 - `cargo clippy --all-targets`: clean 0 warning
 - `cargo fmt --check`: clean
 - `cargo run --release -- check --rtl opentitan.f --top top_earlgrey --release`: `check OK (3 module, top top_earlgrey)`, tanpa error
@@ -577,3 +577,5 @@ Catatan verifikasi (sudah full support, demo OK):
 - Demo baru `examples/e2e_task_ff/`: task di dalam `always_ff` dievaluasi pada edge clock (LRM §13.3), `cnt=42`, DEMO OK
 - Perbaikan regresi `examples/e2e_param/demo.sh`: multidimensi unpacked `[0:1][0:3]` diterima (fase 14), bukan ditolak
 - Perbaikan stabilitas proses waktu `always #N` (LRM §9.2.1): variabel target proses waktu diinisialisasi ke 0 (bukan X) agar clock generator `always #5 clk = ~clk;` dapat toggle; proses waktu dijadwalkan ulang di `step_scheduler` setelah dievaluasi; jalur driver tanpa `initial` dibatasi langkah dan memanggil `eval_comb` agar continuous assign bekerja
+- **Resolusi multi-driver wired-AND/wired-OR (LRM §6.6)**: continuous assign ke `wand`/`wor`/`tri` di-routing ke `pending` sehingga `commit_pending` menyelesaikan AND/OR bitwise (bukan last-wins). Demo baru `examples/e2e_wired/`: wire last-wins, wand AND, wor OR, tri OR — semua sesuai ekspektasi, DEMO OK
+- Test baru: `continuous_assign_ke_wand_masuk_pending` dan `continuous_assign_ke_wire_tulis_langsung` di `codegen_test.rs` memverifikasi routing continuous assign ke pending vs write langsung

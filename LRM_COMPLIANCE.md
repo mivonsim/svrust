@@ -20,7 +20,7 @@ Angka = persentase estimasi kepatuhan per area.
 ## Klaster fitur LRM (per bab IEEE-1800)
 - [x] **§3 Lexical / §4 Scheduling**: event region, 4-state penuh di jalur simulasi (Logic dengan X/Z propagasi melalui operator bitwise, aritmetika, perkalian, pembagian, modulo, unary, dan reduksi), jedawaktu — di sv-runtime
 - [x] **§5 Type / data**: `logic`, `bit`, `wire`, `reg`, `signed`/`unsigned`, `integer`/`int` (termasuk sebagai tipe port), **`real`** (floating point 64-bit IEEE 754, LRM §5.5) sudah; enum, struct belum — `Bits`/`Logic`/`Real` dengan codegen `f64` untuk `real`
-- [~] **§6 Net / variabel**: wire/reg/resolusi multi-driver, **supply0/1 sudah** (`ValueKind::Supply0`/`Supply1`, `is_supply0`/`is_supply1`, codegen `Bits<1>` konstan 0/1, LRM §6.6), **resolusi multi-driver wired-AND/wired-OR masih ditangguhkan**, tri belum
+- [x] **§6 Net / variabel**: wire/reg/resolusi multi-driver, **supply0/1 sudah** (`ValueKind::Supply0`/`Supply1`, `is_supply0`/`is_supply1`, codegen `Bits<1>` konstan 0/1, LRM §6.6), **resolusi multi-driver wired-AND/wired-OR sudah** (`wand`=WiredAnd, `wor`/`tri`=WiredOr; continuous assign di-routing ke `pending` sehingga `commit_pending` menyelesaikan AND/OR bitwise per demo `examples/e2e_wired/`), tri sudah
 - [x] **§6.2 Deklarasi majemuk**: `logic [7:0] a, b, c;` berbagi tipe, lebar, dan signedness
 - [x] **§6.2.2 Inisialisasi deklarasi**: `logic s = 8'd42;` menjadi nilai awal waktu nol, `wire w = a;` menjadi driver kontinu; boleh per deklarator (`a = 1, b = 2`)
 - [x] **§8 Struct / union / packed**: `struct { ... } var;` dan `union { ... } var;` dapat di-parse dan dielaborasi (struct: lebar = jumlah field, union: lebar = maksimum field). `interface` belum
