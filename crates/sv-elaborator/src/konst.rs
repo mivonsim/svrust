@@ -261,6 +261,7 @@ pub fn konst_checked(
     params: &ParamTable,
     packages: &PackageTable,
     span: Span,
+    strict: bool,
 ) -> Result<u64, ElaborateError> {
     match expr {
         Expr::Binary { op, lhs, rhs, .. }
@@ -274,16 +275,70 @@ pub fn konst_checked(
                 BinaryOp::Mul => a.checked_mul(b),
                 _ => unreachable!("dicek di atas"),
             };
-            // LRM §7.3: batas non-negatif. Overflow/underflow dikembalikan
-            // sebagai 0 (bukan error) agar parameter yang belum tersedia
-            // (default 0) tidak membuat elaborasi gagal total. Validasi
-            // lebar sebenarnya dilakukan saat sinyal dikonfirmasi.
+            // LRM §7.3: batas non-negatif.
+            // Jika strict (dimensi modul top, parameter sudah dikenal),
+            // overflow/underflow adalah error.
+            // Jika !strict (parameter paket yang belum tersedia),
+            // overflow dikembalikan sebagai 0 agar elaborasi tidak gagal total.
             match hasil {
                 Some(h) => Ok(h),
-                None => Ok(0),
+                None => {
+                    if strict && semua_ident_dikenal(expr, params) {
+                        Err(ElaborateError::invalid_width(
+                            "ekspresi konstanta dimension meluap atau negatif",
+                            span,
+                        ))
+                    } else {
+                        // Overflow karena parameter belum dikenal (default 0),
+                        // atau non-strict. Kembalikan 0 agar elaborasi
+                        // tidak gagal total.
+                        Ok(0)
+                    }
+                }
             }
         }
         _ => konst(expr, env, params, packages, span),
+    }
+}
+
+/// Cek apakah semua `Ident` dalam ekspresi merujuk parameter yang sudah
+/// dikenal di `ParamTable`. Digunakan untuk membedakan overflow sebenarnya
+/// (parameter diketahui tapi hasilnya melebihi u64) dari overflow karena
+/// parameter belum tersedia (default 0).
+fn semua_ident_dikenal(expr: &Expr, params: &ParamTable) -> bool {
+    match expr {
+        Expr::Ident { name, .. } => params.nilai_diketahui(name),
+        Expr::Binary { lhs, rhs, .. } => {
+            semua_ident_dikenal(lhs, params) && semua_ident_dikenal(rhs, params)
+        }
+        Expr::Unary { operand, .. } => semua_ident_dikenal(operand, params),
+        Expr::Number(_) | Expr::Sized { .. } => true,
+        Expr::Concat { items, .. } => items.iter().all(|e| semua_ident_dikenal(e, params)),
+        Expr::Replicate { count, value, .. } => {
+            semua_ident_dikenal(count, params) && semua_ident_dikenal(value, params)
+        }
+        Expr::Ternary {
+            condition,
+            when_true,
+            when_false,
+            ..
+        } => {
+            semua_ident_dikenal(condition, params)
+                && semua_ident_dikenal(when_true, params)
+                && semua_ident_dikenal(when_false, params)
+        }
+        Expr::Select { base, .. } => semua_ident_dikenal(base, params),
+        Expr::IndexDynamic { base, index, .. } => {
+            semua_ident_dikenal(base, params) && semua_ident_dikenal(index, params)
+        }
+        Expr::HierarchicalRef { .. } | Expr::StringConst { .. } => false,
+        Expr::SystemTime { .. } => true,
+        Expr::FunctionCall { .. } => false,
+        Expr::Cast { operand, .. }
+        | Expr::BuiltinCast { operand, .. }
+        | Expr::SizeCast { operand, .. }
+        | Expr::SignCast { operand, .. }
+        | Expr::Bits { operand, .. } => semua_ident_dikenal(operand, params),
     }
 }
 

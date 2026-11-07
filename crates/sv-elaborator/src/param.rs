@@ -41,6 +41,11 @@ impl ParamTable {
         self.nilai.get(nama).map(|(v, _)| *v).unwrap_or(0)
     }
 
+    /// Cek apakah parameter dengan nama ini sudah dikenal di tabel.
+    pub fn nilai_diketahui(&self, nama: &str) -> bool {
+        self.nilai.contains_key(nama)
+    }
+
     /// Daftar parameter dalam urutan deklarasi.
     pub fn decls(&self) -> &[ParamDecl] {
         &self.decls
@@ -110,9 +115,11 @@ impl ParamTable {
                 // berarti msb -4 dan harus ditolak (LRM §7.3 mensyaratkan
                 // batas non-negatif). Dengan `wrapping_sub` hasilnya 2^64-4
                 // dan lebarnya jadi miliaran bit — design absurd tanpa pesan.
-                let mut atas = crate::konst::konst_checked(msb, &env, self, packages, span)?;
+                let mut atas = crate::konst::konst_checked(msb, &env, self, packages, span, true)?;
                 let mut bawah = match lsb {
-                    Some(expr) => crate::konst::konst_checked(expr, &env, self, packages, span)?,
+                    Some(expr) => {
+                        crate::konst::konst_checked(expr, &env, self, packages, span, true)?
+                    }
                     // `[N]` tanpa titik dua: lebarnya N.
                     None => 0,
                 };
