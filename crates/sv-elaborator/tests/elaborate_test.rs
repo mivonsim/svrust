@@ -2,6 +2,7 @@
 use sv_elaborator::design::DesignStats;
 use sv_elaborator::elaborate;
 use sv_ir::process::{EdgeSensitivity, ProcessKind};
+use sv_ir::variable::VarKind;
 
 fn build(source: &str) -> sv_ir::Design {
     let tokens = sv_lexer::lex(source).expect("lex");
@@ -412,4 +413,26 @@ fn net_declaration_assign_menjadi_driver_kontinu() {
         assign_proses,
         "net declaration assign harus jadi proses continuous"
     );
+}
+
+#[test]
+fn port_tanpa_tipe_adalah_net_nilai_awal_z() {
+    // LRM §6.5: port tanpa tipe net/variabel eksplisit adalah implicit net,
+    // bukan variabel. Nilai awal net = Z.
+    let design = build("module m(input [7:0] z); endmodule");
+    let z = design.find_variable("z").expect("port z");
+    assert_eq!(z.kind, VarKind::Net, "port tanpa tipe harus Net");
+    assert_eq!(
+        z.data_type.net_resolution,
+        sv_ir::datatype::NetResolution::None,
+        "wire default = last-wins"
+    );
+}
+
+#[test]
+fn port_dengan_tipe_logic_tetap_variabel() {
+    // Port dengan tipe `logic` eksplisit adalah variabel, bukan net.
+    let design = build("module m(input logic [7:0] z); endmodule");
+    let z = design.find_variable("z").expect("port z");
+    assert_eq!(z.kind, VarKind::Port, "port dengan tipe logic harus Port");
 }

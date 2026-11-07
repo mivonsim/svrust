@@ -10,7 +10,7 @@ use sv_ast::module::Module;
 use sv_ast::package::PackageDecl;
 use sv_ast::port::PortDirection;
 use sv_ast::typedef::TypeDefDecl;
-use sv_ir::datatype::DataType;
+use sv_ir::datatype::{DataType, NetResolution};
 use sv_ir::scope::ScopePath;
 use sv_ir::time_scale::TimeScale;
 use sv_ir::variable::{VarDecl, VarKind};
@@ -39,12 +39,22 @@ pub fn elaborate(module: &Module) -> Result<Design, ElaborateError> {
 
     for port in &module.ports {
         let bit = params.lebar(&port.width, &PackageTable::new(), port.span)?;
-        let data_type = DataType::logic(bit as u32).with_signed(port.signed);
+        let mut data_type = DataType::logic(bit as u32).with_signed(port.signed);
+        // LRM §6.5: port tanpa tipe net/variabel eksplisit (`output [7:0] z`)
+        // adalah implicit net, bukan variabel. Net tanpa driver bernilai `Z`
+        // (iverilog `zZ`), bukan `X` seperti variabel. Wire default = last-wins
+        // (NetResolution::None), wand = WiredAnd, wor/tri = WiredOr.
+        let kind = if port.is_implicit_net() {
+            data_type = data_type.with_net_resolution(NetResolution::None);
+            VarKind::Net
+        } else {
+            VarKind::Port
+        };
         let id = symbols.insert(Symbol {
             name: port.name.clone(),
             signal_id: 0,
             data_type,
-            kind: VarKind::Port,
+            kind,
             unpacked: None,
             span: port.span,
         })?;
@@ -53,7 +63,7 @@ pub fn elaborate(module: &Module) -> Result<Design, ElaborateError> {
             port.name.clone(),
             ScopePath::root().child(port.name.clone()),
             data_type,
-            VarKind::Port,
+            kind,
             id,
         ));
         design.ports.push(PortInfo {
@@ -223,12 +233,22 @@ pub fn elaborate_top(
 
     for port in &module.ports {
         let bit = params.lebar(&port.width, &package_tabel, port.span)?;
-        let data_type = DataType::logic(bit as u32).with_signed(port.signed);
+        let mut data_type = DataType::logic(bit as u32).with_signed(port.signed);
+        // LRM §6.5: port tanpa tipe net/variabel eksplisit (`output [7:0] z`)
+        // adalah implicit net, bukan variabel. Net tanpa driver bernilai `Z`
+        // (iverilog `zZ`), bukan `X` seperti variabel. Wire default = last-wins
+        // (NetResolution::None).
+        let kind = if port.is_implicit_net() {
+            data_type = data_type.with_net_resolution(NetResolution::None);
+            VarKind::Net
+        } else {
+            VarKind::Port
+        };
         let id = symbols.insert(Symbol {
             name: port.name.clone(),
             signal_id: 0,
             data_type,
-            kind: VarKind::Port,
+            kind,
             unpacked: None,
             span: port.span,
         })?;
@@ -237,7 +257,7 @@ pub fn elaborate_top(
             port.name.clone(),
             ScopePath::root().child(port.name.clone()),
             data_type,
-            VarKind::Port,
+            kind,
             id,
         ));
         design.ports.push(PortInfo {

@@ -408,6 +408,7 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                     width: sv_ast::width::WidthExpr::Literal(1),
                     signed: false,
                     span: port_span,
+                    has_explicit_type: false,
                 });
                 continue;
             }
@@ -578,6 +579,7 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                 width,
                 signed,
                 span: port_span,
+                has_explicit_type: qualifier_dipakai,
             });
 
             // Dimensi unpacked setelah nama port: `input [7:0] d_i[Share]`.

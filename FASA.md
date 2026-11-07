@@ -468,6 +468,26 @@ Semua 10 fase telah selesai.
 ### Commit
 - `fix: $monitor dievaluasi setiap langkah, bukan hanya saat scheduler ada event`.
 
+## Tahap Stabilisasi — Port tanpa tipe = net (LRM §6.5) (selesai)
+
+### Perbaikan
+- `sv-ast::Port`: tambah field `has_explicit_type` dan metode `is_implicit_net()`.
+- `sv-parser`: parser set `has_explicit_type` bila ada tipe net/variabel eksplisit (`logic`/`wire`/`reg`/`bit`/tipe atom); `output [7:0] z` tanpa tipe → `has_explicit_type = false`.
+- `sv-elaborator` (design.rs, baik `elaborate` maupun `elaborate_top`): port implicit net → `VarKind::Net`, `net_resolution = None` (wire = last-wins).
+- `sv-codegen-rust`: net tanpa initial diinisialisasi `Bits::all(Logic::Z)` (bukan `X` seperti variabel), sehingga port output tak driven = `Z` (iverilog `zZ`), terlihat di VCD `bzzzzzzzz`.
+
+### Test baru
+- `port_tanpa_tipe_adalah_net_nilai_awal_z` dan `port_dengan_tipe_logic_tetap_variabel` di `crates/sv-elaborator/tests/elaborate_test.rs` (+2 test).
+
+### Verifikasi
+- `z=zzzzzzzz` untuk port output tak driven; VCD `bzzzzzzzz` ✓
+- `cargo test --workspace`: 307 passed, 0 failed (1 environment issue OpenTitan).
+- `cargo clippy --all-targets`: clean (0 warning).
+- `cargo fmt --check`: clean.
+
+### Commit
+- `feat: port tanpa tipe = net dengan nilai awal Z (LRM §6.5)`.
+
 ## Catatan Akhir
 
 SVRust telah mencapai dukungan fitur utama SystemVerilog LRM melalui 8 fase. Fitur-fitur utama yang didukung:
