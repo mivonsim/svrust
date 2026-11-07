@@ -336,14 +336,7 @@ fn generate_vcd_driver_named(
     // `timeprecision` modul. Design tanpa `#delay`/`$time` tidak punya field
     // `time_now`; timestamp-nya tetap harus monoton (memakai konstanta 0
     // membuat seluruh waveform bertumpuk di t=0 dan tidak bisa dibaca).
-    let waktu_dasar = if sv_codegen_rust::time_scan::has_time(design) {
-        format!(
-            "design.time_now().in_units({})",
-            crate::vcd_timescale::precision_femtos(design)
-        )
-    } else {
-        "i as u64".to_string()
-    };
+    let _ = sv_codegen_rust::time_scan::has_time(design);
     // Nilai sebelum loop: belum ada `#delay` yang jalan, jadi waktunya nol.
     let waktu_dawal = "0".to_string();
 
@@ -403,15 +396,23 @@ fn generate_vcd_driver_named(
     let clock = clock_signal_id(design);
     let clock_field = clock_var(design);
 
-    // LRM §21.8: timestamp VCD dalam satuan `timeprecision` modul. Dulu
-    // variabel `t` bertambah satu tiap langkah driver, jadi waveform menyatakan
-    // nomor langkah, bukan waktu simulasi — pembaca VCD salah membaca setiap
-    // edge.
-    //
-    let waktu = waktu_dasar.clone();
-    let waktu_akhir = waktu.clone();
+    // LRM §21.8: timestamp VCD dalam satuan `timeprecision` modul (bukan nomor
+    // langkah driver). Waktu simulasi diambil dari `design.time_now()` setiap
+    // langkah agar jam simulasi yang benar tercermin dalam waveform.
+    let presisi = crate::vcd_timescale::precision_femtos(design);
 
     out.push_str("\n    for i in 0..STEPS {\n");
+
+    // Waktu simulasi saat ini (LRM §21.8/§23.2). Design tanpa `#delay` tidak
+    // punya `time_now`, jadi gunakan nomor langkah sebagai fallback.
+    let waktu_kode = if sv_codegen_rust::time_scan::has_time(design) {
+        "design.time_now().in_units(".to_string() + &presisi.to_string() + ")"
+    } else {
+        "i as u64".to_string()
+    };
+    out.push_str("        let waktu = ");
+    out.push_str(&waktu_kode);
+    out.push_str(";\n");
 
     // Stimulus input: ramping counter agar terlihat transisi di VCD.
     for port in input_ports(design) {
@@ -466,9 +467,13 @@ fn generate_vcd_driver_named(
         // dibaca lagi setelah segmen `initial` berjalan; kalau tidak, blok
         // `$dumpvars` yang telat tidak pernah menghasilkan berkas dan pesannya
         // menyalahkan pengguna.
+        // Waktu simulasi terkini untuk timestamp VCD (LRM §21.8).
+        out.push_str("        let waktu = ");
+        out.push_str(&waktu_kode);
+        out.push_str(";\n");
         out.push_str("        if !dumping && design.dump_requested() {\n");
         out.push_str("            dumping = true;\n");
-        out.push_str(&format!("            trace.initial({waktu}, &["));
+        out.push_str("            trace.initial({waktu}, &[");
         for var in &design.variables {
             let field = var.name.to_lowercase();
             out.push_str(&format!(
@@ -504,16 +509,19 @@ fn generate_vcd_driver_named(
         out.push_str("        let __selesai = design.is_finished();\n");
         out.push_str("        if __selesai {\n");
         out.push_str("            if dumping {\n");
-        out.push_str(&format!(
-            "                trace.advance({waktu_akhir}, &[]);\n"
-        ));
+        out.push_str("                trace.advance({waktu}, &[]);\n");
         out.push_str("            }\n");
         out.push_str("            break;\n");
         out.push_str("        }\n");
     }
 
+    // Waktu simulasi terkini untuk sampel waveform tiap langkah (LRM §21.8).
+    out.push_str("        let waktu = ");
+    out.push_str(&waktu_kode);
+    out.push_str(";\n");
+
     out.push_str("        if dumping {\n");
-    out.push_str(&format!("            trace.advance({waktu}, &[\n"));
+    out.push_str("            trace.advance({waktu}, &[\n");
     for var in &design.variables {
         let field = var.name.to_lowercase();
         out.push_str(&format!(
