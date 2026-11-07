@@ -387,7 +387,9 @@ fn generate_vcd_driver_named(
         &mut out,
     );
     out.push_str("    if dumping {\n");
-    out.push_str(&format!("    trace.initial({waktu_dawal}, &[\n"));
+    out.push_str("    trace.initial(");
+    out.push_str(&waktu_dawal);
+    out.push_str(", &[\n");
     for var in &design.variables {
         let field = var.name.to_lowercase();
         out.push_str(&format!(

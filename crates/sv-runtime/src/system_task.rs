@@ -295,6 +295,13 @@ pub fn format_args<const M: usize>(
             out.push('%');
             continue;
         }
+        // `%m` mencetak nama hierarkis modul tanpa mengonsumsi argumen
+        // (LRM §20.4). Engine hanya mengetahui modul tunggal, jadi return
+        // placeholder "top".
+        if spec == 'm' || spec == 'M' {
+            out.push_str("top");
+            continue;
+        }
         // Spekifier yang tidak dikenal tidak mengonsumsi argumen: `iverilog`
         // mencetak format apa adanya lalu semua argumen jadi argumen berlebih.
         // Versi lama menghapus argumen lebih dulu, jadi setiap kolom berikutnya
@@ -423,8 +430,40 @@ pub fn format_args<const M: usize>(
                     )
                 }
             }
-            // `%s` dan `%m` tidak punya sumber nilai di engine ini.
-            's' | 'S' | 'm' | 'M' => String::new(),
+            // LRM §20.4: `%s` mencetak nilai sebagai string ASCII (8 bit per
+            // karakter, MSB dulu, berhenti pada null terminator atau digit
+            // x/z). `%m` mencetak nama hierarkis modul saat ini (engine hanya
+            // mengetahui modul tunggal, jadi return placeholder "top").
+            's' | 'S' => {
+                let lebar = arg.width as usize;
+                let mut teks = String::new();
+                let mut i = (lebar / 8) * 8;
+                while i >= 8 {
+                    let mut byte: u8 = 0;
+                    let mut tak_diketahui = false;
+                    for b in 0..8 {
+                        match arg.value.get(i - 1 - b) {
+                            Logic::One => byte |= 1 << (7 - b),
+                            Logic::Zero => {}
+                            Logic::X | Logic::Z => {
+                                tak_diketahui = true;
+                                break;
+                            }
+                        }
+                    }
+                    if tak_diketahui {
+                        teks.push('x');
+                        break;
+                    }
+                    if byte == 0 {
+                        break; // null terminator
+                    }
+                    teks.push(byte as char);
+                    i -= 8;
+                }
+                teks
+            }
+            'm' | 'M' => "top".to_string(),
             // LRM §20.4: `%f`/`%r` menampilkan nilai `real` (floating point
             // 64-bit IEEE 754). Nilai diambil sebagai bit pattern dan
             // dikonversi ke `f64` via `to_f64()`.
@@ -576,6 +615,14 @@ mod tests {
     // debug, wrap diam-diam di release) untuk nilai 64-bit bertanda negatif.
 
     fn arg_dari_bits(value: Bits<8>, width: u32, signed: bool) -> FormatArg<8> {
+        FormatArg {
+            value,
+            width,
+            signed,
+        }
+    }
+
+    fn arg_n_dari_bits<const N: usize>(value: Bits<N>, width: u32, signed: bool) -> FormatArg<N> {
         FormatArg {
             value,
             width,
@@ -898,6 +945,49 @@ mod tests {
     fn bug_flag_rata_kiri_berulang_dikenali() {
         let hasil = format_args::<8>("[%--5d]", &[arg(11, 8, false)], TimeScale::NANOSECOND);
         assert_eq!(hasil, "[11   ]\n");
+    }
+
+    #[test]
+    fn persen_s_mencetak_string_ascii() {
+        // LRM §20.4: `%s` mencetak nilai sebagai string ASCII (8 bit per
+        // karakter, MSB dulu, berhenti pada null terminator).
+        let a = arg_n_dari_bits(Bits::<16>::from_u64(0x4142), 16, false); // "AB"
+        assert_eq!(
+            format_args::<16>("str=%s", &[a], TimeScale::NANOSECOND),
+            "str=AB\n"
+        );
+    }
+
+    #[test]
+    fn persen_s_berhenti_pada_null_terminator() {
+        // 0x4100 = "A\0": hanya "A" yang dicetak.
+        let a = arg_n_dari_bits(Bits::<16>::from_u64(0x4100), 16, false);
+        assert_eq!(
+            format_args::<16>("str=%s", &[a], TimeScale::NANOSECOND),
+            "str=A\n"
+        );
+    }
+
+    #[test]
+    fn persen_m_mencetak_nama_modul() {
+        // LRM §20.4: `%m` mencetak nama hierarkis modul tanpa mengonsumsi
+        // argumen. Engine hanya mengetahui modul tunggal, jadi return "top".
+        assert_eq!(
+            format_args::<8>("mod=%m", &[] as &[FormatArg<8>], TimeScale::NANOSECOND),
+            "mod=top\n"
+        );
+    }
+
+    #[test]
+    fn persen_s_dengan_x_mencetak_x() {
+        // Digit x/z dalam string tercetak sebagai `x`.
+        let mut v = Bits::<8>::from_u64(0x41);
+        v.set(6, Logic::X);
+        let a = arg_dari_bits(v, 8, false);
+        assert_eq!(
+            format_args::<8>("str=%s", &[a], TimeScale::NANOSECOND),
+            "str=x\n"
+        );
     }
 }
 

@@ -494,3 +494,4 @@ Catatan verifikasi (sudah full support, demo OK):
 - 4-state tipe Logic di jalur simulasi (LRM §11.4) — demo `examples/e2e_4state/`
 - `typedef` di luar module / compilation-unit scope (LRM §8.20) — demo `examples/e2e_typedef_global/`
 - Unpacked array multi-dimensi + seleksi bertingkat (LRM §7.8) — demo `examples/e2e_unpacked_multi/` dan `examples/e2e_real_unpacked/`
+- Format specifier `%s` (string ASCII) dan `%m` (nama modul) — LRM §20.4, implementasi di `sv-runtime::system_task` dengan 4 test baru.
