@@ -351,3 +351,59 @@ fn paket_tergantung_paket_lain_diresolve_iteratif() {
     let design = build_top(src, "top");
     assert_eq!(design.name, "top");
 }
+
+/// LRM §6.6: tipe net dengan resolusi multi-driver (wand/wor/tri)
+/// harus dielaborasi dengan NetResolution yang benar.
+#[test]
+fn net_wand_wor_tri_dapat_dielaborasi() {
+    let src = "module m;\n\
+               wand w1;\n\
+               wor w2;\n\
+               tri t;\n\
+               wire wire1;\n\
+               endmodule";
+    let design = build(src);
+    let w1 = design.find_variable("w1").expect("w1 ada");
+    assert_eq!(w1.data_type.net_resolution as u8, 1, "wand harus WiredAnd");
+    let w2 = design.find_variable("w2").expect("w2 ada");
+    assert_eq!(w2.data_type.net_resolution as u8, 2, "wor harus WiredOr");
+    let t = design.find_variable("t").expect("t ada");
+    assert_eq!(t.data_type.net_resolution as u8, 2, "tri harus WiredOr");
+    let wire1 = design.find_variable("wire1").expect("wire1 ada");
+    assert_eq!(wire1.data_type.net_resolution as u8, 0, "wire harus None");
+}
+
+/// LRM §6.6: supply0 selalu 0, supply1 selalu 1 (net konstan).
+#[test]
+fn supply0_supply1_dapat_dielaborasi() {
+    let src = "module m;\n\
+               supply0 z;\n\
+               supply1 o;\n\
+               endmodule";
+    let design = build(src);
+    let z = design.find_variable("z").expect("z ada");
+    assert_eq!(z.data_type.width, 1, "supply0 harus 1 bit");
+    assert_eq!(z.data_type.net_resolution as u8, 0, "supply0 harus None");
+    let o = design.find_variable("o").expect("o ada");
+    assert_eq!(o.data_type.width, 1, "supply1 harus 1 bit");
+    assert_eq!(o.data_type.net_resolution as u8, 0, "supply1 harus None");
+}
+
+/// LRM §6.6: inisialisasi pada net menjadi driver kontinu.
+#[test]
+fn net_declaration_assign_menjadi_driver_kontinu() {
+    let src = "module m(output [7:0] y);\n\
+               wire [7:0] w = 8'hAA;\n\
+               assign y = w;\n\
+               endmodule";
+    let design = build(src);
+    // Harus punya proses continuous assign untuk w
+    let assign_proses = design
+        .processes
+        .iter()
+        .any(|p| p.name.starts_with("assign_w"));
+    assert!(
+        assign_proses,
+        "net declaration assign harus jadi proses continuous"
+    );
+}

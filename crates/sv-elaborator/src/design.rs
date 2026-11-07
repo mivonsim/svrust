@@ -372,6 +372,8 @@ fn isi_body(
                     }
                 })
                 .unwrap_or(0);
+            // struct/union packed adalah variable (bukan net), walaupun tipe-nya
+            // diturunkan dari field-fieldnya.
             let data_type = DataType::logic(total);
             let symbol = Symbol {
                 name: decl.name.clone(),
@@ -409,11 +411,26 @@ fn isi_body(
                 // vector. Lebar dan signedness diabaikan.
                 if decl.type_name.as_deref() == Some("real") {
                     (DataType::real(), None)
-                } else if decl.type_name.as_deref() == Some("supply0")
-                    || decl.type_name.as_deref() == Some("supply1")
+                } else if decl.type_name.as_deref() == Some("supply0") {
+                    // `supply0` — net konstan bernilai 0 (LRM §6.6).
+                    (DataType::supply0(), None)
+                } else if decl.type_name.as_deref() == Some("supply1") {
+                    // `supply1` — net konstan bernilai 1 (LRM §6.6).
+                    (DataType::supply1(), None)
+                } else if decl.type_name.as_deref() == Some("wand") {
+                    // `wand` — net wired-AND (LRM §6.6).
+                    (
+                        DataType::wand(bit as u32).with_signed(signed || decl.signed),
+                        None,
+                    )
+                } else if decl.type_name.as_deref() == Some("wor")
+                    || decl.type_name.as_deref() == Some("tri")
                 {
-                    // `supply0`/`supply1` adalah net konstan 1-bit (LRM §6.6).
-                    (DataType::logic(1), None)
+                    // `wor`/`wor`/`tri` — net wired-OR (LRM §6.6).
+                    (
+                        DataType::wor(bit as u32).with_signed(signed || decl.signed),
+                        None,
+                    )
                 } else {
                     (
                         DataType::logic(bit).with_signed(signed || decl.signed),
@@ -442,11 +459,28 @@ fn isi_body(
                 )
             }
         };
+        // LRM §6.6: wire/tri/wor/wand/supply0/supply1 adalah net (dikontrol
+        // oleh continuous assign), bukan variable (dikontrol oleh procedural
+        // assign). Lebih lanjut di §6.4: logic/reg/bit/integer adalah variable.
+        let is_net = matches!(
+            decl.type_name.as_deref(),
+            Some("wire")
+                | Some("tri")
+                | Some("wor")
+                | Some("wand")
+                | Some("supply0")
+                | Some("supply1")
+        );
+        let var_kind = if is_net {
+            VarKind::Net
+        } else {
+            VarKind::Variable
+        };
         let mut symbol = Symbol {
             name: decl.name.clone(),
             signal_id: 0,
             data_type,
-            kind: VarKind::Variable,
+            kind: var_kind,
             unpacked: None,
             span: decl.span,
         };
@@ -469,7 +503,7 @@ fn isi_body(
             decl.name.clone(),
             ScopePath::root().child(decl.name.clone()),
             data_type,
-            VarKind::Variable,
+            var_kind,
             id,
         ));
     }

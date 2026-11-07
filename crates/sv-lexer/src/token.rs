@@ -48,6 +48,9 @@ pub mod tipe {
                 | Token::Supply1
                 | Token::Struct
                 | Token::Union
+                | Token::Tri
+                | Token::Wor
+                | Token::Wand
         )
     }
 }
@@ -86,6 +89,12 @@ pub enum Token {
     Struct,
     /// `union` — union packed (LRM §6.7, §8).
     Union,
+    /// `tri` — net dengan resolusi multi-driver wired-OR (LRM §6.6).
+    Tri,
+    /// `wor` — net dengan resolusi multi-driver wired-OR (LRM §6.6).
+    Wor,
+    /// `wand` — net dengan resolusi multi-driver wired-AND (LRM §6.6).
+    Wand,
     /// `bind` — binding antarmuka ke instance modul (LRM §25.6). Dilewati
     /// saat parse isi modul; tidak mempengaruhi struktur modul.
     Bind,

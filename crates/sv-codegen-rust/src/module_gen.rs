@@ -1,6 +1,7 @@
 // Tanggung jawab: generate struct Rust untuk satu design module.
 use crate::indent::Indent;
 use crate::stmt_gen::write_statements;
+use sv_ir::datatype::NetResolution;
 use sv_ir::expr::Expr;
 use sv_ir::process::{ProcessKind, Statement};
 use sv_ir::Design;
@@ -29,6 +30,10 @@ pub fn generate_module(design: &Design) -> String {
     let field_indent = indent.child();
     field_indent.push(&mut out);
     out.push_str("signals: Vec<SignalCell<MAX_WIDTH>>,\n");
+    field_indent.push(&mut out);
+    // Resolusi net multi-driver per sinyal (LRM §6.6): 0 = None (last-wins),
+    // 1 = WiredAnd (wand), 2 = WiredOr (wor/tri).
+    out.push_str("net_resolution: Vec<u8>,\n");
     field_indent.push(&mut out);
     out.push_str("pending: Vec<PendingWrite<MAX_WIDTH>>,\n");
     field_indent.push(&mut out);
@@ -194,6 +199,21 @@ fn write_new(design: &Design, struct_name: &str, inner: &Indent, out: &mut Strin
     out.push_str(
         "signals: (0..signal_count).map(|_| SignalCell::new(Bits::all(Logic::X))).collect(),\n",
     );
+    fields.push(out);
+    // Inisialisasi resolusi net per sinyal dari tipe data variabel.
+    // 0 = None (last-wins), 1 = WiredAnd (wand), 2 = WiredOr (wor/tri).
+    out.push_str("net_resolution: vec![\n");
+    for var in &design.variables {
+        let res = match var.data_type.net_resolution {
+            NetResolution::WiredAnd => "1",
+            NetResolution::WiredOr => "2",
+            NetResolution::None => "0",
+        };
+        fields.push(out);
+        out.push_str(&format!("{},\n", res));
+    }
+    fields.push(out);
+    out.push_str("],\n");
     fields.push(out);
     out.push_str("pending: Vec::new(),\n");
     fields.push(out);
@@ -1235,9 +1255,126 @@ fn write_commit_pending(inner: &Indent, out: &mut String) {
     out.push_str("pub fn commit_pending(&mut self) {\n");
     let body = inner.child();
     body.push(out);
+    // Kelompokkan tulisan tertunda per sinyal untuk resolusi multi-driver
+    // (LRM §6.6): wand = wired-AND, wor/tri = wired-OR, wire/reg = last-wins.
+    out.push_str("let mut grouped: std::collections::HashMap<usize, Vec<PendingWrite<MAX_WIDTH>>> = std::collections::HashMap::new();\n");
+    body.push(out);
     out.push_str("for write in std::mem::take(&mut self.pending) {\n");
-    body.child().push(out);
-    out.push_str("self.signals[write.target].write_masked(write.value, write.mask);\n");
+    let loop_body = body.child();
+    loop_body.push(out);
+    out.push_str("grouped.entry(write.target).or_default().push(write);\n");
+    loop_body.push(out);
+    out.push_str("}\n");
+    body.push(out);
+    out.push_str("for (target, writes) in grouped {\n");
+    let match_body = body.child();
+    match_body.push(out);
+    out.push_str("match self.net_resolution[target] {\n");
+    let arm_body = match_body.child();
+    arm_body.push(out);
+    // 1 = WiredAnd: mulai dari semua-1, AND setiap tulisan (masked)
+    arm_body.push(out);
+    out.push_str("1 => {\n");
+    let wand_body = arm_body.child();
+    wand_body.push(out);
+    out.push_str("let mut hasil = Bits::<MAX_WIDTH>::satu();\n");
+    wand_body.push(out);
+    out.push_str("for write in &writes {\n");
+    let w_body = wand_body.child();
+    w_body.push(out);
+    out.push_str("let mut temp = self.signals[target].read();\n");
+    w_body.push(out);
+    // Terapkan masked write secara manual: untuk setiap bit di mask, ganti
+    // nilai target dengan nilai dari write.
+    out.push_str("for i in 0..MAX_WIDTH {\n");
+    let i_body = w_body.child();
+    i_body.push(out);
+    out.push_str("if matches!(write.mask.get(i), Logic::One) {\n");
+    let mask_body = i_body.child();
+    mask_body.push(out);
+    out.push_str("let mut new_val = temp.clone();\n");
+    mask_body.push(out);
+    out.push_str("new_val.set(i, write.value.get(i));\n");
+    mask_body.push(out);
+    out.push_str("temp = new_val;\n");
+    mask_body.push(out);
+    out.push_str("}\n");
+    i_body.push(out);
+    out.push_str("}\n");
+    w_body.push(out);
+    out.push_str("hasil = hasil & temp;\n");
+    w_body.push(out);
+    out.push_str("}\n");
+    wand_body.push(out);
+    out.push_str("self.signals[target].write(hasil);\n");
+    arm_body.push(out);
+    out.push_str("}\n");
+    arm_body.push(out);
+    // 2 = WiredOr: mulai dari semua-0, OR setiap tulisan (masked)
+    arm_body.push(out);
+    out.push_str("2 => {\n");
+    let wor_body = arm_body.child();
+    wor_body.push(out);
+    out.push_str("let mut hasil = Bits::<MAX_WIDTH>::zero();\n");
+    wor_body.push(out);
+    out.push_str("for write in &writes {\n");
+    let w2_body = wor_body.child();
+    w2_body.push(out);
+    out.push_str("let mut temp = self.signals[target].read();\n");
+    w2_body.push(out);
+    out.push_str("for i in 0..MAX_WIDTH {\n");
+    let i2_body = w2_body.child();
+    i2_body.push(out);
+    out.push_str("if matches!(write.mask.get(i), Logic::One) {\n");
+    let mask2_body = i2_body.child();
+    mask2_body.push(out);
+    out.push_str("let mut new_val2 = temp.clone();\n");
+    mask2_body.push(out);
+    out.push_str("new_val2.set(i, write.value.get(i));\n");
+    mask2_body.push(out);
+    out.push_str("temp = new_val2;\n");
+    mask2_body.push(out);
+    out.push_str("}\n");
+    i2_body.push(out);
+    out.push_str("}\n");
+    w2_body.push(out);
+    out.push_str("hasil = hasil | temp;\n");
+    w2_body.push(out);
+    out.push_str("}\n");
+    wor_body.push(out);
+    out.push_str("self.signals[target].write(hasil);\n");
+    arm_body.push(out);
+    out.push_str("}\n");
+    arm_body.push(out);
+    // 0 = None: last-wins
+    arm_body.push(out);
+    out.push_str("_ => {\n");
+    let none_body = arm_body.child();
+    none_body.push(out);
+    out.push_str("for write in writes {\n");
+    let w3_body = none_body.child();
+    w3_body.push(out);
+    out.push_str("for i in 0..MAX_WIDTH {\n");
+    let i3_body = w3_body.child();
+    i3_body.push(out);
+    out.push_str("if matches!(write.mask.get(i), Logic::One) {\n");
+    let mask3_body = i3_body.child();
+    mask3_body.push(out);
+    out.push_str("let mut cur = self.signals[write.target].read();\n");
+    mask3_body.push(out);
+    out.push_str("cur.set(i, write.value.get(i));\n");
+    mask3_body.push(out);
+    out.push_str("self.signals[write.target].write(cur);\n");
+    mask3_body.push(out);
+    out.push_str("}\n");
+    i3_body.push(out);
+    out.push_str("}\n");
+    w3_body.push(out);
+    out.push_str("}\n");
+    none_body.push(out);
+    out.push_str("}\n");
+    match_body.push(out);
+    out.push_str("}\n");
     body.push(out);
     out.push_str("}\n");
     inner.push(out);

@@ -681,9 +681,10 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                 let tipe = tokens[idx].token.clone();
                 let (decls, next) = super::declaration::parse_declaration(&tokens[idx..])?;
                 for decl in decls {
-                    // LRM §6.2.2: inisialisasi pada net menjadi driver kontinu,
-                    // sedangkan pada variabel hanya nilai awal waktu nol.
-                    if tipe == Token::Wire {
+                    // LRM §6.2.2: inisialisasi pada net (wire/tri/wor/wand)
+                    // menjadi driver kontinu, sedangkan pada variabel hanya
+                    // nilai awal waktu nol.
+                    if matches!(tipe, Token::Wire | Token::Tri | Token::Wor | Token::Wand) {
                         if let Some(rhs) = &decl.init {
                             statements.push(sv_ast::statement::Statement::ContinuousAssign {
                                 lhs: sv_ast::lvalue::Lvalue::simple(decl.name.clone(), decl.span),

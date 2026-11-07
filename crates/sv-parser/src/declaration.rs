@@ -192,13 +192,18 @@ pub fn parse_declaration(tokens: &[SpannedToken]) -> Result<(Vec<Declaration>, u
         None => lebar_tertulis,
     };
 
-    // Nama tipe eksplisit untuk tipe non-bit-vector (mis. `real`) yang
-    // dipakai oleh elaborator untuk membangun `DataType` yang benar.
+    // Nama tipe eksplisit untuk tipe non-bit-vector (mis. `real`) dan tipe
+    // net dengan resolusi multi-driver (mis. `wand`/`wor`/`tri`) yang dipakai
+    // oleh elaborator untuk membangun `DataType` yang benar.
     let type_nama = match tokens[0].token {
         Token::Real => Some("real".to_string()),
         Token::String => Some("string".to_string()),
         Token::Supply0 => Some("supply0".to_string()),
         Token::Supply1 => Some("supply1".to_string()),
+        Token::Tri => Some("tri".to_string()),
+        Token::Wor => Some("wor".to_string()),
+        Token::Wand => Some("wand".to_string()),
+        Token::Wire => Some("wire".to_string()),
         _ => None,
     };
 
@@ -502,6 +507,31 @@ mod tests {
         let d = parse_one("string s;");
         assert_eq!(d.name, "s");
         assert_eq!(d.type_name.as_deref(), Some("string"));
+    }
+
+    #[test]
+    fn deklarasi_tri_wor_wand() {
+        // LRM §6.6: `tri`/`wor`/`wand` adalah net dengan resolusi multi-driver.
+        let d0 = parse_one("tri t;");
+        assert_eq!(d0.name, "t");
+        assert_eq!(d0.width, WidthExpr::Literal(1));
+        assert_eq!(d0.type_name.as_deref(), Some("tri"));
+
+        let d1 = parse_one("wor w;");
+        assert_eq!(d1.name, "w");
+        assert_eq!(d1.width, WidthExpr::Literal(1));
+        assert_eq!(d1.type_name.as_deref(), Some("wor"));
+
+        let d2 = parse_one("wand a;");
+        assert_eq!(d2.name, "a");
+        assert_eq!(d2.width, WidthExpr::Literal(1));
+        assert_eq!(d2.type_name.as_deref(), Some("wand"));
+
+        // Dengan lebar eksplisit
+        let d3 = parse_one("tri [7:0] bus;");
+        assert_eq!(d3.name, "bus");
+        assert_eq!(d3.width, WidthExpr::Literal(8));
+        assert_eq!(d3.type_name.as_deref(), Some("tri"));
     }
 
     #[test]

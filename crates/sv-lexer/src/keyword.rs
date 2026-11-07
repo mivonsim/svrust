@@ -22,6 +22,10 @@ pub fn keyword_or_ident(s: &str) -> Token {
         "supply1" => Token::Supply1,
         "struct" => Token::Struct,
         "union" => Token::Union,
+        // LRM §6.6: `tri` = wired-OR net, `wor` = wired-OR net, `wand` = wired-AND net.
+        "tri" => Token::Tri,
+        "wor" => Token::Wor,
+        "wand" => Token::Wand,
         // LRM §25.6: `bind` — binding antarmuka ke instance modul. SVRust
         // melewati statement `bind ... ;` di isi modul.
         "bind" => Token::Bind,

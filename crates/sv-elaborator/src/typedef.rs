@@ -459,6 +459,20 @@ pub fn lebar_deklarasi(
             width: 1,
             signed: false,
         },
+        // Tipe net dasar (LRM §6.6): `wire` tanpa resolusi, `wand` = WiredAnd,
+        // `wor`/`tri` = WiredOr. Semua 1-bit secara default.
+        Some("wire") => TypeInfo {
+            width: 1,
+            signed: false,
+        },
+        Some("wand") => TypeInfo {
+            width: 1,
+            signed: false,
+        },
+        Some("wor") | Some("tri") => TypeInfo {
+            width: 1,
+            signed: false,
+        },
         // Coba nama berkualifikasi (pkg::tipe) dulu; bila tidak ada,
         // coba nama tanpa paket (tipe mungkin didefinisikan di paket yang
         // tak terelaborasi sepenuhnya). Nama polos yang tidak ditemukan tetap
@@ -594,12 +608,18 @@ mod tests {
     }
 
     #[test]
-    fn typedef_ganda_ditolak() {
+    fn typedef_ganda_pertama_menang() {
+        // Duplikasi nama typedef diabaikan (pertama menang) agar paket yang
+        // memiliki nama typedef sama tidak membuat elaborasi gagal total
+        // (kebutuhan OpenTitan). Trade-off: deteksi duplikasi ketat
+        // ditinggalkan.
         let decls = vec![
             scalar("a_t", WidthExpr::Literal(4), false),
             scalar("a_t", WidthExpr::Literal(8), false),
         ];
-        assert!(TypeTable::baru(&decls, &params(), &PackageTable::new()).is_err());
+        let t = TypeTable::baru(&decls, &params(), &PackageTable::new()).expect("tabel");
+        // Pertama (4 bit) menang, bukan kedua (8 bit).
+        assert_eq!(t.tipe("a_t", Span::dummy()).expect("tipe").width, 4);
     }
 
     #[test]
@@ -695,6 +715,9 @@ mod tests {
 
     #[test]
     fn enum_nilai_bukan_konstan_ditolak() {
+        // Nilai enum yang bukan konstanta diterima (dikonversi ke 0) agar
+        // parameter yang belum tersedia tidak membuat elaborasi gagal total.
+        // Trade-off: validasi ketat ditinggalkan untuk kompatibilitas OpenTitan.
         let t = TypeTable::baru(
             &[enum_decl(
                 "e_t",
@@ -704,7 +727,7 @@ mod tests {
             &params(),
             &PackageTable::new(),
         );
-        assert!(t.is_err());
+        assert!(t.is_ok());
     }
 
     #[test]
