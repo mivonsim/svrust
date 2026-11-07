@@ -138,9 +138,8 @@ impl DataType {
     }
 
     pub fn type_name(self) -> String {
-        match self.kind {
-            ValueKind::Real => return "Real".to_string(),
-            _ => {}
+        if self.kind == ValueKind::Real {
+            return "Real".to_string();
         }
         let base = match self.kind {
             ValueKind::Bit => "Bit",

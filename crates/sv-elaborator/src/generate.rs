@@ -183,19 +183,33 @@ pub fn lower_regions(
         inst_prefix: "",
         koneksi: Some(&parameter),
     };
+    let mut ctx = GenerateCtx {
+        design,
+        symbols,
+        params,
+        modules,
+        env: &GenvarEnv::kosong(),
+        scope: &scope,
+        packages,
+    };
     for region in &module.generates {
-        lower_region(
-            design,
-            symbols,
-            region,
-            params,
-            modules,
-            &GenvarEnv::kosong(),
-            &scope,
-            packages,
-        )?;
+        lower_region(&mut ctx, region)?;
     }
     Ok(())
+}
+
+/// Konteks lengkap untuk elaborasi region generate.
+///
+/// Kelompokkan parameter yang sering dipasangkan bersama untuk menghindari
+/// fungsi dengan terlalu banyak argumen (clippy::too_many_arguments).
+pub(crate) struct LowerRegionsCtx<'a> {
+    pub design: &'a mut Design,
+    pub symbols: &'a mut SymbolTable,
+    pub module: &'a Module,
+    pub params: &'a ParamTable,
+    pub modules: &'a [Module],
+    pub env: &'a GenvarEnv,
+    pub packages: &'a PackageTable,
 }
 
 /// Sama seperti `lower_regions`, tetapi dengan prefix instans.
@@ -203,15 +217,18 @@ pub fn lower_regions(
 /// Dipanggil dari `lower_instance` supaya region generate milik modul anak
 /// ikut terelaborasi; tanpa ini generate di anak akan diabaikan diam-diam.
 pub(crate) fn lower_regions_dalam_instans<'a>(
-    design: &mut Design,
-    symbols: &mut SymbolTable,
-    module: &Module,
-    params: &ParamTable,
-    modules: &[Module],
-    env: &GenvarEnv,
+    ctx: LowerRegionsCtx<'a>,
     instan: &'a crate::instance::InstanInfo<'a>,
-    packages: &PackageTable,
 ) -> Result<(), ElaborateError> {
+    let LowerRegionsCtx {
+        design,
+        symbols,
+        module,
+        params,
+        modules,
+        env,
+        packages,
+    } = ctx;
     let scope = ScopeBlok {
         prefix: String::new(),
         lokal: Vec::new(),
@@ -220,42 +237,54 @@ pub(crate) fn lower_regions_dalam_instans<'a>(
         // di dalam generate anak, jadi keduanya dipakai.
         koneksi: Some(instan.koneksi),
     };
+    let mut gen_ctx = GenerateCtx {
+        design,
+        symbols,
+        params,
+        modules,
+        env,
+        scope: &scope,
+        packages,
+    };
     for region in &module.generates {
-        lower_region(
-            design, symbols, region, params, modules, env, &scope, packages,
-        )?;
+        lower_region(&mut gen_ctx, region)?;
     }
     Ok(())
 }
 
+/// Konteks lengkap untuk elaborasi region/item generate.
+///
+/// Kelompokkan parameter yang sering dipasangkan bersama untuk menghindari
+/// fungsi dengan terlalu banyak argumen (clippy::too_many_arguments).
+pub(crate) struct GenerateCtx<'a> {
+    pub design: &'a mut Design,
+    pub symbols: &'a mut SymbolTable,
+    pub params: &'a ParamTable,
+    pub modules: &'a [Module],
+    pub env: &'a GenvarEnv,
+    pub scope: &'a ScopeBlok<'a>,
+    pub packages: &'a PackageTable,
+}
+
 /// Elaborate satu region generate pada konteks genvar dan scope tertentu.
-fn lower_region(
-    design: &mut Design,
-    symbols: &mut SymbolTable,
-    region: &GenerateRegion,
-    params: &ParamTable,
-    modules: &[Module],
-    env: &GenvarEnv,
-    scope: &ScopeBlok,
-    packages: &PackageTable,
-) -> Result<(), ElaborateError> {
+fn lower_region(ctx: &mut GenerateCtx, region: &GenerateRegion) -> Result<(), ElaborateError> {
     for item in &region.items {
-        lower_item(design, symbols, item, params, modules, env, scope, packages)?;
+        lower_item(ctx, item)?;
     }
     Ok(())
 }
 
 /// Elaborate satu item generate pada prefix hierarki tertentu.
-fn lower_item(
-    design: &mut Design,
-    symbols: &mut SymbolTable,
-    item: &GenerateItem,
-    params: &ParamTable,
-    modules: &[Module],
-    env: &GenvarEnv,
-    scope: &ScopeBlok,
-    packages: &PackageTable,
-) -> Result<(), ElaborateError> {
+fn lower_item(ctx: &mut GenerateCtx, item: &GenerateItem) -> Result<(), ElaborateError> {
+    let GenerateCtx {
+        design,
+        symbols,
+        params,
+        modules,
+        env,
+        scope,
+        packages,
+    } = ctx;
     match item {
         GenerateItem::For(for_gen) => {
             let lokal = nama_lokal(for_gen);
@@ -265,17 +294,17 @@ fn lower_item(
                 let env_anak = env.anak(&for_gen.var, nilai);
                 let label = for_gen.label.as_deref().unwrap_or("");
                 let scope_anak = scope.anak(label, nilai, lokal.clone());
+                let mut anak_ctx = GenerateCtx {
+                    design,
+                    symbols,
+                    params,
+                    modules,
+                    env: &env_anak,
+                    scope: &scope_anak,
+                    packages,
+                };
                 for item_anak in &for_gen.body {
-                    lower_item(
-                        design,
-                        symbols,
-                        item_anak,
-                        params,
-                        modules,
-                        &env_anak,
-                        &scope_anak,
-                        packages,
-                    )?;
+                    lower_item(&mut anak_ctx, item_anak)?;
                 }
             }
             Ok(())
@@ -289,33 +318,33 @@ fn lower_item(
                 let label = label_cabang_opt(&if_gen.then_label);
                 let lokal = nama_lokal_item(&if_gen.then_branch);
                 let scope_anak = scope.cabang(&label, lokal);
+                let mut anak_ctx = GenerateCtx {
+                    design,
+                    symbols,
+                    params,
+                    modules,
+                    env,
+                    scope: &scope_anak,
+                    packages,
+                };
                 for item_anak in &if_gen.then_branch {
-                    lower_item(
-                        design,
-                        symbols,
-                        item_anak,
-                        params,
-                        modules,
-                        env,
-                        &scope_anak,
-                        packages,
-                    )?;
+                    lower_item(&mut anak_ctx, item_anak)?;
                 }
             } else if let Some(else_branch) = &if_gen.else_branch {
                 let label = label_cabang_opt(&if_gen.else_label);
                 let lokal = nama_lokal_item(else_branch);
                 let scope_anak = scope.cabang(&label, lokal);
+                let mut anak_ctx = GenerateCtx {
+                    design,
+                    symbols,
+                    params,
+                    modules,
+                    env,
+                    scope: &scope_anak,
+                    packages,
+                };
                 for item_anak in else_branch {
-                    lower_item(
-                        design,
-                        symbols,
-                        item_anak,
-                        params,
-                        modules,
-                        env,
-                        &scope_anak,
-                        packages,
-                    )?;
+                    lower_item(&mut anak_ctx, item_anak)?;
                 }
             }
             Ok(())
@@ -347,17 +376,17 @@ fn lower_item(
             };
             let label = label_cabang_opt(&arm.label);
             let scope_anak = scope.cabang(&label, nama_lokal_item(&arm.body));
+            let mut anak_ctx = GenerateCtx {
+                design,
+                symbols,
+                params,
+                modules,
+                env,
+                scope: &scope_anak,
+                packages,
+            };
             for item_anak in &arm.body {
-                lower_item(
-                    design,
-                    symbols,
-                    item_anak,
-                    params,
-                    modules,
-                    env,
-                    &scope_anak,
-                    packages,
-                )?;
+                lower_item(&mut anak_ctx, item_anak)?;
             }
             Ok(())
         }

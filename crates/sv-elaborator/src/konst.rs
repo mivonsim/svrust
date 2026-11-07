@@ -38,7 +38,7 @@ pub fn konst(
             // Nama yang bukan genvar atau parameter paket harus parameter modul.
             // Bila tidak dikenal, kembali 0 (pendekatan aman untuk ekspresi
             // yang merujuk parameter dari paket yang tidak tersedia).
-            return Ok(params.nilai(nama, span));
+            Ok(params.nilai(nama, span))
         }
         Expr::Unary { op, operand, span } => {
             let nilai = konst(operand, env, params, packages, *span)?;

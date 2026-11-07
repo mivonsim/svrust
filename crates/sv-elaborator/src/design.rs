@@ -124,22 +124,20 @@ pub fn elaborate_top(
             let mut tabel = ParamTable::baru(&[])?;
             let mut paket_ok = false;
             for local in &pkg.params {
-                match konst::konst(
+                if let Ok(nilai) = konst::konst(
                     &local.value,
                     &GenvarEnv::kosong(),
                     &tabel,
                     &package_tabel,
                     local.span,
                 ) {
-                    Ok(nilai) => match tabel.tambah(&local.name, nilai, local.span) {
-                        Ok(()) => paket_ok = true,
-                        // Duplikasi nama parameter di paket, lewati parameter ini.
-                        Err(_) => {}
-                    },
-                    // Ekspresi parameter tak bisa dievaluasi (misal pemanggilan
-                    // fungsi yang tak didukung), lewati parameter ini.
-                    Err(_) => {}
+                    // Duplikasi nama parameter di paket, lewati parameter ini.
+                    if let Ok(()) = tabel.tambah(&local.name, nilai, local.span) {
+                        paket_ok = true;
+                    }
                 }
+                // Ekspresi parameter tak bisa dievaluasi (misal pemanggilan
+                // fungsi yang tak didukung), lewati parameter ini.
             }
             // Simpan paket bila minimal satu parameter berhasil dievaluasi.
             // Jika tabel berubah (nilai parameter berisi karena dependensi
@@ -419,18 +417,12 @@ fn isi_body(
                     (DataType::supply1(), None)
                 } else if decl.type_name.as_deref() == Some("wand") {
                     // `wand` — net wired-AND (LRM §6.6).
-                    (
-                        DataType::wand(bit as u32).with_signed(signed || decl.signed),
-                        None,
-                    )
+                    (DataType::wand(bit).with_signed(signed || decl.signed), None)
                 } else if decl.type_name.as_deref() == Some("wor")
                     || decl.type_name.as_deref() == Some("tri")
                 {
                     // `wor`/`wor`/`tri` — net wired-OR (LRM §6.6).
-                    (
-                        DataType::wor(bit as u32).with_signed(signed || decl.signed),
-                        None,
-                    )
+                    (DataType::wor(bit).with_signed(signed || decl.signed), None)
                 } else {
                     (
                         DataType::logic(bit).with_signed(signed || decl.signed),

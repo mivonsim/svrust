@@ -548,17 +548,19 @@ fn lower_instance_body(
     }
 
     crate::generate::lower_regions_dalam_instans(
-        design,
-        symbols,
-        child,
-        &params,
-        modules,
-        env,
+        crate::generate::LowerRegionsCtx {
+            design,
+            symbols,
+            module: child,
+            params: &params,
+            modules,
+            env,
+            packages,
+        },
         &crate::instance::InstanInfo {
             prefix: &prefix,
             koneksi: &koneksi,
         },
-        packages,
     )?;
     Ok(())
 }

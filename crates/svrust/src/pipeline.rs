@@ -262,9 +262,9 @@ pub fn collect_modules(
         diagnostics
             .into_iter()
             .filter(|d| {
-                d.primary.as_ref().map_or(false, |label| {
-                    reachable_sources.contains(&label.span.source)
-                })
+                d.primary
+                    .as_ref()
+                    .is_some_and(|label| reachable_sources.contains(&label.span.source))
             })
             .collect()
     } else {
