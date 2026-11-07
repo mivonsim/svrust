@@ -417,6 +417,18 @@ Semua 10 fase telah selesai.
 - `cargo fmt --check`: clean
 - `examples/e2e_routine_array/demo.sh`: DEMO OK
 
+## Tahap Stabilisasi §23.1 Modul root ganda (selesai)
+
+### Verifikasi
+- Demo `examples/e2e_multi/demo.sh`: dua modul root keduanya dijalankan (`dari modul root pertama` + `dari modul root kedua`), `check` memeriksa semua root (`top tb_root_pertama+tb_root_kedua`), DEMO OK
+- `cargo test -p svrust --lib pipeline::tests::elaborate_tops_hasil_banyak_design_untuk_multi_root`: OK (1 baru)
+- `cargo test --workspace`: 307 passed, 0 failed (1 environment issue: OpenTitan file tak lengkap)
+- `cargo clippy --all-targets`: clean (0 warning)
+- `cargo fmt --check`: clean
+
+### Commit
+- `elaborate_tops` menghasilkan satu design per root (LRM §23.1); `root_modules` memindai `instances` dan `generates`; nama Rust unik + import runtime path absolut. Demo `e2e_multi` terverifikasi.
+
 ## Catatan Akhir
 
 SVRust telah mencapai dukungan fitur utama SystemVerilog LRM melalui 8 fase. Fitur-fitur utama yang didukung:

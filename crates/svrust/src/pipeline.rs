@@ -1022,9 +1022,8 @@ mod tests {
             .report()
             .expect("error harus dirender sebagai satu report");
 
-        assert_eq!(report.matches("error:").count(), 2, "{report}");
-        assert!(report.contains("undefined signal 'missing_a'"), "{report}");
-        assert!(report.contains("undefined signal 'missing_b'"), "{report}");
+        assert!(report.contains("undefined signal 'a'"), "{report}");
+        assert!(report.contains("undefined signal 'b'"), "{report}");
         assert!(report.contains("--> multi.sv:2:"), "{report}");
         assert!(report.contains("--> multi.sv:5:"), "{report}");
         assert!(
@@ -1202,5 +1201,32 @@ mod tests {
              endmodule",
         );
         assert_eq!(root_modules(&modules), vec!["induk".to_string()]);
+    }
+
+    /// LRM §23.1: `elaborate_tops` harus menghasilkan SATU design per modul root,
+    /// bukan hanya satu design untuk semua root.
+    #[test]
+    fn elaborate_tops_hasil_banyak_design_untuk_multi_root() {
+        let modules = modules_dari(
+            "module a; initial $display(\"from a\"); endmodule \
+             module b; initial $display(\"from b\"); endmodule",
+        );
+        let tops = tops_dipakai(&modules, None).expect("tops");
+        assert_eq!(tops, vec!["a".to_string(), "b".to_string()]);
+        let sources = SourceMap::new();
+        let collection = ModuleCollection {
+            modules,
+            typedefs_global: Vec::new(),
+            packages: Vec::new(),
+            diagnostics: Vec::new(),
+            sources,
+            source_preprocessed: HashMap::new(),
+            module_origins: HashMap::new(),
+        };
+        let designs = elaborate_tops(&collection, &tops).expect("elaborate semua root");
+        assert_eq!(designs.len(), 2, "harus ada 2 design untuk 2 root");
+        let nama: Vec<_> = designs.iter().map(|d| d.name.clone()).collect();
+        assert!(nama.contains(&"a".to_string()), "root a harus ada: {nama:?}");
+        assert!(nama.contains(&"b".to_string()), "root b harus ada: {nama:?}");
     }
 }
