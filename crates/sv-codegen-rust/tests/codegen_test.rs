@@ -1264,3 +1264,48 @@ fn kurung_generated_seimbang_dengan_strobe() {
     let tutup = code.matches('}').count();
     assert_eq!(buka, tutup, "kurung tak seimbang:\n{code}");
 }
+
+// NBA via scheduler: commit_pending dipanggil setelah setiap proses aktif
+// (Active → NonBlocking transition, LRM §4.4).
+#[test]
+fn step_scheduler_commit_pending_setiap_proses_aktif() {
+    // Initial process dengan NBA: commit_pending harus dipanggil setelah
+    // proses dievaluasi.
+    let code = generate("module tb(output logic [7:0] c); initial c <= 8'h55; endmodule");
+    assert!(
+        code.contains("self.commit_pending();"),
+        "commit_pending harus dipanggil setelah initial:\n{code}"
+    );
+
+    // Combinational process dengan NBA: commit_pending juga harus dipanggil.
+    let code = generate("module tb(output logic [7:0] c); always_comb c <= 8'hAA; endmodule");
+    assert!(
+        code.contains("self.commit_pending();"),
+        "commit_pending harus dipanggil setelah combinational:\n{code}"
+    );
+}
+
+// Monitor region: run_monitor dipanggil bila scheduler punya event Monitor.
+#[test]
+fn step_scheduler_panggil_run_monitor_saat_monitor_region() {
+    let code =
+        generate("module tb(output logic [7:0] c); initial $monitor(\"c=%d\", c); endmodule");
+    assert!(
+        code.contains("self.run_monitor();"),
+        "run_monitor harus dipanggil saat Monitor region:\n{code}"
+    );
+    assert!(
+        code.contains("pending_in(::sv_runtime::Region::Monitor)"),
+        "pengecekan Monitor region harus ada:\n{code}"
+    );
+}
+
+// Strobe region: run_strobe dipanggil bila design memiliki $strobe.
+#[test]
+fn step_scheduler_panggil_run_strobe_saat_strobe_region() {
+    let code = generate("module tb(output logic [7:0] c); initial $strobe(\"c=%d\", c); endmodule");
+    assert!(
+        code.contains("self.run_strobe();"),
+        "run_strobe harus dipanggil saat design punya $strobe:\n{code}"
+    );
+}

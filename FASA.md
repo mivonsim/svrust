@@ -505,6 +505,23 @@ Semua 10 fase telah selesai.
 ### Commit
 - `feat: scheduler-codegen delta-cycle dengan deteksi perubahan + batasan delta_depth`.
 
+## Tahap Stabilisasi — Scheduler-codegen NBA NonBlocking region (LRM §4.4) (selesai)
+
+### Perbaikan
+- `write_step_scheduler` sekarang memanggil `commit_pending()` setelah setiap proses aktif (combinational/initial/sequential/final/latch) sebagai NonBlocking phase, sehingga efek non-blocking assign (`<=`) terlihat pada akhir timestep.
+- Monitor region memicu `run_monitor()`/`run_strobe()` saat scheduler punya event Monitor.
+- `run_monitor` hanya dipanggil bila `uses_monitor_flag(design)`, `run_strobe` hanya bila `has_strobe(design)`.
+- 3 test baru: `step_scheduler_commit_pending_setiap_proses_aktif`, `step_scheduler_panggil_run_monitor_saat_monitor_region`, `step_scheduler_panggil_run_strobe_saat_strobe_region`.
+
+### Verifikasi
+- NBA simulasi: `t=5 cnt=0` (sebelum NonBlocking), `t=5 cnt=5` (setelah NBA diterapkan) ✓
+- `cargo test --workspace`: 307 passed, 0 failed (1 environment issue OpenTitan).
+- `cargo clippy --all-targets`: clean (0 warning).
+- `cargo fmt --check`: clean.
+
+### Commit
+- `feat: integrasi scheduler-codegen ke NBA NonBlocking region dan Monitor region (LRM §4.4)`.
+
 ## Catatan Akhir
 
 SVRust telah mencapai dukungan fitur utama SystemVerilog LRM melalui 8 fase. Fitur-fitur utama yang didukung:

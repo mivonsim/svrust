@@ -1425,8 +1425,6 @@ fn write_step_scheduler(design: &Design, inner: &Indent, out: &mut String) {
                 d_body.push(out);
                 out.push_str("self.eval_comb();\n");
                 d_body.push(out);
-                out.push_str("self.commit_pending();\n");
-                d_body.push(out);
                 out.push_str("let sesudah = self.snapshot();\n");
                 d_body.push(out);
                 out.push_str("if sebelum != sesudah {\n");
@@ -1446,22 +1444,31 @@ fn write_step_scheduler(design: &Design, inner: &Indent, out: &mut String) {
                 out.push_str("self.delta_depth = 0;\n");
                 d_body.push(out);
                 out.push_str("}\n");
+                // NonBlocking phase (LRM §4.4): komit penulisan NBA (`<=`) yang
+                // tertunda dari proses combinational ini.
+                out.push_str("self.commit_pending();\n");
                 proc_body.push(out);
             }
             sv_ir::process::ProcessKind::Sequential => {
                 // Sequential dipicu oleh edge di driver melalui eval_seq.
                 proc_body.push(out);
                 out.push_str("self.delta_depth = 0;\n");
+                // NonBlocking phase (LRM §4.4): komit penulisan NBA yang tertunda.
+                out.push_str("self.commit_pending();\n");
                 proc_body.push(out);
             }
             sv_ir::process::ProcessKind::Initial => {
                 proc_body.push(out);
                 out.push_str("self.delta_depth = 0;\n");
+                // NonBlocking phase (LRM §4.4): komit penulisan NBA yang tertunda.
+                out.push_str("self.commit_pending();\n");
                 proc_body.push(out);
             }
             sv_ir::process::ProcessKind::Final => {
                 proc_body.push(out);
                 out.push_str("self.delta_depth = 0;\n");
+                // NonBlocking phase (LRM §4.4): komit penulisan NBA yang tertunda.
+                out.push_str("self.commit_pending();\n");
                 proc_body.push(out);
             }
             sv_ir::process::ProcessKind::Timed => {
@@ -1490,6 +1497,21 @@ fn write_step_scheduler(design: &Design, inner: &Indent, out: &mut String) {
     out.push_str("_ => {}\n");
     match_body.push(out);
     out.push_str("}\n");
+    // Monitor region (LRM §4.4): jalankan $monitor/$strobe pada akhir timestep.
+    if crate::system_task_gen::uses_monitor_flag(design) {
+        out.push_str("if self.scheduler.pending_in(::sv_runtime::Region::Monitor) > 0 {\n");
+        if_body.push(out);
+        out.push_str("self.run_monitor();\n");
+        if_body.push(out);
+    }
+    if crate::system_task_gen::has_strobe(design) {
+        out.push_str("self.run_strobe();\n");
+        if_body.push(out);
+    }
+    if crate::system_task_gen::uses_monitor_flag(design) {
+        out.push_str("}\n");
+        if_body.push(out);
+    }
     if_body.push(out);
     out.push_str("true\n");
     body.push(out);
