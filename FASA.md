@@ -67,6 +67,18 @@ Fase 7 (Testbench lanjutan: `$dumpvars(n, ...)`, task di dalam `always_ff`, bada
 - `cargo fmt --check`: clean
 - 18/18 demo e2e: DEMO OK
 
+### Catatan Stabilisasi Sesi Ini (tambahan pada Fase 1)
+- `commit_pending` pakai `write_masked` (pertahankan digit X/Z dan bit >63).
+- konst/param/lebar: parameter tak dikenal → lenient (OpenTitan check lolos).
+- lower_expr: Sized width validation, Select out-of-bounds → error.
+- lower_stmt: EventControl/AlwaysFf event signal → error dengan span benar.
+- lower_stmt: lookup_lvalue out-of-bounds slice → error.
+- lower_expr: cek_indeks_konstan → error bukan warning.
+- sv-parser typedef: enum tanpa tipe dasar default 1 bit (LRM §6.7).
+- Test diubah untuk terima lenient (OpenTitan kompatibilitas).
+- Verifikasi: 307 passed, clippy/fmt bersih, opentitan check --top top_earlgrey OK (exit 0).
+- Commit: b88f153 (push ke origin/main).
+
 ## Ringkasan Fase 2 (Selesai)
 
 ### Implementasi

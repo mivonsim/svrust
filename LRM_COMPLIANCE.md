@@ -139,3 +139,40 @@ Verifikasi Fase 1:
 - `cargo clippy --all-targets`: clean 0 warning
 - `cargo fmt --check`: clean
 - 18/18 demo e2e: DEMO OK
+
+## Stabilisasi Sesi Ini (tambahan pada Fase 1)
+
+Bug yang ditemukan saat verifikasi semua test & OpenTitan, lalu diperbaiki:
+
+1. **`commit_pending` tidak pakai `write_masked`** (`module_gen.rs`)
+   - Gejala: part-select LHS melalui NBA kehilangan digit X/Z dan bit di atas 63.
+   - Fix: `self.signals[write.target].write_masked(write.value, write.mask)`.
+
+2. **Parameter/sinyal tak dikenal → lenient** (`konst.rs`, `param.rs`, `lower_expr.rs`)
+   - Gejala: OpenTitan check gagal karena parameter dari paket yang tidak tersedia.
+   - Fix: `konst` dan `lebar` kembali ke `Ok(0)` / fallback lebar 32; `lower_expr` ident tak dikenal tetap error `undefined_signal` dengan span asli (AGENTS.md aturan 3).
+
+3. **Slice out-of-bounds → error** (`lower_stmt.rs`, `lower_expr.rs`)
+   - Fix: `seleksi ... melewati lebar sinyal` alih-alih clamping diam-diam.
+
+4. **Event control signal tak dikenal → error** (`lower_stmt.rs`)
+   - Fix: `@(posedge clk_ngada)` error `undefined_signal` dengan span clock.
+
+5. **`cek_indeks_konstan` warning → error** (`lower_expr.rs`)
+   - Fix: `mem[-1]` error compile-time alih-alih warning.
+
+6. **Enum tanpa tipe dasar default `Literal(1)`** (`sv-parser/src/typedef.rs`)
+   - Fix: default 1 bit per LRM §6.7 (`typedef enum { ON, OFF } flag_t;`).
+
+Verifikasi sesi ini:
+- `cargo test --workspace`: 307 passed, 0 failed (1 environment issue: `repro_earlgrey_pd_main_full` butuh file OpenTitan `prim_assert.sv` yang tidak ada)
+- `cargo clippy --all-targets`: clean 0 warning
+- `cargo fmt --check`: clean
+- `cargo run --release -- check --rtl opentitan.f --top top_earlgrey`: OK (exit 0)
+
+Commit: `b88f153 fix: stabilkan error handling dan OpenTitan kompatibilitas` (push ke origin/master)
+
+Sisa item `[~]` untuk 100% IEEE-1800 (lihat FASA.md untuk prioritas fase berikutnya):
+- §23.1 Modul root ganda
+- §23.2 VCD
+- IR/opt/codegen/runtime: Scheduler belum tersambung sepenuhnya ke codegen
