@@ -297,6 +297,23 @@ fn always_tanpa_sensitivitas_tidak_menggunakan_comb_edge_prev() {
     );
 }
 
+/// `step_scheduler` harus memanggil `eval_seq(clock_id)` untuk proses
+// sekuensial (`always_ff @(posedge clk)`), bukan hanya `commit_pending`.
+// Ini memastikan scheduler region event (LRM §4.4) benar-benar menggerakkan
+// logika sekuensial, bukan hanya komit penulisan NBA.
+#[test]
+fn step_scheduler_panggil_eval_seq_untuk_proses_sekuensial() {
+    let code = generate("module m; logic clk; logic [7:0] cnt = 0; always_ff @(posedge clk) cnt <= cnt + 1; endmodule");
+    assert!(
+        code.contains("self.eval_seq("),
+        "step_scheduler harus memanggil eval_seq untuk proses sekuensial:\n{code}"
+    );
+    assert!(
+        code.contains("self.commit_pending();"),
+        "step_scheduler harus panggil commit_pending setelah eval_seq:\n{code}"
+    );
+}
+
 // --- sized literal, unary, reduction, ternary, select ---
 
 #[test]

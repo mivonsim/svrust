@@ -1523,9 +1523,23 @@ fn write_step_scheduler(design: &Design, inner: &Indent, out: &mut String) {
                 proc_body.push(out);
             }
             sv_ir::process::ProcessKind::Sequential => {
-                // Sequential dipicu oleh edge di driver melalui eval_seq.
+                // Sequential dipicu oleh edge clock. Dari scheduler, panggil
+                // eval_seq(clock_id) agar proses sekuensial dievaluasi sesuai
+                // region event (LRM §4.4 NonBlocking phase), bukan hanya
+                // commit_pending. clock_id diambil dari sinyal sensitivitas
+                // pertama proses (biasanya clock).
+                let clock_id = process
+                    .sensitivity
+                    .first()
+                    .map(|s| s.signal)
+                    .unwrap_or(0);
                 proc_body.push(out);
                 out.push_str("self.delta_depth = 0;\n");
+                out.push_str(&format!(
+                    "self.eval_seq({});\n",
+                    clock_id
+                ));
+                proc_body.push(out);
                 // NonBlocking phase (LRM §4.4): komit penulisan NBA yang tertunda.
                 out.push_str("self.commit_pending();\n");
                 proc_body.push(out);
