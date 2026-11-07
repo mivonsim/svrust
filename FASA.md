@@ -569,8 +569,10 @@ Catatan verifikasi (sudah full support, demo OK):
 
 ### Verifikasi
 
-- `cargo nextest run --workspace`: 1516 passed, 0 skipped
+- `cargo nextest run --workspace`: 1518 passed, 0 skipped
 - `cargo clippy --all-targets`: clean 0 warning
 - `cargo fmt --check`: clean
 - `cargo run --release -- check --rtl opentitan.f --top top_earlgrey --release`: `check OK (3 module, top top_earlgrey)`, tanpa error
 - Demo baru `examples/e2e_supply01/`: supply0=0, supply1=1, implicit net Z, variabel belum ditulis X (LRM §6.6 / §4.3.1), DEMO OK
+- Demo baru `examples/e2e_task_ff/`: task di dalam `always_ff` dievaluasi pada edge clock (LRM §13.3), `cnt=42`, DEMO OK
+- Perbaikan regresi `examples/e2e_param/demo.sh`: multidimensi unpacked `[0:1][0:3]` diterima (fase 14), bukan ditolak

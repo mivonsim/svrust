@@ -163,14 +163,14 @@ endmodule
 gagal_un=$($SV check --rtl /tmp/sv_un_neg.sv --top bad 2>&1 || true)
 cek_gagal "indeks_luar" "di luar jangkauan" "$gagal_un"
 
-# Dimensi bertingkat perlu model berlapis; ditolak dengan pesan yang menyebut
-# batasannya, bukan "expected ';'".
+# Dimensi bertingkat unpacked didukung (LRM §7.8, fase 14): multidimensi
+# unpacked `[0:1][0:3]` diterima pada elaborasi, bukan ditolak.
 printf 'module bad2(output logic [7:0] o);
   logic [7:0] big [0:1][0:3];
 endmodule
 ' \
   > /tmp/sv_un_2d.sv
 gagal_2d=$($SV check --rtl /tmp/sv_un_2d.sv --top bad2 2>&1 || true)
-cek_gagal "dua_dimensi" "bertingkat" "$gagal_2d"
+cek_gagal "dua_dimensi" "check OK" "$gagal_2d"
 
 echo "DEMO OK"
