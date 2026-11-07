@@ -99,11 +99,8 @@ impl VcdWriter {
                 changed.push((id, value));
             }
         }
-        // Daftar kosong tetap menulis marker waktu: itu yang menutup trace pada
-        // waktu `$finish` dipanggil.
-        if changed.is_empty() && !values.is_empty() {
-            return;
-        }
+        // Marker waktu selalu ditulis (terutama untuk `$finish` tanpa perubahan
+        // nilai sinyal): itu yang menutup trace pada waktu yang benar.
         let _ = writeln!(self.buf, "#{}", time);
         for (id, value) in changed {
             self.write_change(id, value);
@@ -206,6 +203,20 @@ mod tests {
         w.initial(0, &[(a, "0000")]);
         w.advance(30, &[]);
         assert!(w.vcd_text().contains("#30"), "dapat:\n{}", w.vcd_text());
+    }
+
+    /// `advance` pada waktu `$finish` yang tidak mengubah sinyal apa pun harus
+    /// tetap menulis marker waktu akhir, bukan diam-diam melewatkannya.
+    #[test]
+    fn advance_tanpa_perubahan_nilai_tetap_tulis_marker_waktu() {
+        let mut w = VcdWriter::new("1ns");
+        let a = w.add_signal("a", 4);
+        w.initial(0, &[(a, "0000")]);
+        // Nilai sama: tidak ada perubahan, tapi marker waktu tetap harus ada.
+        w.advance(30, &[(a, "0000")]);
+        let txt = w.vcd_text();
+        assert!(txt.contains("#30"), "dapat:\n{}", txt);
+        assert!(txt.contains("$dumpvars"), "dapat:\n{}", txt);
     }
 
     #[test]

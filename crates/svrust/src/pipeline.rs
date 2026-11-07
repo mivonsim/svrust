@@ -1226,7 +1226,13 @@ mod tests {
         let designs = elaborate_tops(&collection, &tops).expect("elaborate semua root");
         assert_eq!(designs.len(), 2, "harus ada 2 design untuk 2 root");
         let nama: Vec<_> = designs.iter().map(|d| d.name.clone()).collect();
-        assert!(nama.contains(&"a".to_string()), "root a harus ada: {nama:?}");
-        assert!(nama.contains(&"b".to_string()), "root b harus ada: {nama:?}");
+        assert!(
+            nama.contains(&"a".to_string()),
+            "root a harus ada: {nama:?}"
+        );
+        assert!(
+            nama.contains(&"b".to_string()),
+            "root b harus ada: {nama:?}"
+        );
     }
 }

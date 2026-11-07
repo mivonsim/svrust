@@ -509,7 +509,13 @@ fn generate_vcd_driver_named(
         out.push_str("        let __selesai = design.is_finished();\n");
         out.push_str("        if __selesai {\n");
         out.push_str("            if dumping {\n");
-        out.push_str("                trace.advance({waktu}, &[]);\n");
+        // Waktu simulasi terkini saat `$finish` dipanggil (LRM §23.2: marker
+        // waktu akhir ditulis pada waktu `$finish`, bukan nomor langkah awal
+        // loop yang sudah ketinggalan setelah `eval_timed`/`eval_initial`).
+        out.push_str("                let waktu = ");
+        out.push_str(&waktu_kode);
+        out.push_str(";\n");
+        out.push_str("                trace.advance({{waktu}}, &[]);\n");
         out.push_str("            }\n");
         out.push_str("            break;\n");
         out.push_str("        }\n");

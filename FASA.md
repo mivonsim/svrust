@@ -429,6 +429,25 @@ Semua 10 fase telah selesai.
 ### Commit
 - `elaborate_tops` menghasilkan satu design per root (LRM §23.1); `root_modules` memindai `instances` dan `generates`; nama Rust unik + import runtime path absolut. Demo `e2e_multi` terverifikasi.
 
+## Tahap Stabilisasi §23.2 VCD — marker waktu akhir saat `$finish` (selesai)
+
+### Perbaikan
+1. `driver_gen::generate_vcd_driver_named`: timestamp VCD diambil dari `design.time_now().in_units(presisi)` setiap langkah, dan **diupdate lagi sebelum `trace.advance` saat `$finish`** (sebelumnya diambil di awal loop, ketinggalan setelah `eval_timed`/`eval_initial` majukan jam — VCD akhir terpotong di #10 alih-alih #15).
+2. `sv-trace::VcdWriter::advance`: marker waktu selalu ditulis, bahkan saat tidak ada sinyal yang berubah (hapus `return` early pada `changed.is_empty() && !values.is_empty()`), jadi marker waktu akhir `$finish` tidak pernah hilang.
+
+### Test baru
+- `advance_tanpa_perubahan_nilai_tetap_tulis_marker_waktu` di `crates/sv-trace/src/vcd.rs` (+1 test).
+
+### Verifikasi
+- Demo `examples/e2e_vcd/demo.sh`: DEOK, timestamp #0 #10 #20 #30, marker akhir $finish #15, $dumpfile/$dumpvars di SV, --vcd tidak menimpa $dumpfile.
+- `cargo test -p sv-trace`: 8 passed (+1 baru).
+- `cargo test --workspace`: 307 passed, 0 failed (1 environment issue OpenTitan).
+- `cargo clippy --all-targets`: clean (0 warning).
+- `cargo fmt --check`: clean.
+
+### Commit
+- `fix: VCD marker waktu akhir ditulis saat $finish` (driver_gen + sv-trace).
+
 ## Catatan Akhir
 
 SVRust telah mencapai dukungan fitur utama SystemVerilog LRM melalui 8 fase. Fitur-fitur utama yang didukung:
