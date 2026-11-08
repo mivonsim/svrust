@@ -1180,6 +1180,8 @@ fn token_tipe_atau_ident(t: &Token) -> Option<&str> {
         Token::Logic => Some("logic"),
         Token::Signed => Some("signed"),
         Token::Unsigned => Some("unsigned"),
+        Token::String => Some("string"),
+        Token::Time => Some("time"),
         _ => None,
     }
 }
@@ -1225,7 +1227,7 @@ fn parse_dpi(
     // Jika token saat ini adalah tipe DPI-C dikenal dan diikuti identifier,
     // maka token saat ini adalah ret_type, bukan nama.
     let tipe_dpi = [
-        "void", "int", "bit", "logic", "byte", "shortint", "longint", "time",
+        "void", "int", "bit", "logic", "byte", "shortint", "longint", "time", "chandle",
     ];
     let mut ret_type: Option<String> = None;
     let mut name: Option<String> = None;

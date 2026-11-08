@@ -459,6 +459,12 @@ pub fn lebar_deklarasi(
             width: 1,
             signed: false,
         },
+        // `chandle` — handle pointer DPI-C (LRM §35), perlakukan sebagai
+        // tipe 32-bit unsigned (void pointer).
+        Some("chandle") => TypeInfo {
+            width: 32,
+            signed: false,
+        },
         // Tipe net dasar (LRM §6.6): `wire` tanpa resolusi, `wand` = WiredAnd,
         // `wor`/`tri` = WiredOr. Semua 1-bit secara default.
         Some("wire") => TypeInfo {

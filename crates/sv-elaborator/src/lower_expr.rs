@@ -52,6 +52,10 @@ pub fn lower_expression_dengan_konteks(
 ) -> Result<Expr, ElaborateError> {
     match expr {
         AstExpr::Ident { name, span } => {
+            // `null` — null pointer literal (LRM §6.19), nol konstanta 32-bit.
+            if name == "null" {
+                return Ok(Expr::constant(0, DataType::signed(32)));
+            }
             // Konstanta paket (`pkg::nama`) yang paketnya tidak ada dalam
             // kompilasi tidak dapat direferensi sebagai sinyal. Kembalikan
             // konstanta 0 default agar elaborasi OpenTitan yang merujuk paket

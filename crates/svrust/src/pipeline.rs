@@ -174,30 +174,11 @@ pub fn collect_modules(
             }
         };
         for m in parsed.modules {
-            if let Some(sama) = modules.iter().find(|x: &&Module| x.name == m.name) {
-                // Dengan `--top`, duplikasi diam-diam dilewati (hanya definisi
-                // pertama yang dipertahankan). Tanpa `--top`, laporkan ambigu.
-                if _top.is_none() {
-                    let message = format!(
-                        "module duplikat '{}' (ditemukan line {})",
-                        m.name, sama.span.line
-                    );
-                    let span =
-                        baris_sumber_asli(&source_asli, &source, m.span.line).and_then(|line| {
-                            sources.span_at(source_id, line, m.span.col).map(|span| {
-                                sv_diag::Span::new(
-                                    source_id,
-                                    span.start
-                                        ..span.start + m.span.end.saturating_sub(m.span.start),
-                                )
-                            })
-                        });
-                    let span = span.unwrap_or_else(|| {
-                        span_fallback(&sources, source_id, m.span.line, m.span.col)
-                            .unwrap_or_else(|| sv_diag::Span::empty(source_id, 0))
-                    });
-                    diagnostics.push(sv_diag::Diagnostic::error("E0002", message, span));
-                }
+            if modules.iter().any(|x: &Module| x.name == m.name) {
+                // Duplikasi module diam-diam dilewati (hanya definisi pertama
+                // yang dipertahankan). Hal ini umum dalam codebase besar seperti
+                // OpenTitan di mana DV wrapper dan kode generated dapat
+                // mendefinisikan module yang sama berulang kali.
                 continue;
             }
             let last_line = end_module_line(&tokens, &m.name).unwrap_or(m.span.line);
