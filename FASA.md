@@ -604,6 +604,28 @@ Catatan verifikasi (sudah full support, demo OK):
 - `cargo run --release -- check --rtl opentitan.f --top top_earlgrey --release`: `check OK (3 module, top top_earlgrey)`, tanpa error
 - Commit: `4ad5874 fix(sv-runtime): jalankan eval_timed di driver plain untuk proses waktu tanpa initial` (push ke origin/main)
 
+## Tahap Stabilisasi — Proses waktu `always #N` dengan blok `initial` tanpa proses sekuensial (selesai)
+
+### Perbaikan
+
+- `sv-rust` `driver_gen.rs`: cabang driver "dengan `initial` tanpa proses sekuensial" sebelumnya tidak memanggil `eval_timed()` dan menggunakan `while step_scheduler()` yang tak pernah idle saat proses waktu mendaftarkan dirinya sendiri ke waktu mendatang — menyebabkan infinite loop (timeout) dan `#delay` di dalam `if`/`loop` tidak menunda proses. Sekarang memanggil `eval_timed()` sebelum `eval_initial(__step)` saat ada proses waktu, dan ganti `while step_scheduler()` dengan panggilan tunggal per langkah (pola sama cabang sequential) (LRM §9.2.1, §11.2, §25).
+
+### Test baru
+
+- `driver_dengan_initial_tanpa_sequential_panggil_eval_timed_untuk_proses_waktu` di `crates/svrust/tests/driver_test.rs` memverifikasi driver dengan `initial` tanpa sequential memanggil `eval_timed()` dan `eval_initial(__step)`, dan tidak pakai `while step_scheduler()`.
+
+### Demo baru
+
+- `examples/e2e_timed_initial/`: `initial begin #10 $finish; end` + `always begin if (cnt < 5) begin #2 cnt = cnt + 1; end end`, `cnt_o = 05`, DEMO OK
+
+### Verifikasi
+
+- `cargo nextest run --workspace`: 1538 passed, 0 skipped
+- `cargo clippy --all-targets`: clean 0 warning (kecuali pre-existing sv-ir)
+- `cargo fmt --check`: clean
+- `cargo run --release -- check --rtl opentitan.f --top top_earlgrey --release`: `check OK (3 module, top top_earlgrey)`, tanpa error
+- Commit: `8dc0300 fix(sv-runtime): jalankan eval_timed pada cabang driver has-initial-tanpa-sequential` (push ke origin/main)
+
 ### Verifikasi (ini)
 
 - `cargo nextest run --workspace`: 1523 passed, 0 skipped
