@@ -94,28 +94,26 @@ pub fn dispatch(opts: Options) -> Result<(), crate::CliError> {
                 workspace.write_generated(&design.name, &rust)?;
                 parts.push((module.as_str(), rust));
             }
+
             // LRM §23.2: tiap root yang memanggil `$dumpvars` punya berkasnya
             // sendiri. Memakai path dari root pertama saja membuat `$dumpvars`
             // di root lain hilang tanpa pesan, dan dua root yang menunjuk path
             // sama akan saling menimpa.
             let paths = crate::vcd_path::vcd_paths(&designs, opts.vcd.as_deref())?;
             let pakai_vcd = paths.iter().any(|p| p.is_some());
+            // Satu crate paralel per modul root (parallel.md fase 5): setiap
+            // root dikompilasi dalam crate sendiri, dibangun dengan `cargo -j N`.
             let view: Vec<(&str, &sv_ir::Design, Option<&Path>)> = module_names
                 .iter()
                 .zip(designs.iter())
                 .zip(paths.iter())
                 .map(|((m, d), p)| (m.as_str(), d, p.as_deref()))
                 .collect();
-            let driver = crate::driver_gen::generate_multi_driver(&view, opts.steps);
-            let refs: Vec<(&str, &str)> = parts
-                .iter()
-                .map(|(nama, kode)| (*nama, kode.as_str()))
-                .collect();
-            workspace.write_sim_project(&refs, &driver, pakai_vcd)?;
+            workspace.write_sim_project(&view, opts.steps, pakai_vcd)?;
             workspace.build(opts.release)?;
 
             if opts.command == Command::Run {
-                workspace.run(opts.release, &opts.plusargs)?;
+                workspace.run(opts.release, &opts.plusargs, &view)?;
             } else {
                 println!("build OK");
             }

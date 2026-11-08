@@ -1,8 +1,10 @@
 // Tanggung jawab: integration test driver Rust yang dihasilkan untuk simulasi.
 use std::path::Path;
 
+use sv_codegen_rust::{generate_module, module_name::module_names_unik};
 use sv_ir::Design;
 use svrust::driver_gen::generate_driver;
+use svrust::pipeline::compile_semua_root;
 
 /// Elaborasi sumber SV menjadi design.
 fn design(source: &str) -> Design {
@@ -244,4 +246,64 @@ fn driver_dengan_initial_tanpa_sequential_panggil_eval_timed_untuk_proses_waktu(
         !kode.contains("while design.step_scheduler()"),
         "driver dengan initial tanpa sequential tidak boleh pakai while step_scheduler (infinite loop saat proses waktu reschedule)"
     );
+}
+
+/// `compile_semua_root` (parallel.md fase 5/§23.1) harus menghasilkan SATU
+/// design per modul root tanpa `--top`, dan setiap design menghasilkan kode
+// Rust yang bisa dikodekan dengan nama modul unik (tidak bentrok).
+#[test]
+fn compile_semua_root_hasil_satu_design_per_root_dengan_nama_unik() {
+    let dir = std::env::temp_dir().join(format!(
+        "svrust-parallel-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("jam sistem valid")
+            .as_nanos()
+    ));
+    std::fs::create_dir(&dir).expect("buat direktori fixture");
+    let a = dir.join("a.sv");
+    let b = dir.join("b.sv");
+    let c = dir.join("c.sv");
+    std::fs::write(
+        &a,
+        "module root_a(output logic [7:0] y); assign y = 8'd1; endmodule\n",
+    )
+    .expect("tulis a");
+    std::fs::write(
+        &b,
+        "module root_b(output logic [7:0] z); assign z = 8'd2; endmodule\n",
+    )
+    .expect("tulis b");
+    std::fs::write(
+        &c,
+        "module root_c(output logic [7:0] w); assign w = 8'd3; endmodule\n",
+    )
+    .expect("tulis c");
+
+    let designs = compile_semua_root(&[a.clone(), b.clone(), c.clone()], None, &[])
+        .expect("tiga root harus dielaborasi");
+    assert_eq!(designs.len(), 3, "harus ada 3 design untuk 3 root");
+
+    let nama: Vec<_> = designs.iter().map(|d| d.name.clone()).collect();
+    for n in &["root_a", "root_b", "root_c"] {
+        assert!(
+            nama.contains(&n.to_string()),
+            "root {n} harus ada: {nama:?}"
+        );
+    }
+
+    // Setiap design bisa dikodekan dan nama Rust unik (tidak bentrok).
+    let kode: Vec<_> = designs.iter().map(generate_module).collect();
+    let nama_rust = module_names_unik(&nama);
+    let mut unik = std::collections::HashSet::new();
+    for n in &nama_rust {
+        assert!(unik.insert(n.clone()), "nama Rust ganda: {n}");
+    }
+    assert_eq!(kode.len(), 3, "harus ada 3 kode generate untuk 3 root");
+
+    std::fs::remove_file(a).expect("hapus a");
+    std::fs::remove_file(b).expect("hapus b");
+    std::fs::remove_file(c).expect("hapus c");
+    std::fs::remove_dir(dir).expect("hapus direktori fixture");
 }
