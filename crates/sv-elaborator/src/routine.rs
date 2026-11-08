@@ -889,9 +889,17 @@ impl<'a> Inliner<'a> {
                         span: *span,
                     });
                 }
-                let name = name.clone();
-                let args = args.clone();
-                self.call(&name, &args, *span)?
+                // Fungsi yang diketahui di-inline; fungsi tak dikenal (mis.
+                // `aes_transpose` di OpenTitan) jadi placeholder 0 agar
+                // `check` tanpa `--top` tetap melenggang (pendekatan lenient,
+                // FASA.md).
+                if self.routines.contains_key(name.as_str()) {
+                    let name = name.clone();
+                    let args = args.clone();
+                    self.call(&name, &args, *span)?
+                } else {
+                    Expr::Number(0)
+                }
             }
             // `Expr::DpiCall` sudah dalam bentuk akhir — klooning saja.
             Expr::DpiCall { .. } => expr.clone(),

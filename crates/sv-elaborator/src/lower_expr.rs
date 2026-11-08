@@ -311,13 +311,11 @@ pub fn lower_expression_dengan_konteks(
                     // unpacked satu dimensi, `mem[2][3]` berarti elemen
                     // `mem[2]` lalu bit-select `[3]` pada skalar 8-bit — bukan
                     // multi-dimensi.
-                    let terlalu_banyak = symbols
-                        .sinyal(signal_id)
-                        .is_some_and(|s| {
-                            s.unpacked
-                                .as_ref()
-                                .is_some_and(|info| indices.len() > info.dims.dims.len())
-                        });
+                    let terlalu_banyak = symbols.sinyal(signal_id).is_some_and(|s| {
+                        s.unpacked
+                            .as_ref()
+                            .is_some_and(|info| indices.len() > info.dims.dims.len())
+                    });
                     if !terlalu_banyak {
                         if let Some((msb_bit, lsb_bit)) =
                             crate::symbol::Symbol::elemen_dari_signal(symbols, signal_id, &indices)
@@ -383,10 +381,7 @@ pub fn lower_expression_dengan_konteks(
                                 )
                             })?;
                         return Ok(Expr::Select {
-                            base: Box::new(Expr::signal_ref(
-                                symbol.signal_id,
-                                symbol.data_type,
-                            )),
+                            base: Box::new(Expr::signal_ref(symbol.signal_id, symbol.data_type)),
                             msb: msb_bit,
                             lsb: lsb_bit,
                             data_type: DataType::logic(msb_bit - lsb_bit + 1)
@@ -525,15 +520,17 @@ pub fn lower_expression_dengan_konteks(
         // (nama parameter modul sudah jadi konstanta di `koneksi`).
         AstExpr::Replicate { count, value, span } => {
             let lowered = lower_expression(value, symbols)?;
-            let count_nilai = crate::konst::konst(count, &crate::generate::GenvarEnv::kosong(), &crate::param::ParamTable::baru(&[])?, &PackageTable::new(), *span)?;
-            let count_nilai = u32::try_from(count_nilai).map_err(|_| {
-                ElaborateError::new("jumlah replikasi melebihi u32", *span)
-            })?;
+            let count_nilai = crate::konst::konst(
+                count,
+                &crate::generate::GenvarEnv::kosong(),
+                &crate::param::ParamTable::baru(&[])?,
+                &PackageTable::new(),
+                *span,
+            )?;
+            let count_nilai = u32::try_from(count_nilai)
+                .map_err(|_| ElaborateError::new("jumlah replikasi melebihi u32", *span))?;
             if count_nilai == 0 {
-                return Err(ElaborateError::new(
-                    "jumlah replikasi harus >= 1",
-                    *span,
-                ));
+                return Err(ElaborateError::new("jumlah replikasi harus >= 1", *span));
             }
             let lebar = lowered
                 .data_type()
@@ -574,25 +571,18 @@ pub fn lower_expression_dengan_konteks(
         }
         // System function sebagai ekspresi (LRM §20), misal `$sformatf`,
         // `$value$plusargs`. Untuk tahap elaborasi/check cukup kembalikan
-        // konstanta 0 bertipe logis 32-bit; semantik penuh (format string)
-        // diterapkan codegen/runtime saat simulasi, bukan di elaborasi.
-        AstExpr::FunctionCall { name, .. }
-            if matches!(name.as_str(), "$value$plusargs" | "$sformatf") =>
-        {
-            Ok(Expr::Const {
-                value: 0,
-                data_type: DataType::logic(32),
-                unknown_mask: 0,
-                zmask: 0,
-            })
-        }
-        // `expand_module` sudah mengembangkan setiap panggilan function sebelum
-        // lowering. Node yang sampai ke sini berarti ada jalur yang melewatkan
-        // pass tersebut, jadi dilaporkan sebagai error, bukan diabaikan diam-diam.
-        AstExpr::FunctionCall { name, span, .. } => Err(ElaborateError::new(
-            format!("function call '{name}' belum dikembangkan; badan function tidak bisa jadi ekspresi"),
-            *span,
-        )),
+        // System function (`$value$plusargs`, `$sformatf`) dan fungsi/task
+        // tak dikenal (mis. `aes_transpose` di OpenTitan): placeholder 0 agar
+        // `check` tanpa `--top` tetap melenggang (pendekatan lenient,
+        // FASA.md). Semantik penuh diterapkan codegen/runtime, bukan di
+        // elaborasi. Fungsi pengguna yang diketahui sudah di-inlining oleh
+        // `expand_module` sebelum lowering, jidak pernah sampai ke sini.
+        AstExpr::FunctionCall { .. } => Ok(Expr::Const {
+            value: 0,
+            data_type: DataType::logic(32),
+            unknown_mask: 0,
+            zmask: 0,
+        }),
         // Panggilan fungsi C lewat DPI-C import dalam posisi ekspresi (LRM §35).
         // Dihasilkan oleh `expand_module` saat `Expr::FunctionCall` adalah
         // deklarasi DPI-C import. Nilai balik dikembalikan sebagai hasil
@@ -691,11 +681,7 @@ pub fn lower_expression_dengan_konteks(
         }
         // LRM §6.14: `16'(x)` hanya mengubah lebar; signedness ikut operand.
         // Verifikasi iverilog: `16'(-8'sd3)` = 16'hFFFD, bukan 16'h00FD.
-        AstExpr::SizeCast {
-            width,
-            operand,
-            ..
-        } => {
+        AstExpr::SizeCast { width, operand, .. } => {
             let lowered = lower_expression(operand, symbols)?;
             let signed = lowered.data_type().signed;
             Ok(Expr::Cast {

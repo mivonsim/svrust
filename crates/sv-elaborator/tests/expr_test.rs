@@ -648,6 +648,19 @@ fn value_plusargs_sebagai_ekspresi_ambil_tipe_target() {
 }
 
 #[test]
+fn fungsi_tak_dikenal_placeholder_nol_lenient() {
+    // Fungsi tak dikenal (mis. `aes_transpose` di OpenTitan) jadi placeholder
+    // 0 agar `check` tanpa `--top` tetap melenggang (pendekatan lenient,
+    // FASA.md).
+    let src = "module m(input [7:0] x, output [7:0] y); assign y = aes_transpose(x); endmodule";
+    let design = build(src);
+    match nilai_rhs_mentah(&design) {
+        Expr::Const { value: 0, .. } => {}
+        other => panic!("expected const 0, dapat {other:?}"),
+    }
+}
+
+#[test]
 fn sformatf_sebagai_ekspresi_kembalikan_kosong() {
     // `$sformatf("%0d", x)` sebagai ekspresi: gagal elaborasi karena diformat
     // string tidak ada konstanta; cukup kembalikan placeholder agar check

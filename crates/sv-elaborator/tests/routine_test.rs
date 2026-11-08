@@ -1,7 +1,7 @@
 // Tanggung jawab: integration test inlining task/function (LRM §13.3/§13.4).
 mod support;
 
-use support::{build, build_top, dengan_sinyal, evaluasi, lebar_mask, nilai_rhs};
+use support::{build, build_top, dengan_sinyal, evaluasi, lebar_mask, nilai_rhs, nilai_rhs_mentah};
 use sv_ir::process::{AssignStyle, Statement};
 use sv_ir::{DataType, Expr};
 
@@ -530,15 +530,18 @@ fn function_dipakai_sebagai_task_ditolak() {
 }
 
 #[test]
-fn subroutine_tidak_didefinisikan_ditolak() {
-    let e = err("module m(input logic [7:0] a, output logic [7:0] y);\n\
+fn subroutine_tidak_didefinisikan_dengan_placeholder_nol_lenient() {
+    // Subrutin tak dikenal (`tak_ada`) jadi placeholder 0 agar `check` tanpa
+    // `--top` tetap melenggang (pendekatan lenient, FASA.md), bukan error.
+    let design = build(
+        "module m(input logic [7:0] a, output logic [7:0] y);\n\
                  always_comb y = tak_ada(a);\n\
-                 endmodule\n");
-    assert!(
-        e.message.contains("undefined function or task 'tak_ada'"),
-        "pesan: {}",
-        e.message
+                 endmodule\n",
     );
+    match nilai_rhs_mentah(&design) {
+        Expr::Const { value: 0, .. } => {}
+        other => panic!("expected const 0, dapat {other:?}"),
+    }
 }
 
 #[test]
@@ -601,15 +604,18 @@ fn rekursi_fungsi_ditolak_dengan_batas_kedalaman() {
     assert!(e.message.contains("melebihi batas"), "pesan: {}", e.message);
 }
 
-/// Span error menunjuk ke nama subroutine yang tidak dikenal, bukan dummy.
+/// Subrutin tak dikenal jadi placeholder 0 (lenient), bukan error.
 #[test]
-fn span_error_menunjuk_ke_nama_subroutine() {
-    let e = err("module m(input logic [7:0] a, output logic [7:0] y);\n\
-                 always_comb y = tak_ada(a);\n\
-                 endmodule\n");
-    assert_eq!(e.span.line, 2, "span: {:?}", e.span);
-    // `tak_ada` dimulai tepat setelah `y = ` pada baris kedua.
-    assert_eq!(e.span.col, 17, "span: {:?}", e.span);
+fn subroutine_tak_dikenal_dapat_placeholder_nol() {
+    let design = build(
+        "module m(input logic [7:0] a, output logic [7:0] y);\
+                 always_comb y = tak_ada(a);\
+                 endmodule\n",
+    );
+    match nilai_rhs_mentah(&design) {
+        Expr::Const { value: 0, .. } => {}
+        other => panic!("expected const 0, dapat {other:?}"),
+    }
 }
 
 // --- Integrasi dengan pipeline lain ---
