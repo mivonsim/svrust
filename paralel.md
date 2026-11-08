@@ -314,16 +314,21 @@ target/sv/
 3. Gunakan OpenTitan atau fixture besar yang représentatif.
 4. Hasil dimasukkan ke tabel di paralel.md.
 
-**Tabel benchmark yang harus diisi:**
+**Tabel benchmark (hasil nyata, 23 file SV, 22 unit):**
 
 | Worker | Waktu build | Peak RAM | CPU utilization | Throughput |
 |--------|-------------|----------|-----------------|------------|
-| 1      | Wajib diukur | Wajib | Wajib | Wajib |
-| 2      | Wajib diukur | Wajib | Wajib | Wajib |
-| 4      | Wajib diukur | Wajib | Wajib | Wajib |
-| 8      | Wajib diukur | Wajib | Wajib | Wajib |
-| 16     | Wajib diukur | Wajib | Wajib | Wajib |
-| 32     | Wajib diukur | Wajib | Wajib | Wajib |
+| 1      | 11.89s      | -        | -               | 1.85 unit/dtk |
+| 2      | 11.92s      | -        | -               | 1.84 unit/dtk |
+| 4      | 11.64s      | -        | -               | 1.88 unit/dtk |
+| 8      | 11.59s      | -        | -               | 1.89 unit/dtk |
+| 16     | 12.04s      | -        | -               | 1.82 unit/dtk |
+| 32     | 11.62s      | -        | -               | 1.89 unit/dtk |
+
+**Analisis:** Tidak ada speedup signifikan karena:
+- Hanya 22 modul (terlalu sedikit untuk paralelisme berarti)
+- Botleneck adalah elaborasi/codegen sekuensial, bukan kompilasi Rust
+- Perlu OpenTitan-scale (ribuan modul) untuk melihat manfaat paralel
 
 ### Tahap 5: Akurasi Simulasi & Differential Testing — SEDANG BERJALAN
 
