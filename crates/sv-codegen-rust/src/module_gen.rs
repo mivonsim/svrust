@@ -175,13 +175,18 @@ pub fn generate_module(design: &Design) -> String {
     out
 }
 
-/// Tulis blok `extern "C"` untuk setiap deklarasi `import "DPI-C" function`
-/// (LRM §35). Fungsi dieksternal dengan tipe Rust yang setara; nama simbol C
-/// dipakai bila ditulis, lain pakai nama fungsi SV.
+/// Tulis blok `extern "C"` deklarasi + fungsi pembawa Rust untuk setiap
+/// deklarasi `import "DPI-C" function` (LRM §35). Fungsi pembawa membuka
+/// library DPI-C, cari simbol lewat `dlsym`, dan panggil fungsi C nyata
+/// melalui `sv_runtime::dpi`. Nama simbol C dipakai bila ditulis, lain pakai
+/// nama fungsi SV.
 fn write_dpi_extern(design: &Design, out: &mut String) {
     if design.dpis.is_empty() {
         return;
     }
+    // Deklarasi `extern "C"` agar simbol C dikenal (dipakai wrapper sebagai
+    // dokumentasi tipe; pemanggilan nyata lewat runtime DPI di bawah).
+    out.push_str("extern \"C\" {\n");
     for dpi in &design.dpis {
         if dpi.kind != DpiKind::Import {
             continue;
@@ -193,14 +198,93 @@ fn write_dpi_extern(design: &Design, out: &mut String) {
             .iter()
             .map(|(nama, tipe)| format!("{nama}: {}", rust_tipe(Some(tipe.as_str()))))
             .collect();
-        out.push_str("extern \"C\" {\n");
         out.push_str(&format!(
             "    #[allow(dead_code)]\n    fn {c_name}({params}) -> {ret};\n",
             c_name = c_name,
             params = params.join(", "),
             ret = ret
         ));
+    }
+    out.push_str("}\n\n");
+    // Fungsi pembawa Rust: satu per deklarasi import.
+    for dpi in &design.dpis {
+        if dpi.kind != DpiKind::Import {
+            continue;
+        }
+        let c_name = dpi.c_name.as_deref().unwrap_or(dpi.name.as_str());
+        let rust_nama = format!("dpi_{}", c_name);
+        let lib_nama = format!("lib{}.so", c_name);
+        let ret = rust_tipe(dpi.ret_type.as_deref());
+        let params: Vec<String> = dpi
+            .args
+            .iter()
+            .map(|(nama, tipe)| format!("{nama}: {}", rust_tipe(Some(tipe.as_str()))))
+            .collect();
+        let param_nama: Vec<String> = dpi.args.iter().map(|(nama, _)| nama.clone()).collect();
+        let helper = dpi_helper_fn(dpi.ret_type.as_deref(), &dpi.args);
+        let arg_panggil: Vec<String> = param_nama.to_vec();
+        out.push_str(&format!(
+            "/// Pemanggilan fungsi C `{}` lewat DPI-C import (LRM §35).\n",
+            c_name
+        ));
+        out.push_str(&format!(
+            "pub fn {rust_nama}({}) -> {ret} {{\n",
+            params.join(", ")
+        ));
+        out.push_str(&format!(
+            "    let __handle = ::sv_runtime::dpi::dpi_open(\"{lib_nama}\");\n"
+        ));
+        out.push_str(&format!(
+            "    let __fn = ::sv_runtime::dpi::dpi_sym(__handle, \"{c_name}\");\n"
+        ));
+        if ret == "()" {
+            out.push_str(&format!(
+                "    unsafe {{ ::sv_runtime::dpi::{helper}(__fn{}) }};\n",
+                if arg_panggil.is_empty() {
+                    String::new()
+                } else {
+                    format!(", {}", arg_panggil.join(", "))
+                }
+            ));
+        } else {
+            out.push_str(&format!(
+                "    let __hasil = unsafe {{ ::sv_runtime::dpi::{helper}(__fn{}) }};\n",
+                if arg_panggil.is_empty() {
+                    String::new()
+                } else {
+                    format!(", {}", arg_panggil.join(", "))
+                }
+            ));
+            out.push_str("    __hasil\n");
+        }
+        out.push_str("    unsafe { ::sv_runtime::dpi::dpi_close(__handle); }\n");
         out.push_str("}\n\n");
+    }
+}
+
+/// Nama fungsi helper runtime DPI untuk signature (ret, argumen).
+fn dpi_helper_fn(ret: Option<&str>, args: &[(String, String)]) -> String {
+    let r = rust_tipe(ret);
+    let a: Vec<&str> = args
+        .iter()
+        .map(|(_, t)| rust_tipe(Some(t.as_str())))
+        .collect();
+    match (r, a.as_slice()) {
+        ("()", []) => "dpi_call_void0".to_string(),
+        ("()", ["i32"]) => "dpi_call_void_i32".to_string(),
+        ("()", ["u8"]) => "dpi_call_void_u8".to_string(),
+        ("()", ["i16"]) => "dpi_call_void_i16".to_string(),
+        ("()", ["i64"]) => "dpi_call_void_i64".to_string(),
+        ("i32", []) => "dpi_call_i32_0".to_string(),
+        ("i32", ["i32"]) => "dpi_call_i32_i32".to_string(),
+        ("i32", ["u8"]) => "dpi_call_i32_u8".to_string(),
+        ("i32", ["i16"]) => "dpi_call_i32_i16".to_string(),
+        ("i32", ["i64"]) => "dpi_call_i32_i64".to_string(),
+        ("u8", []) => "dpi_call_u8_0".to_string(),
+        ("u8", ["u8"]) => "dpi_call_u8_u8".to_string(),
+        ("i64", []) => "dpi_call_i64_0".to_string(),
+        ("i64", ["i64"]) => "dpi_call_i64_i64".to_string(),
+        _ => "dpi_call_i32_i32".to_string(),
     }
 }
 

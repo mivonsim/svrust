@@ -4,6 +4,7 @@ pub mod bits_arith;
 pub mod bits_ops;
 pub mod convert;
 pub mod divide;
+pub mod dpi;
 pub mod logic;
 pub mod reduction;
 pub mod scheduler;
