@@ -195,6 +195,11 @@ fn jalan_comb(stmt: &mut CombinationalStatement, ctx: &mut Ctx) {
                 nama_expr(arg, ctx);
             }
         }
+        CombinationalStatement::DpiCall(call) => {
+            for arg in &mut call.args {
+                nama_expr(arg, ctx);
+            }
+        }
         // LRM §13.4: nilai yang dibawa `return expr;`.
         CombinationalStatement::Return { value, .. } => {
             if let Some(expr) = value.as_mut() {
@@ -256,6 +261,11 @@ fn jalan_seq(stmt: &mut SequentialStatement, ctx: &mut Ctx) {
         SequentialStatement::SystemTask(task) => nama_task(task, ctx),
         // Argumen panggilan task bisa merujuk variabel lokal.
         SequentialStatement::TaskCall(call) => {
+            for arg in &mut call.args {
+                nama_expr(arg, ctx);
+            }
+        }
+        SequentialStatement::DpiCall(call) => {
             for arg in &mut call.args {
                 nama_expr(arg, ctx);
             }

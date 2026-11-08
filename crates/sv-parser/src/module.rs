@@ -1222,8 +1222,11 @@ fn parse_dpi(
 
     // Nama fungsi, dengan tipe balik opsional di depannya (LRM §35.5.2):
     //   function [<tipe_balik>] <nama> ([args] | = <nama_c>);
-    // Identifier/tipe terakhir sebelum `(` / `=` / `;` adalah nama; tipe
-    // sebelumnya (jika diikuti tipe/ident lain) adalah tipe balik.
+    // Jika token saat ini adalah tipe DPI-C dikenal dan diikuti identifier,
+    // maka token saat ini adalah ret_type, bukan nama.
+    let tipe_dpi = [
+        "void", "int", "bit", "logic", "byte", "shortint", "longint", "time",
+    ];
     let mut ret_type: Option<String> = None;
     let mut name: Option<String> = None;
     while idx < tokens.len() {
@@ -1234,17 +1237,23 @@ fn parse_dpi(
         let Some(teks) = token_tipe_atau_ident(&tokens[idx].token) else {
             break;
         };
+        let s = teks.to_string();
+        let is_tipe_dpi = tipe_dpi.contains(&s.as_str());
         let diikuti_nama = match tokens.get(idx + 1).map(|t| &t.token) {
             Some(Token::LParen) | Some(Token::Assign) | Some(Token::Semi) => true,
             Some(_) => token_tipe_atau_ident(&tokens[idx + 1].token).is_none(),
             _ => true,
         };
-        let s = teks.to_string();
         idx += 1;
-        if diikuti_nama {
+        if is_tipe_dpi {
+            // Token saat ini adalah tipe balik, lanjut ke token berikutnya (nama).
+            ret_type = Some(s);
+        } else if diikuti_nama {
+            // Token saat ini adalah nama fungsi diikuti `(` / `=` / `;`.
             name = Some(s);
             break;
         } else {
+            // Token saat ini adalah tipe balik tanpa nama setelahnya.
             ret_type = Some(s);
         }
     }
@@ -1287,17 +1296,26 @@ fn parse_dpi(
                     break;
                 };
                 idx += 1;
-                let nama = if idx < tokens.len()
-                    && token_tipe_atau_ident(&tokens[idx].token).is_some()
-                {
-                    let s = token_tipe_atau_ident(&tokens[idx].token)
-                        .unwrap()
-                        .to_string();
-                    idx += 1;
-                    s
-                } else {
-                    String::new()
-                };
+                // Konsumsi dimensi array pada tipe argumen, misal `bit [7:0]`.
+                while idx < tokens.len() && tokens[idx].token == Token::LBracket {
+                    idx += 1; // konsumsi '['
+                    while idx < tokens.len() && tokens[idx].token != Token::RBracket {
+                        idx += 1;
+                    }
+                    if idx < tokens.len() {
+                        idx += 1; // konsumsi ']'
+                    }
+                }
+                let nama =
+                    if idx < tokens.len() && token_tipe_atau_ident(&tokens[idx].token).is_some() {
+                        let s = token_tipe_atau_ident(&tokens[idx].token)
+                            .unwrap()
+                            .to_string();
+                        idx += 1;
+                        s
+                    } else {
+                        String::new()
+                    };
                 args.push((nama, tipe.to_string()));
                 if idx < tokens.len() && tokens[idx].token == Token::Comma {
                     idx += 1;

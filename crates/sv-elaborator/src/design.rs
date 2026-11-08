@@ -21,7 +21,7 @@ pub fn elaborate(module: &Module) -> Result<Design, ElaborateError> {
     // LRM §13.3/§13.4: badan task/function di-inline dulu, sehingga semua
     // statement yang dilihat helper di bawah tidak pernah menemukan panggilan
     // yang belum dikembangkan.
-    let module = &crate::routine::expand_module(module)?;
+    let module = &crate::routine::expand_module(module, &module.dpis)?;
     let params_awal = ParamTable::untuk_modul(module, &PackageTable::new())?;
     let types =
         crate::typedef::TypeTable::baru(&module.typedefs, &params_awal, &PackageTable::new())?;
@@ -245,7 +245,7 @@ pub fn elaborate_top(
     // memakai subrutin yang dideklarasikan di body-nya sendiri.
     let expanded = modules
         .iter()
-        .map(crate::routine::expand_module)
+        .map(|m| crate::routine::expand_module(m, &m.dpis))
         .collect::<Result<Vec<_>, ElaborateError>>()?;
     let modules = &expanded[..];
     // LRM §6.7: literal enum tiap modul disubstitusi terpisah, karena tabel

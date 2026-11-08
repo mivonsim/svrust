@@ -45,6 +45,7 @@ fn fold_statement(stmt: &mut Statement) -> u32 {
         Statement::Assign { assignment, .. } => fold_assignment(assignment),
         Statement::ProceduralAssign { value, .. } => fold_expr(value),
         Statement::Deassign { .. } => 0,
+        Statement::DpiCall { .. } => 0,
         Statement::If {
             condition,
             then_branch,

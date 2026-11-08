@@ -91,6 +91,7 @@ fn kumpulkan_comb(body: &[CombinationalStatement]) -> Vec<&Declaration> {
             | CombinationalStatement::CompoundAssign { .. }
             | CombinationalStatement::SystemTask(_)
             | CombinationalStatement::TaskCall(_)
+            | CombinationalStatement::DpiCall(_)
             | CombinationalStatement::Return { .. }
             | CombinationalStatement::ProceduralAssign { .. }
             | CombinationalStatement::Deassign { .. }
@@ -121,6 +122,7 @@ fn kumpulkan_seq(body: &[SequentialStatement]) -> Vec<&Declaration> {
             | SequentialStatement::BlockingAssign { .. }
             | SequentialStatement::SystemTask(_)
             | SequentialStatement::TaskCall(_)
+            | SequentialStatement::DpiCall(_)
             | SequentialStatement::Return { .. }
             | SequentialStatement::Forever { .. }
             | SequentialStatement::ProceduralAssign { .. }

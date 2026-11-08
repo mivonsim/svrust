@@ -168,7 +168,8 @@ fn delay_dalam(stmt: &Statement) -> Option<Wake> {
         | Statement::SystemTask { .. }
         | Statement::Noop { .. }
         | Statement::ProceduralAssign { .. }
-        | Statement::Deassign { .. } => None,
+        | Statement::Deassign { .. }
+        | Statement::DpiCall { .. } => None,
     }
 }
 

@@ -113,6 +113,13 @@ fn seq(
                 span: call.span,
             })
         }
+        SequentialStatement::DpiCall(call) => SequentialStatement::DpiCall(sv_ast::dpi::DpiCall {
+            name: call.name.clone(),
+            c_name: call.c_name.clone(),
+            args: call.args.iter().map(|a| table.ganti_literal(a)).collect(),
+            ret_target: call.ret_target.clone(),
+            span: call.span,
+        }),
         SequentialStatement::Return { value, span } => SequentialStatement::Return {
             value: value.as_ref().map(|v| table.ganti_literal(v)),
             span: *span,
@@ -284,6 +291,15 @@ fn comb(
             CombinationalStatement::TaskCall(sv_ast::routine::TaskCall {
                 name: call.name.clone(),
                 args: call.args.iter().map(|a| table.ganti_literal(a)).collect(),
+                span: call.span,
+            })
+        }
+        CombinationalStatement::DpiCall(call) => {
+            CombinationalStatement::DpiCall(sv_ast::dpi::DpiCall {
+                name: call.name.clone(),
+                c_name: call.c_name.clone(),
+                args: call.args.iter().map(|a| table.ganti_literal(a)).collect(),
+                ret_target: call.ret_target.clone(),
                 span: call.span,
             })
         }

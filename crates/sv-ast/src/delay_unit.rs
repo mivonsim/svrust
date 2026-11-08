@@ -129,6 +129,11 @@ fn statement_sekuensial(statement: &mut SequentialStatement, scale: TimeScale) {
                 ekspresi(arg, scale);
             }
         }
+        SequentialStatement::DpiCall(call) => {
+            for arg in &mut call.args {
+                ekspresi(arg, scale);
+            }
+        }
         SequentialStatement::Return { value, .. } => {
             if let Some(value) = value {
                 ekspresi(value, scale);
@@ -225,6 +230,11 @@ fn statement_kombinasional(statement: &mut CombinationalStatement, scale: TimeSc
         CombinationalStatement::Decl(decl) => deklarasi(decl, scale),
         CombinationalStatement::SystemTask(task) => system_task(task, scale),
         CombinationalStatement::TaskCall(call) => {
+            for arg in &mut call.args {
+                ekspresi(arg, scale);
+            }
+        }
+        CombinationalStatement::DpiCall(call) => {
             for arg in &mut call.args {
                 ekspresi(arg, scale);
             }

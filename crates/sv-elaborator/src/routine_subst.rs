@@ -1,6 +1,7 @@
 // Tanggung jawab: substitusi nama formal task/function dengan argumen nyata.
 use std::collections::HashMap;
 use sv_ast::combinational::{CaseArm, CombinationalStatement, ForStep};
+use sv_ast::dpi::DpiCall;
 use sv_ast::expression::Expr;
 use sv_ast::lvalue::Lvalue;
 use sv_ast::statement::SequentialStatement;
@@ -285,6 +286,13 @@ impl Substitution {
                     span: call.span,
                 })
             }
+            CombinationalStatement::DpiCall(call) => CombinationalStatement::DpiCall(DpiCall {
+                name: call.name.clone(),
+                c_name: call.c_name.clone(),
+                args: call.args.iter().map(|a| self.ganti(a)).collect(),
+                ret_target: call.ret_target.clone(),
+                span: call.span,
+            }),
             CombinationalStatement::Return { value, span } => CombinationalStatement::Return {
                 value: value.as_ref().map(|v| self.ganti(v)),
                 span: *span,
@@ -386,6 +394,13 @@ impl Substitution {
                     span: call.span,
                 })
             }
+            SequentialStatement::DpiCall(call) => SequentialStatement::DpiCall(DpiCall {
+                name: call.name.clone(),
+                c_name: call.c_name.clone(),
+                args: call.args.iter().map(|a| self.ganti(a)).collect(),
+                ret_target: call.ret_target.as_ref().map(|t| self.ganti_lvalue(t)),
+                span: call.span,
+            }),
             SequentialStatement::Return { value, span } => SequentialStatement::Return {
                 value: value.as_ref().map(|v| self.ganti(v)),
                 span: *span,
@@ -563,6 +578,13 @@ fn rename_statement(
                 span: call.span,
             })
         }
+        CombinationalStatement::DpiCall(call) => CombinationalStatement::DpiCall(DpiCall {
+            name: call.name.clone(),
+            c_name: call.c_name.clone(),
+            args: call.args.iter().map(|a| rename_expr(a, peta)).collect(),
+            ret_target: call.ret_target.clone(),
+            span: call.span,
+        }),
         CombinationalStatement::Return { value, span } => CombinationalStatement::Return {
             value: value.as_ref().map(|v| rename_expr(v, peta)),
             span: *span,
@@ -800,6 +822,7 @@ fn kumpulkan_lokal_dalam(body: &[CombinationalStatement], out: &mut Vec<String>)
             | CombinationalStatement::CompoundAssign { .. }
             | CombinationalStatement::SystemTask(_)
             | CombinationalStatement::TaskCall(_)
+            | CombinationalStatement::DpiCall(_)
             | CombinationalStatement::Return { .. }
             | CombinationalStatement::ProceduralAssign { .. }
             | CombinationalStatement::Deassign { .. }

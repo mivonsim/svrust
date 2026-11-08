@@ -68,6 +68,7 @@ fn kumpulan_comb(body: &[CombinationalStatement], out: &mut Vec<Declaration>) {
             | CombinationalStatement::SystemTask(_)
             | CombinationalStatement::Delay { .. }
             | CombinationalStatement::TaskCall(_)
+            | CombinationalStatement::DpiCall(_)
             | CombinationalStatement::Return { .. }
             | CombinationalStatement::ProceduralAssign { .. }
             | CombinationalStatement::Deassign { .. }
@@ -107,6 +108,7 @@ fn kumpulan_seq(body: &[SequentialStatement], out: &mut Vec<Declaration>) {
             | SequentialStatement::BlockingAssign { .. }
             | SequentialStatement::SystemTask(_)
             | SequentialStatement::TaskCall(_)
+            | SequentialStatement::DpiCall(_)
             | SequentialStatement::Return { .. }
             | SequentialStatement::ProceduralAssign { .. }
             | SequentialStatement::Deassign { .. } => {}
@@ -384,6 +386,19 @@ pub(crate) fn subst_comb(
                     span: call.span,
                 })
             }
+            CombinationalStatement::DpiCall(call) => {
+                CombinationalStatement::DpiCall(sv_ast::dpi::DpiCall {
+                    name: call.name.clone(),
+                    c_name: call.c_name.clone(),
+                    args: call
+                        .args
+                        .iter()
+                        .map(|a| subst_expr(a, env, scope))
+                        .collect(),
+                    ret_target: call.ret_target.clone(),
+                    span: call.span,
+                })
+            }
             CombinationalStatement::Return { value, span } => CombinationalStatement::Return {
                 value: value.as_ref().map(|v| subst_expr(v, env, scope)),
                 span: *span,
@@ -558,6 +573,22 @@ pub(crate) fn subst_seq(
                         .iter()
                         .map(|a| subst_expr(a, env, scope))
                         .collect(),
+                    span: call.span,
+                })
+            }
+            SequentialStatement::DpiCall(call) => {
+                SequentialStatement::DpiCall(sv_ast::dpi::DpiCall {
+                    name: call.name.clone(),
+                    c_name: call.c_name.clone(),
+                    args: call
+                        .args
+                        .iter()
+                        .map(|a| subst_expr(a, env, scope))
+                        .collect(),
+                    ret_target: call
+                        .ret_target
+                        .as_ref()
+                        .map(|t| subst_lvalue(t, scope, env)),
                     span: call.span,
                 })
             }

@@ -184,13 +184,9 @@ fn write_dpi_extern(design: &Design, out: &mut String) {
     if design.dpis.is_empty() {
         return;
     }
-    // Deklarasi `extern "C"` agar simbol C dikenal (dipakai wrapper sebagai
-    // dokumentasi tipe; pemanggilan nyata lewat runtime DPI di bawah).
+    // Deklarasi `extern "C"` untuk semua deklarasi DPI-C (import dan export).
     out.push_str("extern \"C\" {\n");
     for dpi in &design.dpis {
-        if dpi.kind != DpiKind::Import {
-            continue;
-        }
         let c_name = dpi.c_name.as_deref().unwrap_or(dpi.name.as_str());
         let ret = rust_tipe(dpi.ret_type.as_deref());
         let params: Vec<String> = dpi
@@ -198,11 +194,16 @@ fn write_dpi_extern(design: &Design, out: &mut String) {
             .iter()
             .map(|(nama, tipe)| format!("{nama}: {}", rust_tipe(Some(tipe.as_str()))))
             .collect();
+        let tipe_kata = match dpi.kind {
+            DpiKind::Import => "import",
+            DpiKind::Export => "export",
+        };
         out.push_str(&format!(
-            "    #[allow(dead_code)]\n    fn {c_name}({params}) -> {ret};\n",
+            "    #[allow(dead_code)]\n    // DPI-C {tipe_kata}: {c_name}\n    fn {c_name}({params}) -> {ret};\n",
             c_name = c_name,
             params = params.join(", "),
-            ret = ret
+            ret = ret,
+            tipe_kata = tipe_kata
         ));
     }
     out.push_str("}\n\n");
@@ -258,6 +259,39 @@ fn write_dpi_extern(design: &Design, out: &mut String) {
             out.push_str("    __hasil\n");
         }
         out.push_str("    unsafe { ::sv_runtime::dpi::dpi_close(__handle); }\n");
+        out.push_str("}\n\n");
+    }
+    // Fungsi pembawa untuk DPI-C export: `#[no_mangle] extern "C"` yang bisa
+    // dipanggil dari C. Instance design diteruskan sebagai pointer `*mut c_void`
+    // (disesuaikan ke model instance di fase runtime DPI berikutnya).
+    for dpi in &design.dpis {
+        if dpi.kind != DpiKind::Export {
+            continue;
+        }
+        let c_name = dpi.c_name.as_deref().unwrap_or(dpi.name.as_str());
+        let ret = rust_tipe(dpi.ret_type.as_deref());
+        let params: Vec<String> = dpi
+            .args
+            .iter()
+            .map(|(nama, tipe)| format!("{nama}: {}", rust_tipe(Some(tipe.as_str()))))
+            .collect();
+        out.push_str(&format!(
+            "/// Wrapper DPI-C export: fungsi SV `{}` dipanggil dari C sebagai `{}` (LRM §35).\n",
+            dpi.name, c_name
+        ));
+        out.push_str(&format!(
+            "#[no_mangle]\npub extern \"C\" fn {c_name}(__instance: *mut c_void, {}) -> {ret} {{\n",
+            params.join(", ")
+        ));
+        out.push_str("    let _ = __instance;\n");
+        out.push_str(&format!(
+            "    // TODO: delegate ke metode SV `{}` (butuh model instance DPI-C runtime)\n",
+            dpi.name
+        ));
+        out.push_str(&format!(
+            "    let __hasil: {} = Default::default();\n    __hasil\n",
+            ret
+        ));
         out.push_str("}\n\n");
     }
 }
@@ -1466,7 +1500,8 @@ fn stmt_mengandung_forever(stmt: &Statement) -> bool {
         | Statement::SystemTask { .. }
         | Statement::Noop { .. }
         | Statement::ProceduralAssign { .. }
-        | Statement::Deassign { .. } => false,
+        | Statement::Deassign { .. }
+        | Statement::DpiCall { .. } => false,
     }
 }
 
@@ -1886,6 +1921,11 @@ fn kumpulkan_argumen(stmt: &Statement, lebar: &mut u32) {
                 kumpulkan_argumen(s, lebar);
             }
         }
+        Statement::DpiCall { args, .. } => {
+            for arg in args {
+                *lebar = (*lebar).max(lebar_logis_penuh(arg));
+            }
+        }
         Statement::Noop { .. } => {}
     }
 }
@@ -2028,6 +2068,11 @@ fn kumpulkan_stmt(stmt: &Statement, out: &mut Vec<Expr>) {
             kumpulkan_stmt(body, out);
         }
         Statement::Forever { body, .. } => kumpulkan_list(body, out),
+        Statement::DpiCall { args, .. } => {
+            for arg in args {
+                out.push(arg.clone());
+            }
+        }
         Statement::Noop { .. } => {}
     }
 }
@@ -2126,6 +2171,11 @@ fn kumpulkan_target_dari_statement(
             sv_ir::process::Statement::SystemTask { .. }
             | sv_ir::process::Statement::Deassign { .. }
             | sv_ir::process::Statement::Noop { .. } => {}
+            sv_ir::process::Statement::DpiCall { ret_target, .. } => {
+                if let Some(t) = ret_target {
+                    target.insert(*t);
+                }
+            }
         }
     }
 }

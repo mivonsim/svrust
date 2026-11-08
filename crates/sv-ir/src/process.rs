@@ -208,6 +208,22 @@ pub enum Statement {
         target: crate::expr::SignalId,
         span: Span,
     },
+    /// Panggilan fungsi C lewat DPI-C import (LRM §35).
+    ///
+    /// Diehasilkan saat ekspresi/statement memanggil fungsi yang dideklarasi
+    /// dengan `import "DPI-C" function ...;`. Codegen menerjemahkannya menjadi
+    /// pemanggilan lewat `sv_runtime::dpi` (dlopen/dlsym + transmute).
+    DpiCall {
+        /// Nama fungsi SV yang diimpor, cocok dengan `Design::dpis[*].name`.
+        name: String,
+        /// Nama simbol C yang dipanggil (`DpiDecl::c_name` atau `name`).
+        c_name: String,
+        /// Argumen panggilan, sudah di-lower ke `Expr` IR.
+        args: Vec<Expr>,
+        /// Target sinyal untuk nilai balik; `None` bila fungsi void.
+        ret_target: Option<crate::expr::SignalId>,
+        span: Span,
+    },
     Noop {
         span: Span,
     },

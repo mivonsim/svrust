@@ -4,6 +4,7 @@ use crate::routine_subst::Substitution;
 use std::collections::HashMap;
 use sv_ast::combinational::{CombinationalStatement, ForStep};
 use sv_ast::declaration::Declaration;
+use sv_ast::dpi::{DpiDecl, DpiKind};
 use sv_ast::expression::{BinaryOp, Expr, UnaryOp};
 use sv_ast::generate::GenerateItem;
 use sv_ast::lvalue::Lvalue;
@@ -17,8 +18,10 @@ const MAX_DEPTH: usize = 64;
 /// Kembalikan salinan module dengan seluruh panggilan task/function ter-expand.
 ///
 /// Dijalankan sekali per module sebelum statement dielaborasi, sehingga sisa
-/// pipeline tidak pernah melihat node `TaskCall`/`FunctionCall`.
-pub fn expand_module(module: &Module) -> Result<Module, ElaborateError> {
+/// pipeline tidak pernah melihat node `TaskCall`/`FunctionCall`. Panggilan
+/// fungsi DPI-C import diubah menjadi `Statement::DpiCall` (bukan di-inline
+/// karena tidak ada badan SV untuk di-inlining).
+pub fn expand_module(module: &Module, dpis: &[DpiDecl]) -> Result<Module, ElaborateError> {
     let mut routines: HashMap<String, RoutineDecl> = HashMap::new();
     for decl in &module.routines {
         if let Some(ada) = routines.get(&decl.name) {
@@ -37,7 +40,7 @@ pub fn expand_module(module: &Module) -> Result<Module, ElaborateError> {
     let mut out = module.clone();
     let mut statements = Vec::with_capacity(module.statements.len());
     for statement in &module.statements {
-        statements.extend(expand_statement(statement, &routines)?);
+        statements.extend(expand_statement(statement, &routines, dpis)?);
     }
     out.statements = statements;
     out.generates = module
@@ -46,7 +49,7 @@ pub fn expand_module(module: &Module) -> Result<Module, ElaborateError> {
         .map(|region| {
             Ok(sv_ast::generate::GenerateRegion {
                 genvars: region.genvars.clone(),
-                items: expand_items(&region.items, &routines)?,
+                items: expand_items(&region.items, &routines, dpis)?,
                 span: region.span,
             })
         })
@@ -65,6 +68,8 @@ fn label(kind: RoutineKind) -> &'static str {
 /// Stato inlining: tabel routine dan kedalaman rekursi saat ini.
 struct Inliner<'a> {
     routines: &'a HashMap<String, RoutineDecl>,
+    /// Deklarasi DPI-C import/export, untuk mengenali panggilan fungsi C.
+    dpis: &'a [DpiDecl],
     depth: usize,
     /// Nomor pemanggilan task, untuk memberi nama unik pada deklarasi lokal
     /// badan subrutin yang di-inline.
@@ -72,12 +77,26 @@ struct Inliner<'a> {
 }
 
 impl<'a> Inliner<'a> {
-    fn baru(routines: &'a HashMap<String, RoutineDecl>) -> Self {
+    fn baru(routines: &'a HashMap<String, RoutineDecl>, dpis: &'a [DpiDecl]) -> Self {
         Self {
             routines,
+            dpis,
             depth: 0,
             panggilan: 0,
         }
+    }
+
+    /// Cari deklarasi DPI-C import berdasarkan nama fungsi SV.
+    ///
+    /// Kembalikan `Some(c_name)` bila ditemukan, `None` bila bukan fungsi DPI-C.
+    fn cari_dpi_import(&self, name: &str) -> Option<String> {
+        self.dpis.iter().find_map(|dpi| {
+            if dpi.kind == DpiKind::Import && dpi.name == name {
+                Some(dpi.c_name.clone().unwrap_or_else(|| name.to_string()))
+            } else {
+                None
+            }
+        })
     }
 
     /// Ambil deklarasi subroutine atau laporkan error yang menunjuk span call.
@@ -159,6 +178,10 @@ impl<'a> Inliner<'a> {
         stmt: &SequentialStatement,
     ) -> Result<Vec<SequentialStatement>, ElaborateError> {
         let out: Vec<SequentialStatement> = match stmt {
+            SequentialStatement::DpiCall(_call) => {
+                // DpiCall sudah dalam bentuk akhir, lewati tanpa modifikasi.
+                vec![stmt.clone()]
+            }
             SequentialStatement::NonBlockingAssign { lhs, rhs, span } => {
                 vec![SequentialStatement::NonBlockingAssign {
                     lhs: self.lvalue(lhs)?,
@@ -167,6 +190,26 @@ impl<'a> Inliner<'a> {
                 }]
             }
             SequentialStatement::BlockingAssign { lhs, rhs, span } => {
+                // Jika RHS adalah pemanggilan fungsi DPI-C import, ubah jadi
+                // `SequentialStatement::DpiCall` dengan `ret_target` dari LHS.
+                // Ini menangani pola `x = hitung_paritas(8'hFF);`.
+                let rhs_expr: &sv_ast::expression::Expr = rhs;
+                if let sv_ast::expression::Expr::FunctionCall {
+                    name,
+                    args,
+                    span: expr_span,
+                } = rhs_expr
+                {
+                    if let Some(c_name) = self.cari_dpi_import(name) {
+                        return Ok(vec![SequentialStatement::DpiCall(sv_ast::dpi::DpiCall {
+                            name: name.clone(),
+                            c_name,
+                            args: args.clone(),
+                            ret_target: Some(lhs.clone()),
+                            span: *expr_span,
+                        })]);
+                    }
+                }
                 vec![SequentialStatement::BlockingAssign {
                     lhs: self.lvalue(lhs)?,
                     rhs: self.expr(rhs)?,
@@ -217,10 +260,22 @@ impl<'a> Inliner<'a> {
                     },
                 )]
             }
-            // Task di-inline jadi statement sekuensial di depan titik panggilan
-            // (LRM §13.3). Badan task dikonversi dari `CombinationalStatement`
-            // ke `SequentialStatement` via `comb_to_seq`.
+            // Panggilan fungsi DPI-C import tidak punya badan SV untuk
+            // di-inlining — diubah menjadi `SequentialStatement::DpiCall`
+            // yang codegen akan terjemahkan ke pemanggilan C via `sv_runtime::dpi`.
             SequentialStatement::TaskCall(call) => {
+                if let Some(c_name) = self.cari_dpi_import(&call.name) {
+                    return Ok(vec![SequentialStatement::DpiCall(sv_ast::dpi::DpiCall {
+                        name: call.name.clone(),
+                        c_name,
+                        args: call.args.clone(),
+                        ret_target: None,
+                        span: call.span,
+                    })]);
+                }
+                // Task di-inline jadi statement sekuensial di depan titik panggilan
+                // (LRM §13.3). Badan task dikonversi dari `CombinationalStatement`
+                // ke `SequentialStatement` via `comb_to_seq`.
                 let body = self.task_body(&call.name, &call.args, call.span)?;
                 self.comb_to_seq_list(&body)?
             }
@@ -358,8 +413,26 @@ impl<'a> Inliner<'a> {
                 )])
             }
             CombinationalStatement::TaskCall(call) => {
+                if let Some(c_name) = self.cari_dpi_import(&call.name) {
+                    return Ok(vec![SequentialStatement::DpiCall(sv_ast::dpi::DpiCall {
+                        name: call.name.clone(),
+                        c_name,
+                        args: call.args.clone(),
+                        ret_target: None,
+                        span: call.span,
+                    })]);
+                }
                 let body = self.task_body(&call.name, &call.args, call.span)?;
                 self.comb_to_seq_list(&body)
+            }
+            CombinationalStatement::DpiCall(call) => {
+                Ok(vec![SequentialStatement::DpiCall(sv_ast::dpi::DpiCall {
+                    name: call.name.clone(),
+                    c_name: call.c_name.clone(),
+                    args: call.args.clone(),
+                    ret_target: call.ret_target.clone(),
+                    span: call.span,
+                })])
             }
             CombinationalStatement::Return { span, .. } => Err(ElaborateError::new(
                 "`return` hanya sah di dalam task/function",
@@ -435,6 +508,27 @@ impl<'a> Inliner<'a> {
                 CombinationalStatement::Decl(self.deklarasi(decl)?)
             }
             CombinationalStatement::BlockingAssign { lhs, rhs, span } => {
+                // Jika RHS adalah pemanggilan fungsi DPI-C import, ubah jadi
+                // `CombinationalStatement::DpiCall` dengan `ret_target` dari LHS.
+                let rhs_expr: &sv_ast::expression::Expr = rhs;
+                if let sv_ast::expression::Expr::FunctionCall {
+                    name,
+                    args,
+                    span: expr_span,
+                } = rhs_expr
+                {
+                    if let Some(c_name) = self.cari_dpi_import(name) {
+                        return Ok(vec![CombinationalStatement::DpiCall(
+                            sv_ast::dpi::DpiCall {
+                                name: name.clone(),
+                                c_name,
+                                args: args.clone(),
+                                ret_target: Some(lhs.clone()),
+                                span: *expr_span,
+                            },
+                        )]);
+                    }
+                }
                 CombinationalStatement::BlockingAssign {
                     lhs: self.lvalue(lhs)?,
                     rhs: self.expr(rhs)?,
@@ -600,7 +694,21 @@ impl<'a> Inliner<'a> {
                 })
             }
             CombinationalStatement::TaskCall(call) => {
-                return self.task_body(&call.name, &call.args, call.span)
+                if let Some(c_name) = self.cari_dpi_import(&call.name) {
+                    return Ok(vec![CombinationalStatement::DpiCall(
+                        sv_ast::dpi::DpiCall {
+                            name: call.name.clone(),
+                            c_name,
+                            args: call.args.clone(),
+                            ret_target: None,
+                            span: call.span,
+                        },
+                    )]);
+                }
+                return self.task_body(&call.name, &call.args, call.span);
+            }
+            CombinationalStatement::DpiCall(call) => {
+                return Ok(vec![CombinationalStatement::DpiCall(call.clone())]);
             }
             CombinationalStatement::Return { span, .. } => {
                 return Err(ElaborateError::new(
@@ -729,6 +837,20 @@ impl<'a> Inliner<'a> {
     fn expr(&mut self, expr: &Expr) -> Result<Expr, ElaborateError> {
         Ok(match expr {
             Expr::FunctionCall { name, args, span } => {
+                // Panggilan fungsi DPI-C import tidak menghasilkan nilai
+                // ekspresi murni — ditangani sebagai statement di `seq()`.
+                // Jika sampai ke sini (bukan RHS langsung assignment), berarti
+                // dipakai di posisi sub-ekspresi yang belum didukung.
+                if let Some(c_name) = self.cari_dpi_import(name) {
+                    return Err(ElaborateError::new(
+                        format!(
+                            "panggilan fungsi DPI-C '{name}' (simbol C '{c_name}') \
+                             di posisi ekspresi bersarang belum didukung; \
+                             gunakan sebagai statement langsung atau RHS assignment"
+                        ),
+                        *span,
+                    ));
+                }
                 let name = name.clone();
                 let args = args.clone();
                 self.call(&name, &args, *span)?
@@ -1136,6 +1258,14 @@ fn eksekusi_stmt_function(
                 span_dummy(),
             ));
         }
+        CombinationalStatement::DpiCall(_) => {
+            // Pemanggilan fungsi C lewat DPI-C tidak bisa dievaluasi secara
+            // simbolis dalam function.
+            return Err(ElaborateError::new(
+                "panggilan DPI-C dalam badan function tidak didukung".to_string(),
+                span_dummy(),
+            ));
+        }
         CombinationalStatement::Case { .. }
         | CombinationalStatement::While { .. }
         | CombinationalStatement::Repeat { .. }
@@ -1502,8 +1632,9 @@ fn cek_argumen(
 fn expand_items(
     items: &[GenerateItem],
     routines: &HashMap<String, RoutineDecl>,
+    dpis: &[DpiDecl],
 ) -> Result<Vec<GenerateItem>, ElaborateError> {
-    let mut inliner = Inliner::baru(routines);
+    let mut inliner = Inliner::baru(routines, dpis);
     let mut out = Vec::with_capacity(items.len());
     for item in items {
         out.push(expand_item(item, &mut inliner)?);
@@ -1603,8 +1734,9 @@ fn expand_items_with(
 fn expand_statement(
     statement: &Statement,
     routines: &HashMap<String, RoutineDecl>,
+    dpis: &[DpiDecl],
 ) -> Result<Vec<Statement>, ElaborateError> {
-    Inliner::baru(routines).statement(statement)
+    Inliner::baru(routines, dpis).statement(statement)
 }
 
 #[cfg(test)]

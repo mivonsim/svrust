@@ -357,6 +357,22 @@ fn lower_comb_statement(
                 span: to_ir_span(*span),
             })
         }
+        // Panggilan fungsi DPI-C import diubah menjadi `Statement::DpiCall`
+        // oleh `expand_module()`. Target nilai balik selalu `None` di dalam
+        // blok combinational (tidak ada assignment target).
+        CombinationalStatement::DpiCall(call) => {
+            let mut args = Vec::with_capacity(call.args.len());
+            for arg in &call.args {
+                args.push(lower_expression(arg, symbols)?);
+            }
+            Ok(Statement::DpiCall {
+                name: call.name.clone(),
+                c_name: call.c_name.clone(),
+                args,
+                ret_target: None,
+                span: to_ir_span(call.span),
+            })
+        }
         // LRM §13.3/§13.4: `expand_module` sudah mengembangkan task call dan
         // `return` sebelum lowering. Node yang lolos berarti ada jalur yang
         // melewatkan pass tersebut, jadi error, bukan diabaikan diam-diam.
@@ -679,6 +695,29 @@ fn lower_seq_statement(
                 span: to_ir_span(task.span),
             })
         }
+        // Panggilan fungsi DPI-C import diubah menjadi `Statement::DpiCall`
+        // oleh `expand_module()`. Target nilai balik (Lvalue) disesuaikan ke
+        // SignalId, argumen di-lower ke IR Expr.
+        SequentialStatement::DpiCall(call) => {
+            let ret_target = match &call.ret_target {
+                Some(lhs) => {
+                    let (target, _slice) = lookup_lvalue(lhs, symbols)?;
+                    Some(target)
+                }
+                None => None,
+            };
+            let mut args = Vec::with_capacity(call.args.len());
+            for arg in &call.args {
+                args.push(lower_expression(arg, symbols)?);
+            }
+            Ok(Statement::DpiCall {
+                name: call.name.clone(),
+                c_name: call.c_name.clone(),
+                args,
+                ret_target,
+                span: to_ir_span(call.span),
+            })
+        }
         // Task sudah di-inline oleh `expand_module()` sebelum lowering, jadi
         // node ini tidak seharusnya sampai ke IR. Jika sampai, berarti ada
         // jalur yang melewati `expand_module()`.
@@ -808,6 +847,12 @@ pub fn collect_statement_reads(statement: &Statement, out: &mut Vec<SignalId>) {
             }
         }
         Statement::Noop { .. } => {}
+        Statement::DpiCall { args, .. } => {
+            for arg in args {
+                collect_signals(arg, out);
+            }
+            // `ret_target` ditulis, bukan dibaca — tidak dimasukkan ke daftar bacaan.
+        }
     }
 }
 

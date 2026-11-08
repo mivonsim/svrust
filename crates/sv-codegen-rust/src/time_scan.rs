@@ -99,7 +99,8 @@ pub fn kumpulkan_monitor_stmt(
         Statement::Assign { .. }
         | Statement::Noop { .. }
         | Statement::ProceduralAssign { .. }
-        | Statement::Deassign { .. } => {}
+        | Statement::Deassign { .. }
+        | Statement::DpiCall { .. } => {}
     }
 }
 
@@ -159,6 +160,7 @@ pub fn statement_uses_time(statement: &Statement) -> bool {
         Statement::Forever { body, .. } => body.iter().any(statement_uses_time),
         Statement::Block { body, .. } => body.iter().any(statement_uses_time),
         Statement::EventControl { body, .. } => body.iter().any(statement_uses_time),
+        Statement::DpiCall { args, .. } => args.iter().any(expr_uses_time),
         Statement::Noop { .. } => false,
     }
 }

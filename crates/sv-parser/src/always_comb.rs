@@ -156,6 +156,7 @@ fn statement_memuat_delay(stmt: &CombinationalStatement) -> bool {
         | CombinationalStatement::CompoundAssign { .. }
         | CombinationalStatement::SystemTask(_)
         | CombinationalStatement::TaskCall(_)
+        | CombinationalStatement::DpiCall(_)
         | CombinationalStatement::Return { .. }
         | CombinationalStatement::ProceduralAssign { .. }
         | CombinationalStatement::Deassign { .. }

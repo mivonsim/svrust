@@ -855,6 +855,19 @@ fn lingkup_comb(
                     span: call.span,
                 })
             }
+            CombinationalStatement::DpiCall(call) => {
+                CombinationalStatement::DpiCall(sv_ast::dpi::DpiCall {
+                    name: call.name.clone(),
+                    c_name: call.c_name.clone(),
+                    args: call
+                        .args
+                        .iter()
+                        .map(|a| lingkup_expr(a, prefix, koneksi, call.span))
+                        .collect(),
+                    ret_target: call.ret_target.clone(),
+                    span: call.span,
+                })
+            }
             CombinationalStatement::Return { value, span } => CombinationalStatement::Return {
                 value: value
                     .as_ref()
@@ -1046,6 +1059,20 @@ fn lingkup_seq(i: &SequentialStatement, prefix: &str, koneksi: &KoneksiMap) -> S
                 span: call.span,
             })
         }
+        SequentialStatement::DpiCall(call) => SequentialStatement::DpiCall(sv_ast::dpi::DpiCall {
+            name: call.name.clone(),
+            c_name: call.c_name.clone(),
+            args: call
+                .args
+                .iter()
+                .map(|a| lingkup_expr(a, prefix, koneksi, call.span))
+                .collect(),
+            ret_target: call
+                .ret_target
+                .as_ref()
+                .map(|t| lingkup_lvalue(t, prefix, koneksi)),
+            span: call.span,
+        }),
         SequentialStatement::Return { value, span } => SequentialStatement::Return {
             value: value
                 .as_ref()

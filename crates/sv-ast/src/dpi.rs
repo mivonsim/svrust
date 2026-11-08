@@ -25,3 +25,20 @@ pub struct DpiDecl {
     pub args: Vec<(String, String)>,
     pub span: Span,
 }
+
+/// Satu pemanggilan fungsi C lewat DPI-C import dalam statement (LRM §35).
+///
+/// Dihasilkan oleh elaborator saat statement memanggil fungsi yang
+/// dideklarasi dengan `import "DPI-C" function ...;`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DpiCall {
+    /// Nama fungsi SV yang diimpor, cocok dengan `DpiDecl::name`.
+    pub name: String,
+    /// Nama simbol C yang dipanggil (`DpiDecl::c_name` atau `name`).
+    pub c_name: String,
+    /// Argumen panggilan, masih dalam bentuk ekspresi AST.
+    pub args: Vec<crate::expression::Expr>,
+    /// Target menyimpan nilai balik (LHS assignment), `None` bila fungsi void.
+    pub ret_target: Option<crate::lvalue::Lvalue>,
+    pub span: Span,
+}

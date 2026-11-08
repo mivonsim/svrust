@@ -2,6 +2,7 @@
 use crate::expr_gen::{write_expr, write_truthy_pub as write_truthy};
 use crate::indent::Indent;
 use crate::system_task_gen::write_system_task;
+use sv_ast::dpi::{DpiDecl, DpiKind};
 use sv_ir::datatype::NetResolution;
 use sv_ir::process::{AssignStyle, Assignment, CaseArm, CaseKind, Statement};
 
@@ -347,6 +348,17 @@ fn write_statement(
         // LRM §9.7: statement event control ditangani oleh driver yang memanggil
         // `eval_initial`; di sini hanya bodynya yang ditulis.
         Statement::EventControl { body, .. } => write_statements(design, body, out, indent),
+        // Panggilan fungsi C lewat DPI-C import (LRM §35). Membuka library,
+        // cari simbol, transmute ke tipe fungsi yang tepat, panggil, lalu tutup.
+        Statement::DpiCall {
+            name,
+            c_name,
+            args,
+            ret_target,
+            ..
+        } => {
+            write_dpi_call(design, name, c_name, args, *ret_target, out, indent);
+        }
         Statement::Noop { .. } => {}
     }
 }
@@ -623,4 +635,112 @@ fn selector_hash(expr: &sv_ir::Expr) -> usize {
     expr.data_type().signed.hash(&mut hasher);
     format!("{:?}", expr).hash(&mut hasher);
     hasher.finish() as usize % 1000
+}
+
+/// Tulis panggilan fungsi C lewat DPI-C import (LRM §35).
+///
+/// Membuka library DPI-C, cari simbol via `dlsym`, transmute ke tipe fungsi
+/// yang cocok, panggil, simpan nilai balik bila ada, lalu tutup library.
+fn write_dpi_call(
+    design: &sv_ir::Design,
+    name: &str,
+    c_name: &str,
+    args: &[sv_ir::Expr],
+    ret_target: Option<sv_ir::expr::SignalId>,
+    out: &mut String,
+    indent: &Indent,
+) {
+    // Cari deklarasi DPI-C import untuk tipe argumen dan nilai balik.
+    let dpi: Option<&DpiDecl> = design
+        .dpis
+        .iter()
+        .find(|d| d.kind == DpiKind::Import && d.name == name);
+
+    let lib_nama = format!("lib{c_name}.so");
+
+    // Tipe Rust per argumen, berdasarkan deklarasi DPI-C (fallback i32).
+    let arg_tipe: Vec<String> = dpi
+        .map(|d| {
+            d.args
+                .iter()
+                .map(|(_, t)| dpi_tipe_ke_rust(t).to_string())
+                .collect()
+        })
+        .unwrap_or_else(|| args.iter().map(|_| "i32".to_string()).collect());
+
+    let ret_tipe: String = dpi
+        .map(|d| dpi_tipe_ke_rust(d.ret_type.as_deref().unwrap_or("void")).to_string())
+        .unwrap_or_else(|| "()".to_string());
+
+    // Buka library dan cari simbol.
+    indent.push(out);
+    out.push_str("{\n");
+    indent.push(out);
+    out.push_str(&format!(
+        "    let __handle = ::sv_runtime::dpi::dpi_open(\"{lib_nama}\");\n"
+    ));
+    indent.push(out);
+    out.push_str(&format!(
+        "    let __fn = ::sv_runtime::dpi::dpi_sym(__handle, \"{c_name}\");\n"
+    ));
+
+    // Evaluasi argumen dan cast ke tipe primitif yang sesuai.
+    let mut arg_kode: Vec<String> = Vec::with_capacity(args.len());
+    for (i, arg) in args.iter().enumerate() {
+        let tipe = arg_tipe
+            .get(i)
+            .cloned()
+            .unwrap_or_else(|| "i32".to_string());
+        let mut kode = String::new();
+        let eks_indent = Indent::new();
+        write_expr(arg, &mut kode, &eks_indent);
+        let cast = if tipe == "i64" || tipe == "i32" || tipe == "i16" {
+            format!("({kode}).to_i64() as {tipe}")
+        } else {
+            format!("({kode}).to_u64() as {tipe}")
+        };
+        arg_kode.push(cast);
+    }
+
+    // Transmute pointer simbol ke tipe fungsi yang tepat dan panggil.
+    indent.push(out);
+    out.push_str(&format!(
+        "    unsafe {{\n        let __f: extern \"C\" fn({}) -> {} = std::mem::transmute(__fn);\n",
+        arg_tipe.join(", "),
+        ret_tipe
+    ));
+
+    if let Some(target) = ret_target {
+        indent.push(out);
+        out.push_str(&format!(
+            "        let __hasil = __f({});\n",
+            arg_kode.join(", ")
+        ));
+        indent.push(out);
+        out.push_str(&format!(
+            "        self.signals[{target}].write(__hasil.widen::<MAX_WIDTH>());\n"
+        ));
+    } else {
+        indent.push(out);
+        out.push_str(&format!("        __f({});\n", arg_kode.join(", ")));
+    }
+
+    indent.push(out);
+    out.push_str("        ::sv_runtime::dpi::dpi_close(__handle);\n");
+    indent.push(out);
+    out.push_str("    }\n");
+    indent.push(out);
+    out.push_str("}\n");
+}
+
+/// Peta tipe data DPI-C ke tipe primitif Rust (LRM §35.5.2).
+fn dpi_tipe_ke_rust(tipe: &str) -> &str {
+    match tipe {
+        "void" => "()",
+        "bit" | "logic" | "byte" => "u8",
+        "shortint" => "i16",
+        "int" | "integer" => "i32",
+        "longint" | "time" => "i64",
+        _ => "i32",
+    }
 }

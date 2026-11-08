@@ -1,4 +1,5 @@
 // Tanggung jawab: node AST untuk statement di dalam always_comb.
+use crate::dpi::DpiCall;
 use crate::expression::Expr;
 use crate::lvalue::Lvalue;
 use sv_lexer::span::Span;
@@ -144,6 +145,12 @@ pub enum CombinationalStatement {
     /// Eligator meng-inline badan task ke titik panggilan, sehingga node ini
     /// tidak pernah mencapai IR.
     TaskCall(crate::routine::TaskCall),
+    /// Panggilan fungsi C lewat DPI-C import sebagai statement (LRM §35).
+    ///
+    /// Digunakan saat memanggil fungsi yang dideklarasi dengan
+    /// `import "DPI-C" function ...;` di dalam blok combinational
+    /// (`always_comb`, `initial`, `final`).
+    DpiCall(DpiCall),
     /// `return [expr];` di dalam function/task (LRM §13.4).
     ///
     /// Di dalam function, nilai yang dibawa `value` menjadi nilai balik; di

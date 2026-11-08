@@ -1,5 +1,6 @@
 // Tanggung jawab: node AST untuk statement procedural/continuous.
 use crate::combinational::CombinationalStatement;
+use crate::dpi::DpiCall;
 use crate::expression::Expr;
 use crate::lvalue::Lvalue;
 use sv_lexer::span::Span;
@@ -95,6 +96,11 @@ pub enum SequentialStatement {
     ///
     /// Eligator meng-inline badan task ke titik panggilan.
     TaskCall(crate::routine::TaskCall),
+    /// Panggilan fungsi C lewat DPI-C import sebagai statement (LRM §35).
+    ///
+    /// Digunakan saat memanggil fungsi yang dideklarasi dengan
+    /// `import "DPI-C" function ...;`.
+    DpiCall(DpiCall),
     /// `return [expr];` di dalam blok sekuensial (LRM §13.4).
     Return {
         value: Option<Expr>,
