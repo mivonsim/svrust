@@ -284,16 +284,18 @@ target/sv/
 
 **Commit:** parallel frontend rayon di collect_modules.
 
-### Tahap 3: Parallel Elaboration & Codegen — RENCANA
+### Tahap 3: Parallel Elaboration & Codegen — BLOKIR (perlu `Rc`→`Arc` di `sv-ir`)
 
 **Tujuan:** Elaborasi dan codegen per root dijalankan paralel.
 
-**Aksi:**
-1. Ubah `elaborate_tops` untuk memproses root secara paralel.
-2. Ubah `generate_rust` untuk memproses design secara paralel.
-3. Shared symbol database untuk package (hindari re-analisis package 100x).
+**Status:** Tidak bisa diimplementasikan langsung karena `Design` di `sv-ir` mengandung `Rc<VarDecl>` yang bukan `Send`, sehingga tidak bisa dikirim antar thread rayon.
 
-**Test baru:**
+**Perbaikan yang diperlukan:**
+1. Ubah `Rc<VarDecl>` → `Arc<VarDecl>` di `sv-ir/src/design.rs` dan semua referensi.
+2. Pastikan semua tipe di `Design` juga `Send` (check `SignalCell`, `PendingWrite`, dll.).
+3. Setelah itu, ubah `elaborate_tops` dan `generate_rust` untuk pakai `rayon::par_iter`.
+
+**Test baru (rencana, belum ditulis):**
 - `elaborate_tops_parallel`
 - `generate_rust_parallel`
 
