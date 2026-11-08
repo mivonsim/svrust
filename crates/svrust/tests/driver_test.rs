@@ -197,3 +197,24 @@ fn system_task_lain_di_always_ff_diterima() {
     let ast = sv_parser::parse_module(&tokens).expect("parse");
     sv_elaborator::elaborate(&ast).expect("elaborate");
 }
+
+/// Driver untuk desain dengan proses waktu `always #N` TANPA blok `initial`
+/// dan TANPA proses sekuensial harus memanggil `eval_timed()` di dalam loop
+/// scheduler, agar penundaan di dalam body benar-benar menunda penulangan
+/// (LRM §9.2.1, §11.2). Tanpa ini counter tetap 0.
+#[test]
+fn driver_tanpa_initial_panggil_eval_timed_untuk_proses_waktu() {
+    let src = "module tb(output logic [7:0] cnt_o); \
+               logic [7:0] cnt = 0; \
+               always begin #2 cnt = cnt + 1; end \
+               assign cnt_o = cnt; endmodule";
+    let kode = driver(src);
+    assert!(
+        kode.contains("design.eval_timed();"),
+        "driver plain tanpa initial harus memanggil eval_timed untuk proses waktu"
+    );
+    assert!(
+        kode.contains("design.step_scheduler()"),
+        "driver plain tanpa initial harus menggunakan step_scheduler"
+    );
+}

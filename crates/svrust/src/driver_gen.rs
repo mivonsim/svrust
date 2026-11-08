@@ -196,7 +196,7 @@ fn generate_plain_driver_named(
                 out.push_str("        design.sample_edge();\n");
             }
             out.push_str("    }\n\n");
-        } else if sv_codegen_rust::module_gen::has_initial(design) {
+        } else {
             // Design TANPA proses sekuensial TAPI dengan blok `initial`:
             // jalankan segmen `initial` per langkah waktu hingga selesai,
             // lalu jalankan scheduler untuk proses waktu (bila ada).
@@ -238,34 +238,44 @@ fn generate_plain_driver_named(
                 out.push_str("        }\n");
             }
             out.push_str("    }\n\n");
-        } else {
-            // Design TANPA proses sekuensial dan TANPA blok `initial`:
-            // gunakan scheduler event-driven sampai idle atau batas langkah
-            // (LRM §4). Proses waktu (`always #N`) dijadwalkan ulang, jadi
-            // butuh batas langkah untuk mencegah infinite loop.
-            out.push_str("    let mut __langkah = 0usize;\n");
-            out.push_str("    while __langkah < STEPS && design.step_scheduler() {\n");
-            out.push_str("        __langkah += 1;\n");
+        }
+    }
+
+    // Design TANPA blok `initial` sama sekali:
+    // - dengan proses sekuensial → ditangani loop clock di bawah (baris 272+).
+    // - tanpa proses sekuensial: gunakan step_scheduler event-driven dengan
+    //   eval_timed agar proses waktu `always #N` tetap berjalan (LRM §9.2.1).
+    if !sv_codegen_rust::module_gen::has_initial(design)
+        && !sv_codegen_rust::module_gen::has_sequential(design)
+    {
+        out.push_str("    let mut __langkah = 0usize;\n");
+        out.push_str("    while __langkah < STEPS && design.step_scheduler() {\n");
+        out.push_str("        __langkah += 1;\n");
+        // LRM §9.2.1 + §4.4: proses waktu `always #N` maju jam simulasi
+        // agar penundaan di dalam body benar-benar terhitung.
+        if ada_proses_waktu {
+            out.push_str("        design.eval_timed();\n");
             out.push_str("        design.commit_pending();\n");
-            out.push_str("        design.eval_comb();\n");
-            out.push_str("        design.commit_pending();\n");
-            if sv_codegen_rust::system_task_gen::has_finish(design) {
-                out.push_str("        if design.is_finished() {\n");
-                out.push_str("            break;\n");
-                out.push_str("        }\n");
-            }
-            if perlu_prev {
-                out.push_str("        design.sample_edge();\n");
-            }
-            out.push_str("    }\n\n");
-            // LRM §20.2: `$monitor` dievaluasi setiap langkah setelah scheduler
-            // idle, bukan hanya saat scheduler punya event.
-            if sv_codegen_rust::system_task_gen::uses_monitor_flag(design) {
-                out.push_str("    pantau_monitor!();\n");
-            }
-            if sv_codegen_rust::system_task_gen::has_strobe(design) {
-                out.push_str("    design.run_strobe();\n");
-            }
+        }
+        out.push_str("        design.commit_pending();\n");
+        out.push_str("        design.eval_comb();\n");
+        out.push_str("        design.commit_pending();\n");
+        if sv_codegen_rust::system_task_gen::has_finish(design) {
+            out.push_str("        if design.is_finished() {\n");
+            out.push_str("            break;\n");
+            out.push_str("        }\n");
+        }
+        if perlu_prev {
+            out.push_str("        design.sample_edge();\n");
+        }
+        out.push_str("    }\n\n");
+        // LRM §20.2: `$monitor` dievaluasi setiap langkah setelah scheduler
+        // idle, bukan hanya saat scheduler punya event.
+        if sv_codegen_rust::system_task_gen::uses_monitor_flag(design) {
+            out.push_str("    pantau_monitor!();\n");
+        }
+        if sv_codegen_rust::system_task_gen::has_strobe(design) {
+            out.push_str("    design.run_strobe();\n");
         }
     }
 
