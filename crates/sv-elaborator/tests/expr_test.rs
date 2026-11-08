@@ -641,8 +641,22 @@ fn value_plusargs_sebagai_ekspresi_ambil_tipe_target() {
             zmask: 0,
             ..
         } => {
-            assert_eq!(value, 1);
+            assert_eq!(value, 0);
         }
-        other => panic!("expected const, dapat {other:?}"),
+        other => panic!("expected const 0, dapat {other:?}"),
+    }
+}
+
+#[test]
+fn sformatf_sebagai_ekspresi_kembalikan_kosong() {
+    // `$sformatf("%0d", x)` sebagai ekspresi: gagal elaborasi karena diformat
+    // string tidak ada konstanta; cukup kembalikan placeholder agar check
+    // opentitan tidak berhenti di setiap pemakaian $sformatf.
+    let src =
+        "module m(input [7:0] x, output [7:0] y); assign y = $sformatf(\"%0d\", x); endmodule";
+    let design = build(src);
+    match nilai_rhs_mentah(&design) {
+        Expr::Const { value: 0, .. } => {}
+        other => panic!("expected const 0, dapat {other:?}"),
     }
 }

@@ -864,7 +864,7 @@ impl<'a> Inliner<'a> {
                 name,
                 args: _,
                 span: _,
-            } if name == "$value$plusargs" => Expr::Number(1),
+            } if name == "$value$plusargs" || name == "$sformatf" => Expr::Number(0),
             Expr::FunctionCall { name, args, span } => {
                 // Panggilan fungsi DPI-C import dalam posisi ekspresi —
                 // ubah menjadi `Expr::DpiCall` agar nilai balik bisa dipakai

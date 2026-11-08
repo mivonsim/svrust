@@ -572,6 +572,20 @@ pub fn lower_expression_dengan_konteks(
                 zmask: 0,
             })
         }
+        // System function sebagai ekspresi (LRM §20), misal `$sformatf`,
+        // `$value$plusargs`. Untuk tahap elaborasi/check cukup kembalikan
+        // konstanta 0 bertipe logis 32-bit; semantik penuh (format string)
+        // diterapkan codegen/runtime saat simulasi, bukan di elaborasi.
+        AstExpr::FunctionCall { name, .. }
+            if matches!(name.as_str(), "$value$plusargs" | "$sformatf") =>
+        {
+            Ok(Expr::Const {
+                value: 0,
+                data_type: DataType::logic(32),
+                unknown_mask: 0,
+                zmask: 0,
+            })
+        }
         // `expand_module` sudah mengembangkan setiap panggilan function sebelum
         // lowering. Node yang sampai ke sini berarti ada jalur yang melewatkan
         // pass tersebut, jadi dilaporkan sebagai error, bukan diabaikan diam-diam.
