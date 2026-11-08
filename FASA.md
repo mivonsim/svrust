@@ -652,3 +652,37 @@ Catatan verifikasi (sudah full support, demo OK):
 - `cargo clippy --all-targets`: clean 0 warning (kecuali pre-existing sv-ir)
 - `cargo run --release -- check --rtl opentitan.f --top top_earlgrey --release`: `check OK (3 module, top top_earlgrey)`, tanpa error
 - Commit: menyertakan perubahan `examples/e2e_expr/demo.sh` dan `LRM_COMPLIANCE.md` (push ke origin/main)
+
+## Tahap Implementasi — Eksekusi paralel multi-root tanpa `--top` (selesai sebagian)
+
+### Masalah (dari paralel.md)
+
+- `check`/`build`/`run` tanpa `--top` error: `ada N modul root; pilih salah satu dengan --top` (`pilih_top` di `crates/svrust/src/pipeline.rs:560`). OpenTitan (`opentitan.f`, ~1.122 file) memiliki ratusan root module → CLI total tidak bisa melanjutkan tanpa mengetahui nama top secara manual.
+- `check --rtl opentitan.f` tanpa `--top` timeout (>10 menit): `collect_modules` memproses semua 527+ modul tanpa difilter reachable, lalu `elaborate_tops` memproses semua root sekaligus.
+- Pipeline monolitik: satu `main.rs` + satu `cargo build` untuk semua modul → rustc type-checking O(N²), linker satu binary besar, kompilasi berjam-jam hingga hari untuk ribuan modul.
+
+### Implementasi selesai (commit a03c1a6)
+
+1. `check`/`build`/`run` tanpa `--top`: jalankan SEMUA modul root sebagai design terpisah (LRM §23.1), bukan error. Setiap root dapat VCD sendiri.
+2. `write_sim_project`: satu crate Cargo per modul root di
+   `target/sv/parallel/units/<nama>/`, masing-masing binary mandiri, dengan
+   `target/sv/parallel/Cargo.toml` workspace. Dibangun dengan `cargo -j N`
+   (parallel.md fase 5) agar ribuan modul root tidak menunggu dalam satu
+   crate monolitik.
+- Demo baru `examples/e2e_parallel_root/`: dua root dijalankan tanpa `--top`,
+  keduanya menghasilkan output sendiri (`y=0b`, `z=0b`), DEMO OK.
+
+### Rencana berikutnya (belum diimplementasikan)
+
+3. Frontend/elaborasi/codegen paralel per file/root dengan rayon.
+4. Kumpulkan semua diagnostik dari semua file, tidak dihentikan pada error pertama.
+
+### Verifikasi
+
+- `sh examples/e2e_parallel_root/demo.sh`: DEMO OK (dua crate unit + workspace)
+- `cargo nextest run --workspace`: 1539 passed, 0 skipped
+- `cargo clippy --all-targets`: clean 0 warning (kecuali pre-existing sv-ir)
+- `cargo fmt --check`: clean
+- `cargo run --release -- check --rtl opentitan.f --top top_earlgrey --release`: `check OK (3 module, top top_earlgrey)`, tanpa error
+
+
