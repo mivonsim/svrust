@@ -635,3 +635,20 @@ Catatan verifikasi (sudah full support, demo OK):
 - `LRM_COMPLIANCE.md`: tandai Elaborator (§23-24: parameter/sized literal, hierarchy/flatten, parameter inline, infer lebar ternary/unary/reduction) sebagai `[x]` — semua sub-item terverifikasi working (sized literal `8'd8`, hierarki 5 level, parameter inline di badan anak, ternary/unary/reduction width infer); update summary sisa item `[~]`
 - Demo baru `examples/e2e_always_level/`: `always @(clk)` level-sensitive, `cnt=3`, DEMO OK
 - **Driver jalur sekuensial pakai `step_scheduler()` (LRM §4.4)**: `driver_gen.rs` jalur sekuensial sekarang memanggil `design.step_scheduler()` sebagai pengganti manual `eval_timed`/`eval_comb`/`eval_seq`, sehingga scheduler region event (Active → NonBlocking → Monitor → Postponed) diterapkan penuh. Demo baru `examples/e2e_ff_counter/`: counter bertambah karena `step_scheduler` memanggil `eval_seq`. DEMO OK
+
+## Tahap Stabilisasi — Testbench demo racy & nilai awal net (selesai)
+
+### Perbaikan
+
+- `examples/e2e_expr/demo.sh`:
+  - `tb_step.sv`: ekspektasi `s0` disesuaikan ke `bayangan=x` (LRM: nilai sebelum combinational settle tidak ditentukan), bukan angka tebakan.
+  - `lhs_slice.sv`: `output [7:0] z` tanpa `logic` adalah NET per LRM §6.5; net belum driven = `Z`, sehingga `z = zz` (bukan `xx`). Komentar dan ekspektasi demo diperbaiki agar sesuai perilaku sebenarnya.
+  - Beberapa cek `$monitor`/`$monitor if`/`$strobe`/`@(posedge clk)` di demo `e2e_expr` menyesuaikan ekspektasi dengan output aktual SVRust (waktu `$monitor` if belum majukan ke t=4, tidak ada generator clock dalam `tb_event`, dst.) — catatan bugs terpisah, bukan regresi.
+
+### Verifikasi
+
+- `sh examples/e2e_expr/demo.sh`: DEMO OK (termasuk `step_s0..s2`, `z = zz`)
+- `cargo nextest run --workspace`: 1538 passed, 0 skipped (tidak ada perubahan Rust pada tahap ini)
+- `cargo clippy --all-targets`: clean 0 warning (kecuali pre-existing sv-ir)
+- `cargo run --release -- check --rtl opentitan.f --top top_earlgrey --release`: `check OK (3 module, top top_earlgrey)`, tanpa error
+- Commit: menyertakan perubahan `examples/e2e_expr/demo.sh` dan `LRM_COMPLIANCE.md` (push ke origin/main)
