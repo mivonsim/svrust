@@ -5,7 +5,7 @@ use crate::scope::ScopePath;
 use crate::time_scale::TimeScale;
 use crate::variable::VarDecl;
 use std::collections::BTreeMap;
-use std::rc::Rc;
+use std::sync::Arc;
 use sv_ast::dpi::DpiDecl;
 
 /// Satu dimensi unpacked: (first, size, descending).
@@ -36,7 +36,7 @@ pub struct InstanceInfo {
 pub struct Design {
     pub name: String,
     pub ports: Vec<PortInfo>,
-    pub variables: Vec<Rc<VarDecl>>,
+    pub variables: Vec<Arc<VarDecl>>,
     pub processes: Vec<crate::process::Process>,
     pub instances: Vec<InstanceInfo>,
     /// `timescale` modul top (LRM §21.8).
@@ -68,17 +68,17 @@ impl Design {
     }
 
     pub fn add_variable(&mut self, decl: VarDecl) {
-        self.variables.push(Rc::new(decl));
+        self.variables.push(Arc::new(decl));
     }
 
-    pub fn find_variable(&self, name: &str) -> Option<&Rc<VarDecl>> {
+    pub fn find_variable(&self, name: &str) -> Option<&Arc<VarDecl>> {
         self.variables.iter().find(|v| v.name == name)
     }
 
     /// Tetapkan nilai awal waktu nol untuk sebuah signal.
     pub fn set_initial(&mut self, signal: crate::expr::SignalId, value: crate::expr::Expr) {
         if let Some(var) = self.variables.iter_mut().find(|v| v.signal_id == signal) {
-            Rc::get_mut(var).expect("VarDecl belum di-share").initial = Some(value);
+            Arc::get_mut(var).expect("VarDecl belum di-share").initial = Some(value);
         }
     }
 

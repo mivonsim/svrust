@@ -597,22 +597,70 @@ pub(crate) fn elaborate_tops(
     tops: &[String],
     cache: &mut SvCache,
 ) -> Result<Vec<sv_ir::Design>, crate::CliError> {
-    let mut designs = Vec::new();
     let mut diagnostics = collection.diagnostics.clone();
+
+    // Langkah 1 (sequential): cek cache, kumpulkan kunci untuk root yang belum di-cache.
+    let mut kunci_untuk_top: Vec<(String, sv_cache::CacheKey)> = Vec::new();
+    let mut cached_designs: Vec<sv_ir::Design> = Vec::new();
     for nama in tops {
         let kunci = sv_cache::CacheKey::baru(nama, cache.ambil_dependensi_hash(nama).unwrap_or(""));
         if let Some(cached) = cache.cek_elaborate(&kunci) {
-            designs.push(cached.design.clone());
-            continue;
+            cached_designs.push(cached.design.clone());
+        } else {
+            kunci_untuk_top.push((nama.clone(), kunci));
         }
-        match sv_elaborator::elaborate_top(
-            &collection.modules,
-            &collection.typedefs_global,
-            &collection.packages,
-            nama,
-        ) {
-            Ok(mut design) => {
-                optimalkan(&mut design);
+    }
+
+    // Langkah 2 (parallel): elaborate root yang belum di-cache secara independen dengan rayon.
+    let hasil_elaborasi: Vec<Result<(String, sv_ir::Design), sv_diag::Diagnostic>> = kunci_untuk_top
+        .into_par_iter()
+        .map(|(nama, _kunci)| {
+            match sv_elaborator::elaborate_top(
+                &collection.modules,
+                &collection.typedefs_global,
+                &collection.packages,
+                &nama,
+            ) {
+                Ok(mut design) => {
+                    optimalkan(&mut design);
+                    Ok((nama.clone(), design))
+                }
+                Err(error) => {
+                    if let crate::CliError::Reported {
+                        diagnostics: mut berikut,
+                        ..
+                    } = diagnostic_elaborator(error, collection)
+                    {
+                        if let Some(d) = berikut.pop() {
+                            Err(d)
+                        } else {
+                            Err(sv_diag::Diagnostic::error(
+                                "E0201",
+                                format!("elaborasi gagal untuk {}", nama),
+                                sv_diag::Span::empty(SourceId(0), 0),
+                            ))
+                        }
+                    } else {
+                        Err(sv_diag::Diagnostic::error(
+                            "E0201",
+                            format!("elaborasi gagal untuk {}", nama),
+                            sv_diag::Span::empty(SourceId(0), 0),
+                        ))
+                    }
+                }
+            }
+        })
+        .collect();
+
+    // Langkah 3 (sequential): simpan hasil ke cache dan kumpulkan diagnostik.
+    let mut designs = cached_designs;
+    for hasil in hasil_elaborasi {
+        match hasil {
+            Ok((nama, design)) => {
+                let kunci = sv_cache::CacheKey::baru(
+                    &nama,
+                    cache.ambil_dependensi_hash(&nama).unwrap_or(""),
+                );
                 cache.simpan_elaborate(
                     kunci,
                     sv_cache::CachedElaborate {
@@ -622,17 +670,10 @@ pub(crate) fn elaborate_tops(
                 );
                 designs.push(design);
             }
-            Err(error) => {
-                if let crate::CliError::Reported {
-                    diagnostics: mut berikut,
-                    ..
-                } = diagnostic_elaborator(error, collection)
-                {
-                    diagnostics.append(&mut berikut);
-                }
-            }
+            Err(d) => diagnostics.push(d),
         }
     }
+
     if !diagnostics.is_empty() {
         return Err(crate::CliError::reported(
             diagnostics,

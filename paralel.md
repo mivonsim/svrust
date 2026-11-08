@@ -284,20 +284,25 @@ target/sv/
 
 **Commit:** parallel frontend rayon di collect_modules.
 
-### Tahap 3: Parallel Elaboration & Codegen — BLOKIR (perlu `Rc`→`Arc` di `sv-ir`)
+### Tahap 3: Parallel Elaboration & Codegen — SELESAI
 
-**Tujuan:** Elaborasi dan codegen per root dijalankan paralel.
+**Tujuan:** Elaborasi per root dijalankan paralel dengan rayon.
 
-**Status:** Tidak bisa diimplementasikan langsung karena `Design` di `sv-ir` mengandung `Rc<VarDecl>` yang bukan `Send`, sehingga tidak bisa dikirim antar thread rayon.
+**Aksi (selesai):**
+1. ✅ Ubah `Rc<VarDecl>` → `Arc<VarDecl>` di `sv-ir/src/design.rs` dan `sv-ir/src/variable.rs` agar `Design` adalah `Send`.
+2. ✅ Ubah `elaborate_tops` di `pipeline.rs` untuk memproses root secara paralel dengan `rayon::par_iter` (3 langkah: sequential cache check → parallel elaborate → sequential cache save).
+3. ⏳ Ubah `generate_rust` untuk memproses design secara paralel (belum — codegen biasanya cepat, prioritas rendah).
+4. ⏳ Shared symbol database untuk package (belum — prioritas rendah).
 
-**Perbaikan yang diperlukan:**
-1. Ubah `Rc<VarDecl>` → `Arc<VarDecl>` di `sv-ir/src/design.rs` dan semua referensi.
-2. Pastikan semua tipe di `Design` juga `Send` (check `SignalCell`, `PendingWrite`, dll.).
-3. Setelah itu, ubah `elaborate_tops` dan `generate_rust` untuk pakai `rayon::par_iter`.
+**Test baru:** Tidak ada test baru (test pipeline_mengumpulkan_error_parse_dan_elaborasi_lintas_berkas masih lolos dengan parallel elaboration).
 
-**Test baru (rencana, belum ditulis):**
-- `elaborate_tops_parallel`
-- `generate_rust_parallel`
+**Verifikasi:**
+- `cargo nextest run --workspace`: 1547 passed, 0 skipped
+- `cargo clippy --all-targets`: clean (kecuali pre-existing sv-ir)
+- `cargo fmt --check`: bersih
+- `cargo run --release -- check --rtl opentitan.f --top top_earlgrey --release`: `check OK (3 module, top top_earlgrey)`
+
+**Commit:** Rc→Arc di sv-ir + parallel elaborate_tops dengan rayon.
 
 ### Tahap 4: Benchmark End-to-End — RENCANA
 

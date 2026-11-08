@@ -1,7 +1,7 @@
 // Tanggung jawab: variabel dan sinyal dalam IR.
 use crate::datatype::DataType;
 use crate::scope::ScopePath;
-use std::rc::Rc;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VarKind {
@@ -52,17 +52,17 @@ impl VarDecl {
 
 #[derive(Debug, Default)]
 pub struct SignalTable {
-    entries: Vec<Rc<VarDecl>>,
+    entries: Vec<Arc<VarDecl>>,
 }
 
 impl SignalTable {
-    pub fn insert(&mut self, decl: VarDecl) -> Rc<VarDecl> {
-        let entry = Rc::new(decl);
-        self.entries.push(Rc::clone(&entry));
+    pub fn insert(&mut self, decl: VarDecl) -> Arc<VarDecl> {
+        let entry = Arc::new(decl);
+        self.entries.push(Arc::clone(&entry));
         entry
     }
 
-    pub fn get(&self, name: &str) -> Option<&Rc<VarDecl>> {
+    pub fn get(&self, name: &str) -> Option<&Arc<VarDecl>> {
         self.entries.iter().find(|e| e.name == name)
     }
 
@@ -74,7 +74,7 @@ impl SignalTable {
         self.entries.is_empty()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &Rc<VarDecl>> {
+    pub fn iter(&self) -> impl Iterator<Item = &Arc<VarDecl>> {
         self.entries.iter()
     }
 }
