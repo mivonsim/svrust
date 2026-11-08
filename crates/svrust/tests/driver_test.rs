@@ -307,3 +307,34 @@ fn compile_semua_root_hasil_satu_design_per_root_dengan_nama_unik() {
     std::fs::remove_file(c).expect("hapus c");
     std::fs::remove_dir(dir).expect("hapus direktori fixture");
 }
+
+/// §25 determinism scheduling: dua kali pipeline pada desain yang sama dengan
+// banyak proses waktu harus menghasilkan kode driver yang identik. Urutan proses
+// pada waktu yang sama ditetapkan deterministic (FIFO per region + seq tiebreak
+// di BinaryHeap), walaupun LRM §4.4 tidak menspesifikasikannya sepenuhnya.
+#[test]
+fn driver_kode_deterministik_saat_desain_sama_diproses_dua_kali() {
+    let src = "module tb(output logic [7:0] y, output logic [7:0] z); \
+               logic [7:0] a = 0; logic [7:0] b = 0; \
+               always begin #2 a = a + 1; end \
+               always begin #3 b = b + 1; end \
+               initial begin #10 $finish; end \
+               assign y = a; assign z = b; endmodule";
+    let des = design(src);
+    let kode1 = generate_driver(&des, 20, None);
+    let kode2 = generate_driver(&des, 20, None);
+    assert_eq!(
+        kode1, kode2,
+        "driver harus deterministik: dua kali generate pada desain sama harus kode identik (LRM §4.4 / §25)"
+    );
+    // Scheduler harus ada dalam kode (proses waktu dievaluasi via step_scheduler).
+    assert!(
+        kode1.contains("design.step_scheduler();"),
+        "driver harus memakai step_scheduler untuk urutan proses per region event"
+    );
+    // Proses waktu harus dievaluasi via eval_timed.
+    assert!(
+        kode1.contains("design.eval_timed();"),
+        "driver harus memanggil eval_timed untuk proses waktu `always #N`"
+    );
+}

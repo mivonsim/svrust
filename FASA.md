@@ -686,3 +686,21 @@ Catatan verifikasi (sudah full support, demo OK):
 - `cargo run --release -- check --rtl opentitan.f --top top_earlgrey --release`: `check OK (3 module, top top_earlgrey)`, tanpa error
 
 
+## Tahap Stabilisasi — Determinisme scheduling (§25) & DPI-C lengkap (§26) (selesai)
+
+### Implementasi selesai
+
+1. **§25 Determinisme scheduling**: Scheduling SVRust deterministik — FIFO per region (VecDeque) + tiebreak `seq` naik-monoton di BinaryHeap. Dua proses pada waktu yang sama selalu dijalankan dalam urutan yang sama setiap run, walaupun LRM §4.4 tidak menspesifikasikannya sepenuhnya (keterbatasan standard, bukan bug SVRust).
+2. **§26 DPI-C lengkap**: Codegen `Statement::DpiCall` → `write_dpi_call` (stmt_gen.rs) + runtime `sv-runtime/src/dpi.rs` (dlopen/dlsym/dlclose + semua pemanggilan C dasar). Demo `e2e_dpi` memverifikasi pemanggilan C nyata — DEMO OK.
+
+### Test baru
+
+- `driver_kode_deterministik_saat_desain_sama_diproses_dua_kali` di `crates/svrust/tests/driver_test.rs` — memverifikasi driver kode identik pada dua kali generate desain yang sama, dan `step_scheduler`/`eval_timed` ada dalam kode.
+
+### Verifikasi
+
+- `cargo nextest run --workspace`: 1540 passed, 0 skipped
+- `cargo clippy --all-targets`: clean 0 warning (kecuali pre-existing sv-ir)
+- `cargo fmt --check`: clean
+- `cargo run --release -- check --rtl opentitan.f --top top_earlgrey --release`: `check OK (3 module, top top_earlgrey)`, tanpa error
+- Commit: menyertakan test determinisme + update `LRM_COMPLIANCE.md` (§25, §26 → `[x]`) (push ke origin/main)
