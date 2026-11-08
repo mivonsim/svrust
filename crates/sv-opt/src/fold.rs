@@ -246,6 +246,11 @@ fn fold_children(expr: &mut Expr, n: &mut u32) {
         // LRM §6.14: konstanta di dalam cast harus ikut terlipat, dan cast
         // atas konstanta sendiri bisa dilipat jadi satu konstanta.
         Expr::Cast { operand, .. } => *n += fold_expr(operand),
+        Expr::DpiCall { args, .. } => {
+            for arg in args.iter_mut() {
+                *n += fold_expr(arg);
+            }
+        }
         Expr::Const { .. } | Expr::SignalRef { .. } | Expr::SimTime { .. } => {}
     }
 }

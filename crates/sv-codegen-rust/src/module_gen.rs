@@ -1968,7 +1968,7 @@ fn max_width_expr(expr: &Expr) -> u32 {
         Expr::Index { base, index, .. } => max_width_expr(base)
             .max(max_width_expr(index))
             .max(base.data_type().width),
-        Expr::SignalRef { .. } | Expr::SimTime { .. } => 0,
+        Expr::SignalRef { .. } | Expr::SimTime { .. } | Expr::DpiCall { .. } => 0,
         // Konstanta hanya butuh ruang sampai bit tertinggi yang benar-benar
         // bisa bernilai — bukan sepanjang lebar tipenya. LRM §5.7.1 memberi
         // literal desimal polos lebar 32, tapi `0` tetap muat di 1 bit; memaksa

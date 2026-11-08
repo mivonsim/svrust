@@ -559,6 +559,43 @@ pub fn lower_expression_dengan_konteks(
             format!("function call '{name}' belum dikembangkan; badan function tidak bisa jadi ekspresi"),
             *span,
         )),
+        // Panggilan fungsi C lewat DPI-C import dalam posisi ekspresi (LRM §35).
+        // Dihasilkan oleh `expand_module` saat `Expr::FunctionCall` adalah
+        // deklarasi DPI-C import. Nilai balik dikembalikan sebagai hasil
+        // ekspresi IR.
+        AstExpr::DpiCall {
+            name,
+            c_name,
+            args,
+            ret_type,
+            span,
+        } => {
+            let mut argumen = Vec::with_capacity(args.len());
+            for arg in args {
+                argumen.push(lower_expression(arg, symbols)?);
+            }
+            // Resolusi tipe balik dari string ke DataType.
+            let data_type = match ret_type.as_deref() {
+                Some("void") | None => DataType::logic(0),
+                Some("int") | Some("integer") => DataType::signed(32),
+                Some("byte") => DataType::signed(8),
+                Some("shortint") => DataType::signed(16),
+                Some("longint") | Some("time") => DataType::signed(64),
+                Some("bit") | Some("logic") => DataType::logic(1),
+                Some(tipe) => {
+                    return Err(ElaborateError::new(
+                        format!("tipe balik DPI-C '{tipe}' tidak dikenal"),
+                        *span,
+                    ));
+                }
+            };
+            Ok(Expr::DpiCall {
+                name: name.clone(),
+                c_name: c_name.clone(),
+                args: argumen,
+                data_type,
+            })
+        }
         // LRM §6.14: `nama_tipe'(ekspresi)` dievaluasi sebagai ekspresi sized
         // pada tipe tujuan — nilai operand dipertahankan sebanyak mungkin,
         // dipotong saat menyempit dan diisi (nol atau tanda) saat melebar.
@@ -708,6 +745,7 @@ pub fn span_expr(expr: &AstExpr) -> sv_lexer::span::Span {
         | AstExpr::Concat { span, .. }
         | AstExpr::Replicate { span, .. }
         | AstExpr::FunctionCall { span, .. }
+        | AstExpr::DpiCall { span, .. }
         | AstExpr::Cast { span, .. }
         | AstExpr::BuiltinCast { span, .. }
         | AstExpr::SizeCast { span, .. }
@@ -885,6 +923,11 @@ pub fn collect_signals(expr: &Expr, out: &mut Vec<SignalId>) {
         Expr::Cast { operand, .. } => collect_signals(operand, out),
         // `$time` tidak membaca sinyal apa pun.
         Expr::SimTime { .. } => {}
+        Expr::DpiCall { args, .. } => {
+            for arg in args {
+                collect_signals(arg, out);
+            }
+        }
     }
 }
 
@@ -975,5 +1018,19 @@ mod tests {
             span: Span::dummy(),
         };
         assert!(lower_expression(&expr, &tabel).is_err());
+    }
+
+    /// `null` pointer literal (LRM §6.19) diturunkan ke konstanta 0.
+    #[test]
+    fn null_pointer_diturunkan_ke_nol() {
+        let tabel = SymbolTable::new();
+        let expr = AstExpr::Ident {
+            name: "null".to_string(),
+            span: Span::dummy(),
+        };
+        let hasil = lower_expression(&expr, &tabel).unwrap();
+        assert!(matches!(hasil, Expr::Const { .. }));
+        assert_eq!(hasil.data_type().width, 32);
+        assert!(hasil.data_type().signed);
     }
 }

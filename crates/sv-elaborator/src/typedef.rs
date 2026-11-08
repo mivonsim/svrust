@@ -226,7 +226,10 @@ impl TypeTable {
                 },
                 None => expr.clone(),
             },
-            Expr::Number(_) | Expr::Sized { .. } | Expr::SystemTime { .. } => expr.clone(),
+            Expr::Number(_)
+            | Expr::Sized { .. }
+            | Expr::SystemTime { .. }
+            | Expr::DpiCall { .. } => expr.clone(),
             // LRM §6.14: nama tipe sendiri bukan literal enum, jadi tidak
             // disentuh; hanya operandnya yang didalami ulang.
             Expr::Cast {

@@ -358,7 +358,8 @@ fn ekspresi(expr: &mut Expr, scale: TimeScale) {
         | Expr::Number(_)
         | Expr::Sized { .. }
         | Expr::StringConst { .. }
-        | Expr::HierarchicalRef { .. } => {}
+        | Expr::HierarchicalRef { .. }
+        | Expr::DpiCall { .. } => {}
         Expr::Binary { lhs, rhs, .. } => {
             ekspresi(lhs, scale);
             ekspresi(rhs, scale);

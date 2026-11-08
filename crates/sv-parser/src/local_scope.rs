@@ -348,6 +348,11 @@ fn nama_expr(expr: &mut Expr, ctx: &Ctx) {
                 nama_expr(arg, ctx);
             }
         }
+        Expr::DpiCall { args, .. } => {
+            for arg in args {
+                nama_expr(arg, ctx);
+            }
+        }
         // Operand cast dan `$bits` bisa merujuk variabel lokal.
         Expr::Cast { operand, .. }
         | Expr::SignCast { operand, .. }

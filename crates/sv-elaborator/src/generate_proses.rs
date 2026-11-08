@@ -240,6 +240,19 @@ pub(crate) fn subst_expr(expr: &AstExpr, env: &GenvarEnv, scope: &ScopeBlok) -> 
             args: args.iter().map(|a| subst_expr(a, env, scope)).collect(),
             span: *span,
         },
+        AstExpr::DpiCall {
+            name,
+            c_name,
+            args,
+            ret_type,
+            span,
+        } => AstExpr::DpiCall {
+            name: name.clone(),
+            c_name: c_name.clone(),
+            args: args.iter().map(|a| subst_expr(a, env, scope)).collect(),
+            ret_type: ret_type.clone(),
+            span: *span,
+        },
         AstExpr::Binary { op, lhs, rhs, span } => AstExpr::Binary {
             op: *op,
             lhs: Box::new(subst_expr(lhs, env, scope)),

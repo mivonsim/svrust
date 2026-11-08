@@ -335,6 +335,7 @@ fn semua_ident_dikenal(expr: &Expr, params: &ParamTable) -> bool {
         Expr::HierarchicalRef { .. } | Expr::StringConst { .. } => false,
         Expr::SystemTime { .. } => true,
         Expr::FunctionCall { .. } => false,
+        Expr::DpiCall { args, .. } => args.iter().all(|e| semua_ident_dikenal(e, params)),
         Expr::Cast { operand, .. }
         | Expr::BuiltinCast { operand, .. }
         | Expr::SizeCast { operand, .. }

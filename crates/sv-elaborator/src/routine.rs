@@ -183,6 +183,26 @@ impl<'a> Inliner<'a> {
                 vec![stmt.clone()]
             }
             SequentialStatement::NonBlockingAssign { lhs, rhs, span } => {
+                // Jika RHS adalah pemanggilan fungsi DPI-C import, ubah jadi
+                // `SequentialStatement::DpiCall` dengan `ret_target` dari LHS.
+                // Ini menangani pola `q <= dpi_func(...)`.
+                let rhs_expr: &sv_ast::expression::Expr = rhs;
+                if let sv_ast::expression::Expr::FunctionCall {
+                    name,
+                    args,
+                    span: expr_span,
+                } = rhs_expr
+                {
+                    if let Some(c_name) = self.cari_dpi_import(name) {
+                        return Ok(vec![SequentialStatement::DpiCall(sv_ast::dpi::DpiCall {
+                            name: name.clone(),
+                            c_name,
+                            args: args.clone(),
+                            ret_target: Some(lhs.clone()),
+                            span: *expr_span,
+                        })]);
+                    }
+                }
                 vec![SequentialStatement::NonBlockingAssign {
                     lhs: self.lvalue(lhs)?,
                     rhs: self.expr(rhs)?,
@@ -837,24 +857,36 @@ impl<'a> Inliner<'a> {
     fn expr(&mut self, expr: &Expr) -> Result<Expr, ElaborateError> {
         Ok(match expr {
             Expr::FunctionCall { name, args, span } => {
-                // Panggilan fungsi DPI-C import tidak menghasilkan nilai
-                // ekspresi murni — ditangani sebagai statement di `seq()`.
-                // Jika sampai ke sini (bukan RHS langsung assignment), berarti
-                // dipakai di posisi sub-ekspresi yang belum didukung.
+                // Panggilan fungsi DPI-C import dalam posisi ekspresi —
+                // ubah menjadi `Expr::DpiCall` agar nilai balik bisa dipakai
+                // sebagai operand ekspresi (LRM §35).
                 if let Some(c_name) = self.cari_dpi_import(name) {
-                    return Err(ElaborateError::new(
-                        format!(
-                            "panggilan fungsi DPI-C '{name}' (simbol C '{c_name}') \
-                             di posisi ekspresi bersarang belum didukung; \
-                             gunakan sebagai statement langsung atau RHS assignment"
-                        ),
-                        *span,
-                    ));
+                    // Lower argumen ke ekspresi AST yang sudah di-resolve.
+                    let mut argumen = Vec::with_capacity(args.len());
+                    for arg in args {
+                        argumen.push(self.expr(arg)?);
+                    }
+                    // Cari tipe balik dari deklarasi DPI-C.
+                    let ret_tipe = self
+                        .dpis
+                        .iter()
+                        .find(|d| d.kind == DpiKind::Import && d.name == *name)
+                        .map(|d| d.ret_type.clone())
+                        .flatten();
+                    return Ok(Expr::DpiCall {
+                        name: name.clone(),
+                        c_name,
+                        args: argumen,
+                        ret_type: ret_tipe,
+                        span: *span,
+                    });
                 }
                 let name = name.clone();
                 let args = args.clone();
                 self.call(&name, &args, *span)?
             }
+            // `Expr::DpiCall` sudah dalam bentuk akhir — klooning saja.
+            Expr::DpiCall { .. } => expr.clone(),
             Expr::Ident { name, span } => Expr::ident(name.clone(), *span),
             Expr::Number(n) => Expr::Number(*n),
             Expr::StringConst { value, span } => Expr::StringConst {

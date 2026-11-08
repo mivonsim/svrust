@@ -1853,4 +1853,28 @@ mod tests {
         let module = parse_module(&lex(src).unwrap()).unwrap();
         assert!(module.dpis.is_empty());
     }
+
+    // DPI-C dengan tipe chandle (LRM §35, digunakan OpenTitan)
+    #[test]
+    fn dpi_import_tipe_chandle() {
+        let src =
+            "module m;\n  import \"DPI-C\" function chandle dmidpi_create(input string name);\nendmodule";
+        let module = parse_module(&lex(src).unwrap()).unwrap();
+        assert_eq!(module.dpis.len(), 1);
+        let d = &module.dpis[0];
+        assert_eq!(d.name, "dmidpi_create");
+        assert_eq!(d.ret_type, Some("chandle".to_string()));
+        assert_eq!(d.args, vec![("name".to_string(), "string".to_string())]);
+    }
+
+    // `null` pointer literal diilakukan sebagai identifikasi biasa oleh parser,
+    // kemudian diturunkan ke konstanta 0 oleh elaborator (LRM §6.19).
+    #[test]
+    fn null_pointer_diikurnikan_sebagai_identifikasi() {
+        let src = "module m;\n  chandle ctx;\n  initial ctx = null;\nendmodule";
+        let module = parse_module(&lex(src).unwrap()).unwrap();
+        // Harus parse tanpa error
+        assert_eq!(module.name, "m");
+        assert!(!module.statements.is_empty());
+    }
 }

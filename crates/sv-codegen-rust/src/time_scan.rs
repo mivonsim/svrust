@@ -182,7 +182,7 @@ pub fn expr_uses_time(expr: &Expr) -> bool {
         Expr::Replicate { value, .. } => expr_uses_time(value),
         Expr::Index { base, index, .. } => expr_uses_time(base) || expr_uses_time(index),
         Expr::Cast { operand, .. } => expr_uses_time(operand),
-        Expr::Const { .. } | Expr::SignalRef { .. } => false,
+        Expr::Const { .. } | Expr::SignalRef { .. } | Expr::DpiCall { .. } => false,
     }
 }
 

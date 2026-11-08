@@ -724,6 +724,19 @@ fn rename_expr(expr: &Expr, peta: &HashMap<String, String>) -> Expr {
             args: args.iter().map(|a| rename_expr(a, peta)).collect(),
             span: *span,
         },
+        Expr::DpiCall {
+            name,
+            c_name,
+            args,
+            ret_type,
+            span,
+        } => Expr::DpiCall {
+            name: name.clone(),
+            c_name: c_name.clone(),
+            args: args.iter().map(|a| rename_expr(a, peta)).collect(),
+            ret_type: ret_type.clone(),
+            span: *span,
+        },
         // LRM §6.14: nama tipe bawaan bukan sinyal, jadi tidak ikut di-rename.
         Expr::BuiltinCast {
             type_name,

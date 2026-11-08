@@ -322,6 +322,8 @@ pub fn evaluasi(expr: &Expr, signals: &mut Vec<u64>) -> u64 {
         }
         // Waktu simulasi tidak dihitung pada evaluator uji ini.
         Expr::SimTime { .. } => 0,
+        // Pemanggilan DPI-C tidak bisa dievaluasi dalam test — kembalikan 0.
+        Expr::DpiCall { .. } => 0,
     }
 }
 

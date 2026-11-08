@@ -152,6 +152,23 @@ pub enum Expr {
         value: String,
         span: Span,
     },
+    /// Panggilan fungsi C lewat DPI-C import (LRM §35) dalam posisi ekspresi.
+    ///
+    /// Dihasilkan oleh elaborator saat memanggil fungsi yang dideklarasi dengan
+    /// `import "DPI-C" function ...;` dalam posisi ekspresi (bukan statement).
+    /// Nilai balik dikembalikan sebagai hasil ekspresi.
+    DpiCall {
+        /// Nama fungsi SV yang diimpor, cocok dengan `DpiDecl::name`.
+        name: String,
+        /// Nama simbol C yang dipanggil (`DpiDecl::c_name` atau `name`).
+        c_name: String,
+        /// Argumen panggilan, masih dalam bentuk ekspresi AST.
+        args: Vec<Expr>,
+        /// Tipe balik sebagai string (misal "int", "void", "bit"); `None` = void.
+        /// Di-resolve ke `DataType` saat lowering ke IR.
+        ret_type: Option<String>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

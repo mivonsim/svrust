@@ -253,7 +253,99 @@ fn write_bits_expr(expr: &Expr, out: &mut String, indent: &Indent) {
             write_expr(operand, out, indent);
             out.push(')');
         }
+        Expr::DpiCall {
+            name,
+            c_name,
+            args,
+            data_type,
+        } => {
+            write_dpi_call_expr(name, c_name, args, *data_type, out, indent);
+        }
     }
+}
+
+/// Tulis panggilan fungsi C lewat DPI-C import sebagai ekspresi (LRM §35).
+///
+/// Membuka library DPI-C, cari simbol via `dlsym`, transmute ke tipe fungsi
+/// yang cocok dengan ret_type, panggil, dan kembalikan hasil sebagai
+/// `Bits<MAX_WIDTH>`. Library ditutup setelah pemanggilan.
+fn write_dpi_call_expr(
+    _name: &str,
+    c_name: &str,
+    args: &[Expr],
+    data_type: DataType,
+    out: &mut String,
+    indent: &Indent,
+) {
+    let lib_nama = format!("lib{c_name}.so");
+
+    // Tipe Rust per argumen, berdasarkan tipe DPI-C (fallback i32).
+    // Di sini tidak ada akses ke DpiDecl, jadi semua argumen diasumsikan i32.
+    // Untuk dukungan penuh tipe, DpiDecl perlu tersedia di codegen.
+    let arg_tipe: Vec<&str> = args.iter().map(|_| "i32").collect();
+
+    let ret_tipe = match data_type.width {
+        0 => "()",
+        1 => "u8",
+        8 => "i16",
+        16 => "i32",
+        32 => "i32",
+        64 => "i64",
+        _ => "i32",
+    };
+
+    // Buka library dan cari simbol.
+    indent.push(out);
+    out.push_str("{\n");
+    indent.push(out);
+    out.push_str(&format!(
+        "    let __handle = ::sv_runtime::dpi::dpi_open(\"{lib_nama}\");\n"
+    ));
+    indent.push(out);
+    out.push_str(&format!(
+        "    let __fn = ::sv_runtime::dpi::dpi_sym(__handle, \"{c_name}\");\n"
+    ));
+
+    // Evaluasi argumen dan cast ke tipe primitif yang sesuai.
+    let mut arg_kode: Vec<String> = Vec::with_capacity(args.len());
+    for (i, arg) in args.iter().enumerate() {
+        let tipe = arg_tipe.get(i).copied().unwrap_or("i32");
+        let mut kode = String::new();
+        let eks_indent = Indent::new();
+        write_expr(arg, &mut kode, &eks_indent);
+        let cast = if tipe == "i64" || tipe == "i32" || tipe == "i16" {
+            format!("({kode}).to_i64() as {tipe}")
+        } else {
+            format!("({kode}).to_u64() as {tipe}")
+        };
+        arg_kode.push(cast);
+    }
+
+    // Transmute pointer simbol ke tipe fungsi yang tepat dan panggil.
+    indent.push(out);
+    out.push_str(&format!(
+        "    unsafe {{\n        let __f: extern \"C\" fn({}) -> {} = std::mem::transmute(__fn);\n",
+        arg_tipe.join(", "),
+        ret_tipe
+    ));
+
+    if ret_tipe == "()" {
+        out.push_str(&format!("        __f({});\n", arg_kode.join(", ")));
+        out.push_str("        Bits::<MAX_WIDTH>::zero()\n");
+    } else {
+        out.push_str(&format!(
+            "        let __hasil = __f({});\n",
+            arg_kode.join(", ")
+        ));
+        out.push_str("        __hasil\n");
+    }
+
+    indent.push(out);
+    out.push_str("        ::sv_runtime::dpi::dpi_close(__handle);\n");
+    indent.push(out);
+    out.push_str("    }\n");
+    indent.push(out);
+    out.push_str("}\n");
 }
 
 /// Tulis satu sisi perbandingan, sudah dikonversi ke integer.

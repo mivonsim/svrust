@@ -680,6 +680,22 @@ fn lingkup_expr(e: &AstExpr, prefix: &str, koneksi: &KoneksiMap, _asal: Span) ->
                 .collect(),
             span: *span,
         },
+        AstExpr::DpiCall {
+            name,
+            c_name,
+            args,
+            ret_type,
+            span,
+        } => AstExpr::DpiCall {
+            name: name.clone(),
+            c_name: c_name.clone(),
+            args: args
+                .iter()
+                .map(|a| lingkup_expr(a, prefix, koneksi, *span))
+                .collect(),
+            ret_type: ret_type.clone(),
+            span: *span,
+        },
         AstExpr::Number(v) => AstExpr::Number(*v),
         AstExpr::Sized {
             value,

@@ -209,6 +209,22 @@ pub enum Expr {
         /// Signedness operand pada saat cast dibuat.
         operand_signed: bool,
     },
+    /// Panggilan fungsi C lewat DPI-C import (LRM §35) dalam posisi ekspresi.
+    ///
+    /// Diehasilkan saat fungsi yang dideklarasi dengan
+    /// `import "DPI-C" function ...;` dipanggil dalam posisi ekspresi (bukan
+    /// statement). Codegen menerjemahkannya menjadi pemanggilan lewat
+    /// `sv_runtime::dpi` (dlopen/dlsym + transmute).
+    DpiCall {
+        /// Nama fungsi SV yang diimpor, cocok dengan `Design::dpis[*].name`.
+        name: String,
+        /// Nama simbol C yang dipanggil (`DpiDecl::c_name` atau `name`).
+        c_name: String,
+        /// Argumen panggilan, sudah di-lower ke `Expr` IR.
+        args: Vec<Expr>,
+        /// Tipe data hasil balik.
+        data_type: DataType,
+    },
 }
 
 impl Expr {
@@ -224,7 +240,8 @@ impl Expr {
             | Expr::Replicate { data_type, .. }
             | Expr::Cast { data_type, .. }
             | Expr::Index { data_type, .. }
-            | Expr::SimTime { data_type, .. } => *data_type,
+            | Expr::SimTime { data_type, .. }
+            | Expr::DpiCall { data_type, .. } => *data_type,
         }
     }
 
