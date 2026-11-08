@@ -325,14 +325,33 @@ target/sv/
 | 16     | Wajib diukur | Wajib | Wajib | Wajib |
 | 32     | Wajib diukur | Wajib | Wajib | Wajib |
 
-### Tahap 5: Akurasi Simulasi & Differential Testing — RENCANA
+### Tahap 5: Akurasi Simulasi & Differential Testing — SEDANG BERJALAN
 
-**Tujuan:** Buktikan simulasi ekuivalen dengan referensi.
+**Tujuan:** Buktikan simulasi ekuivalen dengan referensi (Icarus/Verilator).
 
-**Aksi:**
-1. Buat differential testing SVRust vs Icarus vs Verilator.
-2. Bandingkan output VCD dan print untuk semua root.
-3. Klasifikasi temuan: COCOK / BUG_SVRUST / ACAKAN_Iverilog / TIGA_BEDA.
+**Aksi (selesai sebagian):**
+1. ✅ Definisi klasifikasi temuan (COCOK / BUG_SVRUST / ACAKAN_Iverilog / TIGA_BEDA / TIDAK_DIDUKUNG).
+2. ⏳ Buat skrip differential testing di `benchmarks/differential_test.sh`.
+3. ⏳ Bandingkan output VCD dan print untuk semua root.
+4. ⏳ Klasifikasikan temuan dan buat regression test untuk setiap BUG_SVRUST.
+
+**Klasifikasi temuan:**
+
+| Klasifikasi | Arti | Tindak lanjut |
+|-------------|------|---------------|
+| COCOK | ketiga simulator sepakat | tidak ada |
+| BUG_SVRUST | SVRust berbeda dari kedua acuan | triase manual, lalu perbaiki + test regresi |
+| ACAKAN_Iverilog | SVRust == Verilator, Icarus yang beda | limitasi Icarus, bukan bug SVRUST |
+| TIGA_BEDA | ketiganya saling berbeda | triase manual |
+| TIDAK_DIDUKUNG | simulator acuan menolak program | fitur belum didukung di sana |
+| TIDAK_CUKUP | hanya satu simulator yang punya jawaban | program di luar jangkauan pembanding |
+
+**Peraturan triage (wajib):**
+1. Minimal repro — potong program jadi kasus terkecil.
+2. Simulator acuan lain — verifikasi dengan kedua simulator.
+3. Cek LRM — apakah standard benar-benar menyatakan begitu?
+4. Ukur dampak — berapa test existing yang terpengaruh?
+5. Cek demo yang gagal — ekspektasi demo mungkin mengunci bug lama.
 
 ---
 
