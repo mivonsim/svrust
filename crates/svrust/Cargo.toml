@@ -20,3 +20,4 @@ sv-ir = { path = "../sv-ir" }
 sv-codegen-rust = { path = "../sv-codegen-rust" }
 sv-opt = { path = "../sv-opt" }
 sv-cache = { path = "../sv-cache" }
+rayon = "1.8"

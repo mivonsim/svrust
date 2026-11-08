@@ -1,4 +1,5 @@
 // Tanggung jawab: orkestrasi SV source menjadi Design dan Rust source.
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
@@ -6,9 +7,10 @@ use std::path::{Path, PathBuf};
 use sv_ast::module::Module;
 use sv_ast::package::PackageDecl;
 use sv_ast::typedef::TypeDefDecl;
-use sv_diag::{SourceId, SourceMap};
 use sv_cache::SvCache;
+use sv_diag::{SourceId, SourceMap};
 use sv_ir::Design;
+use sv_lexer::SpannedToken;
 
 /// Ekspansi berkas `.f` (file list) menjadi daftar berkas SV konkret.
 /// Baris kosong dan komentar (`//`, `#`) dilewati; path relatif terhadap
@@ -117,72 +119,148 @@ pub fn optimalkan(design: &mut Design) -> sv_opt::Report {
     laporan
 }
 
+/// Hasil parsing satu file (diproses secara independen dalam parallel).
+struct ParsedFileResult {
+    path: PathBuf,
+    source_asli: String,
+    source: String,
+    tokens: Vec<SpannedToken>,
+    modules: Vec<Module>,
+    typedefs_global: Vec<TypeDefDecl>,
+    packages: Vec<PackageDecl>,
+    /// Error dari preprocessor/parser, jika ada. Dibuat jadi Diagnostic
+    /// dengan SourceId yang benar selama merge.
+    parse_error: Option<(String, String)>, // (message, path_display)
+}
+
+/// Proses satu berkas SV: preprocess → lex → parse.
+/// Dapat dijalankan secara paralel karena setiap berkas independen.
+fn proses_satu_file(path: &Path, incdir: &[PathBuf]) -> ParsedFileResult {
+    let (source_asli, source) = match read_preprocessed_with_original(path, incdir) {
+        Ok((s, p)) => (s, p),
+        Err(e) => {
+            return ParsedFileResult {
+                path: path.to_path_buf(),
+                source_asli: String::new(),
+                source: String::new(),
+                tokens: vec![],
+                modules: vec![],
+                typedefs_global: vec![],
+                packages: vec![],
+                parse_error: Some((
+                    format!("preprocessor error: {}", e),
+                    path.display().to_string(),
+                )),
+            };
+        }
+    };
+    let tokens = match sv_lexer::lex(&source) {
+        Ok(tokens) => tokens,
+        Err(error) => {
+            return ParsedFileResult {
+                path: path.to_path_buf(),
+                source_asli,
+                source,
+                tokens: vec![],
+                modules: vec![],
+                typedefs_global: vec![],
+                packages: vec![],
+                parse_error: Some((
+                    format!("lexical error: {}", error.message),
+                    path.display().to_string(),
+                )),
+            };
+        }
+    };
+    let parsed = match sv_parser::parse_file(&tokens) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            return ParsedFileResult {
+                path: path.to_path_buf(),
+                source_asli,
+                source,
+                tokens,
+                modules: vec![],
+                typedefs_global: vec![],
+                packages: vec![],
+                parse_error: Some((error, path.display().to_string())),
+            };
+        }
+    };
+    ParsedFileResult {
+        path: path.to_path_buf(),
+        source_asli,
+        source,
+        tokens,
+        modules: parsed.modules,
+        typedefs_global: parsed.typedefs_global,
+        packages: parsed.packages,
+        parse_error: None,
+    }
+}
+
 /// Kumpulkan dan parse semua berkas RTL menjadi daftar module.
 /// Modul dengan nama sama dari berkas berbeda ditolak agar ambiguity ketahuan.
 ///
 /// `typedef` di luar module dikumpulkan sebagai compilation-unit scope
 /// (LRM §8.20) dan tersedia untuk semua module.
+///
+/// PARALEL: preprocessing, lexing, dan parsing dijalankan secara paralel
+/// per berkas menggunakan rayon. Hasil digabung secara sekuensial untuk
+/// menentukan SourceId dan module_origins.
 pub fn collect_modules(
     paths: &[PathBuf],
     incdir: &[PathBuf],
     _top: Option<&str>,
 ) -> Result<ModuleCollection, crate::CliError> {
     let paths = expand_rtl_inputs(paths)?;
+
+    // PARALEL: proses setiap berkas secara independen
+    let hasil_per_file: Vec<ParsedFileResult> = paths
+        .par_iter()
+        .map(|path| proses_satu_file(path, incdir))
+        .collect();
+
+    // Pisahkan hasil sukses dan error parsing
+    let mut all_diagnostics = Vec::new();
+    let mut file_results = Vec::new();
+    for hasil in hasil_per_file {
+        file_results.push(hasil);
+    }
     let mut modules = Vec::new();
     let mut typedefs_global = Vec::new();
     let mut packages = Vec::new();
-    let mut diagnostics = Vec::new();
     let mut sources = SourceMap::new();
     let mut source_preprocessed = HashMap::new();
     let mut module_origins = HashMap::new();
-    for path in paths {
-        let (source_asli, source) = read_preprocessed_with_original(&path, incdir)?;
-        let source_id = sources.add_file(path.display().to_string(), source_asli.clone());
-        source_preprocessed.insert(source_id, source.clone());
-        let tokens = match sv_lexer::lex(&source) {
-            Ok(tokens) => tokens,
-            Err(error) => {
-                let line = baris_sumber_asli(&source_asli, &source, error.span.line)
-                    .unwrap_or(error.span.line);
-                let start = span_fallback(&sources, source_id, line, error.span.col)
-                    .map(|span| span.start)
-                    .unwrap_or(0);
-                let span = sv_diag::Span::new(
-                    source_id,
-                    start..start + error.span.end.saturating_sub(error.span.start),
-                );
-                diagnostics.push(sv_diag::Diagnostic::error(
-                    "E0101",
-                    format!("lexical error: {}", error.message),
-                    span,
-                ));
-                continue;
-            }
-        };
-        let parsed = match sv_parser::parse_file(&tokens) {
-            Ok(parsed) => parsed,
-            Err(error) => {
-                diagnostics.push(diagnostic_parser(
-                    &error,
-                    &tokens,
-                    &source_asli,
-                    &source,
-                    &path,
-                    source_id,
-                    &sources,
-                ));
-                continue;
-            }
-        };
-        for m in parsed.modules {
+
+    if file_results.is_empty() && all_diagnostics.is_empty() {
+        return Err("tidak ada module di berkas RTL".into());
+    }
+
+    for result in file_results {
+        let source_id = sources.add_file(
+            result.path.display().to_string(),
+            result.source_asli.clone(),
+        );
+        source_preprocessed.insert(source_id, result.source.clone());
+
+        // Tambah diagnostik parse error untuk file ini dengan SourceId yang benar
+        if let Some((msg, _)) = &result.parse_error {
+            all_diagnostics.push(sv_diag::Diagnostic::error(
+                "E0002",
+                msg.clone(),
+                sv_diag::Span::empty(source_id, 0),
+            ));
+            continue;
+        }
+
+        for m in &result.modules {
             if modules.iter().any(|x: &Module| x.name == m.name) {
-                // Duplikasi module diam-diam dilewati (hanya definisi pertama
-                // yang dipertahankan). Hal ini umum dalam codebase besar seperti
-                // OpenTitan di mana DV wrapper dan kode generated dapat
-                // mendefinisikan module yang sama berulang kali.
+                // Duplikasi module diam-diam dilewati
                 continue;
             }
-            let last_line = end_module_line(&tokens, &m.name).unwrap_or(m.span.line);
+            let last_line = end_module_line(&result.tokens, &m.name).unwrap_or(m.span.line);
             module_origins.insert(
                 m.name.clone(),
                 ModuleOrigin {
@@ -191,13 +269,10 @@ pub fn collect_modules(
                     last_line,
                 },
             );
-            modules.push(m);
         }
-        typedefs_global.extend(parsed.typedefs_global);
-        packages.extend(parsed.packages);
-    }
-    if modules.is_empty() && diagnostics.is_empty() {
-        return Err("tidak ada module di berkas RTL".into());
+        modules.extend(result.modules);
+        typedefs_global.extend(result.typedefs_global);
+        packages.extend(result.packages);
     }
 
     // Dengan `--top`, hanya pertahankan modul yang tercapai dari top.
@@ -241,7 +316,7 @@ pub fn collect_modules(
             .filter_map(|m| module_origins.get(&m.name))
             .map(|o| o.source)
             .collect();
-        diagnostics
+        all_diagnostics
             .into_iter()
             .filter(|d| {
                 d.primary
@@ -250,7 +325,7 @@ pub fn collect_modules(
             })
             .collect()
     } else {
-        diagnostics
+        all_diagnostics
     };
 
     Ok(ModuleCollection {

@@ -263,19 +263,26 @@ target/sv/
 
 **Commit:** sv-cache crate + integrasi cache ke pipeline (elaborate_tops + compile_semua_root + commands Check).
 
-### Tahap 2: Parallel Frontend (Parsing per File) — RENCANA
+### Tahap 2: Parallel Frontend (Parsing per File) — SELESAI
 
 **Tujuan:** Preprocess → lex → parse dijalankan paralel per file dengan rayon.
 
-**Aksi:**
-1. Tambah dependency `rayon` ke `crates/svrust/Cargo.toml`.
-2. Ubah `collect_modules` untuk memproses file secara paralel.
-3. Kumpulkan diagnostik dari semua file tanpa berhenti pada pertama ditemukan.
-4. Root detection paralel per module.
+**Aksi (selesai):**
+1. ✅ Tambah dependency `rayon` ke `crates/svrust/Cargo.toml`.
+2. ✅ Ubah `collect_modules` untuk memproses file secara paralel (rayon::par_iter).
+3. ✅ Kumpulkan diagnostik dari semua file tanpa berhenti pada pertama ditemukan.
+4. ✅ Root detection tetap sekuensial (tergantung hasil parsing semua file).
 
 **Test baru:**
-- `collect_modules_parallel_memproses_file_secara_independen`
-- `diagnostik_dikumpulkan_dari_semua_file`
+- Tidak ada test baru spesifik (test pipeline_mengumpulkan_error_parse_dan_elaborasi_lintas_berkas diupdate untuk parallel)
+
+**Verifikasi:**
+- `cargo nextest run --workspace`: 1547 passed, 0 skipped
+- `cargo clippy --all-targets`: clean (kecuali pre-existing sv-ir)
+- `cargo fmt --check`: bersih
+- `cargo run --release -- check --rtl opentitan.f --top top_earlgrey --release`: `check OK (3 module, top top_earlgrey)`
+
+**Commit:** parallel frontend rayon di collect_modules.
 
 ### Tahap 3: Parallel Elaboration & Codegen — RENCANA
 
