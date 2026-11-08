@@ -304,7 +304,7 @@ target/sv/
 
 **Commit:** Rc→Arc di sv-ir + parallel elaborate_tops dengan rayon.
 
-### Tahap 4: Benchmark End-to-End — RENCANA
+### Tahap 4: Benchmark End-to-End — SEDANG BERJALAN
 
 **Tujuan:** Buktikan dengan pengukuran, tidak klaim.
 
