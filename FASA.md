@@ -582,6 +582,28 @@ Catatan verifikasi (sudah full support, demo OK):
 - **`always @(sinyal)` level-sensitive (LRM §9.2.1)**: proses dievaluasi setiap kali sinyal sensitivity berubah nilai (bukan setiap langkah driver). Variabel `level_sensitive` ditambahkan ke `Process` IR; codegen generate cek `comb_edge_prev` hanya untuk proses level-sensitive. Demo baru `examples/e2e_always_level/`: `cnt=3` setelah 3 kali toggle `clk`, DEMO OK
 - Test baru: `always_level_sensitive_menggunakan_comb_edge_prev` dan `always_tanpa_sensitivitas_tidak_menggunakan_comb_edge_prev` di `codegen_test.rs`
 
+## Tahap Stabilisasi — Proses waktu `always #N` tanpa blok `initial` (selesai)
+
+### Perbaikan
+
+- `sv-rust` `driver_gen.rs`: cabang driver "tanpa `initial` dan tanpa proses sekuensial" sebelumnya hanya menjalankan `eval_comb()` dalam loop settle, sehingga proses waktu `always #N` mati dan counter tidak pernah bertambah. Setelah blok `if has_initial`, tambahkan cabang `else` untuk desain tanpa `initial` dan tanpa sequential yang menjalankan `step_scheduler()` dengan `eval_timed()` di dalam loop, sehingga jam simulasi maju dan penundaan di dalam body terhitung (LRM §9.2.1, §11.2).
+
+### Test baru
+
+- `driver_tanpa_initial_panggil_eval_timed_untuk_proses_waktu` di `crates/svrust/tests/driver_test.rs` memverifikasi driver plain tanpa initial memanggil `eval_timed()` dan `step_scheduler()`.
+
+### Demo baru
+
+- `examples/e2e_timed_no_initial/`: `always begin #2 cnt = cnt + 1; end` tanpa `initial`, `cnt_o` bertambah (bukan `00`), DEMO OK
+
+### Verifikasi
+
+- `cargo nextest run --workspace`: 1537 passed, 0 skipped
+- `cargo clippy --all-targets`: clean 0 warning (kecuali pre-existing sv-ir)
+- `cargo fmt --check`: clean
+- `cargo run --release -- check --rtl opentitan.f --top top_earlgrey --release`: `check OK (3 module, top top_earlgrey)`, tanpa error
+- Commit: `4ad5874 fix(sv-runtime): jalankan eval_timed di driver plain untuk proses waktu tanpa initial` (push ke origin/main)
+
 ### Verifikasi (ini)
 
 - `cargo nextest run --workspace`: 1523 passed, 0 skipped
