@@ -234,7 +234,7 @@ target/sv/
 
 ## 5. Rencana Implementasi Bertahap
 
-### Tahap 1: Content-Addressed Cache (Incremental Build) — SELESAI
+### Tahap 1: Content-Addressed Cache (Incremental Build) — SELESAI (inisialisasi) & INTEGRASI PIPELINE (selesai)
 
 **Tujuan:** Ubah satu file leaf module tidak memaksa recompilation seluruh OpenTitan.
 
@@ -243,9 +243,10 @@ target/sv/
 2. ✅ Fungsi hash konten file SV (`hash_konten` dengan SHA256).
 3. ✅ Simpan hasil parsing, AST, semantic analysis, IR, dan codegen secara terpisah di cache (`CachedParse`, `CachedElaborate`, `CachedCodegen`).
 4. ✅ Cache key: `CacheKey` = hash konten + hash dependensi.
-5. ⏳ Invalidation: perubahan package yang digunakan banyak root → invalidasi semua root yang mengimpor package tersebut (belum diimplementasikan, rencana Tahap 3).
+5. ✅ Integrasi ke pipeline: `elaborate_tops` menerima `&mut SvCache`, cek cache sebelum elaborate, simpan hasil ke cache setelah elaborate.
+6. ⏳ Invalidation: perubahan package yang digunakan banyak root → invalidasi semua root yang mengimpor package tersebut (belum diimplementasikan, rencana Tahap 3).
 
-**Test baru (7 test, semua lolos):**
+**Test baru (7 test sv-cache + 1 test pipeline, semua lolos):**
 - `cache_parse_hit_dan_miss`
 - `cache_elaborate_hit_dan_miss`
 - `cache_codegen_hit_dan_miss`
@@ -254,12 +255,13 @@ target/sv/
 - `dependensi_hash_simpan_dan_ambil`
 - `diagnistik_default_kosong`
 
-**Commit:** `sv-cache` crate dibuat dengan 7 unit test.
-
 **Verifikasi:**
 - `cargo test -p sv-cache`: 7 passed, 0 failed
-- `cargo clippy -p sv-cache`: clean (kecuali pre-existing sv-ir)
+- `cargo nextest run --workspace`: 1547 passed, 0 skipped
+- `cargo clippy --all-targets`: clean (kecuali pre-existing sv-ir)
 - `cargo fmt --check`: bersih
+
+**Commit:** sv-cache crate + integrasi cache ke pipeline (elaborate_tops + compile_semua_root + commands Check).
 
 ### Tahap 2: Parallel Frontend (Parsing per File) — RENCANA
 

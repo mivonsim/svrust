@@ -7,6 +7,7 @@ use sv_ast::module::Module;
 use sv_ast::package::PackageDecl;
 use sv_ast::typedef::TypeDefDecl;
 use sv_diag::{SourceId, SourceMap};
+use sv_cache::SvCache;
 use sv_ir::Design;
 
 /// Ekspansi berkas `.f` (file list) menjadi daftar berkas SV konkret.
@@ -512,16 +513,23 @@ pub fn compile_semua_root(
     let collection = collect_modules(paths, incdir, top)?;
     let tops = tops_dipakai(&collection.modules, top)
         .map_err(|error| diagnostic_top_error(error, &collection))?;
-    elaborate_tops(&collection, &tops)
+    let mut cache = SvCache::baru();
+    elaborate_tops(&collection, &tops, &mut cache)
 }
 
 pub(crate) fn elaborate_tops(
     collection: &ModuleCollection,
     tops: &[String],
+    cache: &mut SvCache,
 ) -> Result<Vec<sv_ir::Design>, crate::CliError> {
     let mut designs = Vec::new();
     let mut diagnostics = collection.diagnostics.clone();
     for nama in tops {
+        let kunci = sv_cache::CacheKey::baru(nama, cache.ambil_dependensi_hash(nama).unwrap_or(""));
+        if let Some(cached) = cache.cek_elaborate(&kunci) {
+            designs.push(cached.design.clone());
+            continue;
+        }
         match sv_elaborator::elaborate_top(
             &collection.modules,
             &collection.typedefs_global,
@@ -530,6 +538,13 @@ pub(crate) fn elaborate_tops(
         ) {
             Ok(mut design) => {
                 optimalkan(&mut design);
+                cache.simpan_elaborate(
+                    kunci,
+                    sv_cache::CachedElaborate {
+                        design: design.clone(),
+                        diagnistik: vec![],
+                    },
+                );
                 designs.push(design);
             }
             Err(error) => {
@@ -997,7 +1012,8 @@ mod tests {
             ]),
         };
 
-        let error = elaborate_tops(&collection, &["a".to_string(), "b".to_string()])
+        let mut cache = SvCache::baru();
+        let error = elaborate_tops(&collection, &["a".to_string(), "b".to_string()], &mut cache)
             .expect_err("kedua root mengandung sinyal target yang tidak dikenal");
         let report = error
             .report()
@@ -1204,7 +1220,8 @@ mod tests {
             source_preprocessed: HashMap::new(),
             module_origins: HashMap::new(),
         };
-        let designs = elaborate_tops(&collection, &tops).expect("elaborate semua root");
+        let mut cache = sv_cache::SvCache::baru();
+        let designs = elaborate_tops(&collection, &tops, &mut cache).expect("elaborate semua root");
         assert_eq!(designs.len(), 2, "harus ada 2 design untuk 2 root");
         let nama: Vec<_> = designs.iter().map(|d| d.name.clone()).collect();
         assert!(

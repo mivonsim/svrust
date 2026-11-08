@@ -19,3 +19,4 @@ sv-elaborator = { path = "../sv-elaborator" }
 sv-ir = { path = "../sv-ir" }
 sv-codegen-rust = { path = "../sv-codegen-rust" }
 sv-opt = { path = "../sv-opt" }
+sv-cache = { path = "../sv-cache" }

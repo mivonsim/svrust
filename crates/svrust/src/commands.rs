@@ -63,7 +63,8 @@ pub fn dispatch(opts: Options) -> Result<(), crate::CliError> {
                 crate::pipeline::collect_modules(&opts.rtl, &opts.incdir, opts.top.as_deref())?;
             let tops = crate::pipeline::tops_dipakai(&collection.modules, opts.top.as_deref())
                 .map_err(|error| crate::pipeline::diagnostic_top_error(error, &collection))?;
-            let designs = crate::pipeline::elaborate_tops(&collection, &tops)?;
+            let mut cache = sv_cache::SvCache::baru();
+            let designs = crate::pipeline::elaborate_tops(&collection, &tops, &mut cache)?;
             println!(
                 "check OK ({} module, top {})",
                 collection.modules.len(),
