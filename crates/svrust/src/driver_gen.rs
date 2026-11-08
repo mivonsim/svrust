@@ -201,10 +201,17 @@ fn generate_plain_driver_named(
             // jalankan segmen `initial` per langkah waktu hingga selesai,
             // lalu jalankan scheduler untuk proses waktu (bila ada).
             // LRM §4: event queue dijalankan sampai idle setiap langkah.
+            // Proses waktu `always #N` harus dievaluasi via `eval_timed()`
+            // agar jam simulasi maju dan `#delay` di dalam body (`if`/`loop`)
+            // benar-benar menunda proses (LRM §9.2.1, §11.2).
             out.push_str(&format!(
                 "    for __step in 0..{}::INITIAL_STEPS {{\n",
                 struct_name
             ));
+            if ada_proses_waktu {
+                out.push_str("        design.eval_timed();\n");
+                out.push_str("        design.commit_pending();\n");
+            }
             out.push_str("        design.eval_initial(__step);\n");
             out.push_str("        design.commit_pending();\n");
             out.push_str("        design.eval_comb();\n");
@@ -212,17 +219,12 @@ fn generate_plain_driver_named(
             if perlu_prev {
                 out.push_str("        design.sample_edge();\n");
             }
-            out.push_str("        while design.step_scheduler() {\n");
-            out.push_str("            design.commit_pending();\n");
-            if sv_codegen_rust::system_task_gen::has_finish(design) {
-                out.push_str("            if design.is_finished() {\n");
-                out.push_str("                break;\n");
-                out.push_str("            }\n");
-            }
-            if perlu_prev {
-                out.push_str("            design.sample_edge();\n");
-            }
-            out.push_str("        }\n");
+            // Panggilan tunggal per langkah (bukan `while`) agar loop tidak
+            // tak berujung bila proses waktu mendaftarkan dirinya sendiri
+            // ke waktu mendatang (LRM §9.2.1). Pola sama dengan cabang
+            // sequential di atas.
+            out.push_str("        design.step_scheduler();\n");
+            out.push_str("        design.commit_pending();\n");
             // LRM §20.2: `$monitor` dievaluasi setiap langkah setelah segmen
             // `initial` dievaluasi, bukan hanya saat scheduler punya event.
             // `$strobe` juga dicetak di akhir setiap timestep.

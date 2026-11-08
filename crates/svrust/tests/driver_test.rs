@@ -218,3 +218,30 @@ fn driver_tanpa_initial_panggil_eval_timed_untuk_proses_waktu() {
         "driver plain tanpa initial harus menggunakan step_scheduler"
     );
 }
+
+/// Driver untuk desain dengan blok `initial` + proses waktu `always #N`
+/// TANPA proses sekuensial harus memanggil `eval_timed()` di dalam langkah
+/// driver (cabang "has initial, no sequential"). Tanpa ini proses waktu
+/// mati dan `#delay` di dalam `if`/`loop` tidak menangguhkan proses — bahkan
+/// dapat menyebabkan infinite loop karena scheduler tidak pernah idle.
+#[test]
+fn driver_dengan_initial_tanpa_sequential_panggil_eval_timed_untuk_proses_waktu() {
+    let src = "module tb(output logic [7:0] cnt_o); \
+               logic [7:0] cnt = 0; \
+               initial begin #10 $finish; end \
+               always begin if (cnt < 5) begin #2 cnt = cnt + 1; end end \
+               assign cnt_o = cnt; endmodule";
+    let kode = driver(src);
+    assert!(
+        kode.contains("design.eval_timed();"),
+        "driver dengan initial tanpa sequential harus memanggil eval_timed untuk proses waktu"
+    );
+    assert!(
+        kode.contains("design.eval_initial(__step);"),
+        "driver dengan initial harus memanggil eval_initial per langkah"
+    );
+    assert!(
+        !kode.contains("while design.step_scheduler()"),
+        "driver dengan initial tanpa sequential tidak boleh pakai while step_scheduler (infinite loop saat proses waktu reschedule)"
+    );
+}
