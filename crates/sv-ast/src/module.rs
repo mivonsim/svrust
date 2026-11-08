@@ -33,6 +33,11 @@ pub struct Module {
     /// `#(.NAMA(...))` diam-diam diterima untuk konstanta yang memang harus
     /// terkunci.
     pub localparams: Vec<crate::width::LocalParamDecl>,
+    /// Deklarasi DPI-C `import` / `export "DPI-C" function ...` di body modul
+    /// (LRM §35). Masih pada tingkat deklarasi: parser menangkap sintaks, sementara
+    /// pemanggilan fungsi C nyata dan penanganan export diserahkan ke fase
+    /// codegen/runtime DPI (nanti).
+    pub dpis: Vec<crate::dpi::DpiDecl>,
     /// `timescale` yang berlaku bagi modul ini (LRM §21.8).
     ///
     /// Direktif berlaku untuk modul-modul yang menyusulnya sampai ada
@@ -59,6 +64,7 @@ mod tests {
             generates: Vec::new(),
             genvars: Vec::new(),
             localparams: Vec::new(),
+            dpis: Vec::new(),
             time_scale: crate::time_scale::TimeScale::default(),
         };
         assert!(m.generates.is_empty());
@@ -66,5 +72,6 @@ mod tests {
         assert!(m.routines.is_empty());
         assert!(m.typedefs.is_empty());
         assert!(m.localparams.is_empty());
+        assert!(m.dpis.is_empty());
     }
 }

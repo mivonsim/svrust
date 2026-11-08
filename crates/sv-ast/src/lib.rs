@@ -2,6 +2,7 @@
 pub mod combinational;
 pub mod declaration;
 pub mod delay_unit;
+pub mod dpi;
 pub mod event_edge;
 pub mod event_item;
 pub mod expression;
@@ -21,6 +22,7 @@ pub mod width;
 
 pub use combinational::{CaseArm, CombinationalStatement};
 pub use declaration::Declaration;
+pub use dpi::{DpiDecl, DpiKind};
 pub use event_edge::EventEdge;
 pub use event_item::EventItem;
 pub use expression::{BinaryOp, Expr, UnaryOp};

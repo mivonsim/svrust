@@ -434,6 +434,7 @@ mod tests {
             generates: Vec::new(),
             genvars: Vec::new(),
             localparams: Vec::new(),
+            dpis: Vec::new(),
             time_scale: crate::time_scale::TimeScale::default(),
         };
         terapkan_module(&mut modul, TimeScale::parse("1us/1ps").unwrap());
@@ -461,6 +462,7 @@ mod tests {
             generates: Vec::new(),
             genvars: Vec::new(),
             localparams: Vec::new(),
+            dpis: Vec::new(),
             time_scale: crate::time_scale::TimeScale::default(),
         };
         terapkan_module(&mut modul, TimeScale::parse("1us/1ps").unwrap());
@@ -504,6 +506,7 @@ mod tests {
             generates: Vec::new(),
             genvars: Vec::new(),
             localparams: Vec::new(),
+            dpis: Vec::new(),
             time_scale: crate::time_scale::TimeScale::default(),
         };
         terapkan_module(&mut modul, TimeScale::parse("1ms/1us").unwrap());

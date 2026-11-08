@@ -628,6 +628,7 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
     let mut routines = Vec::new();
     let mut typedefs = Vec::new();
     let mut localparams = localparams_header;
+    let mut dpis: Vec<sv_ast::dpi::DpiDecl> = Vec::new();
 
     while idx < tokens.len() && tokens[idx].token != Token::Endmodule {
         // Compiler directive dilewati.
@@ -839,16 +840,23 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                     idx = skip_assert(tokens, idx);
                 }
             }
-            Token::Ident(n) if n == "import" => {
-                // `import "DPI-C" function ...;` (DPI) atau `import pkg::*;`.
-                // SVRust tidak memproses impor secara semantik, lewati sampai ';'.
-                while idx < tokens.len() && tokens[idx].token != Token::Semi {
-                    idx += 1;
+            Token::Ident(n) if n == "import" || n == "export" => {
+                // `import "DPI-C" function ...;` / `export "DPI-C" function ...` (LRM §35).
+                match parse_dpi(&tokens[idx..], 0) {
+                    Ok((dpi, next)) => {
+                        dpis.push(dpi);
+                        idx += next;
+                    }
+                    Err(_) => {
+                        // Pada error, lewati sampai ';' agar parse modul lain tidak rusak.
+                        while idx < tokens.len() && tokens[idx].token != Token::Semi {
+                            idx += 1;
+                        }
+                        if idx < tokens.len() {
+                            idx += 1;
+                        }
+                    }
                 }
-                if idx < tokens.len() {
-                    idx += 1;
-                }
-                continue;
             }
             Token::Ident(_) => {
                 // Label assertion `nama: assert property (...)` dari ekspansi
@@ -1150,9 +1158,174 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
         typedefs,
         generates,
         localparams,
+        dpis,
         genvars,
         time_scale: sv_ast::time_scale::TimeScale::default(),
     })
+}
+
+/// Jika `t` adalah identifier atau keyword tipe (LRM §6.16 / Tabel 6-22),
+/// kembalikan teksnya; lain maka `None`. Digunakan pemroskop DPI-C untuk
+/// membedakan tipe balik dari nama fungsi.
+fn token_tipe_atau_ident(t: &Token) -> Option<&str> {
+    match t {
+        Token::Ident(n) => Some(n),
+        Token::Void => Some("void"),
+        Token::Int => Some("int"),
+        Token::Integer => Some("integer"),
+        Token::ShortInt => Some("shortint"),
+        Token::LongInt => Some("longint"),
+        Token::Byte => Some("byte"),
+        Token::Bit => Some("bit"),
+        Token::Logic => Some("logic"),
+        Token::Signed => Some("signed"),
+        Token::Unsigned => Some("unsigned"),
+        _ => None,
+    }
+}
+
+/// Parse deklarasi DPI-C (LRM §35) pada posisi `idx` (token awal `import`/`export`).
+///
+/// Bentuk yang diterima:
+///   `import "DPI-C" function <nama> ([<tipe> <nama>[, ...]]) [<tipe_balik>];`
+///   `export "DPI-C" function <nama_sv> = <nama_c>;`
+///
+/// Kembalikan `(DpiDecl, indeks_sesudah_titik_koma)`.
+fn parse_dpi(
+    tokens: &[SpannedToken],
+    mut idx: usize,
+) -> Result<(sv_ast::dpi::DpiDecl, usize), String> {
+    use sv_ast::dpi::{DpiDecl, DpiKind};
+
+    let kind = match &tokens[idx].token {
+        Token::Ident(n) if n == "import" => DpiKind::Import,
+        Token::Ident(n) if n == "export" => DpiKind::Export,
+        _ => return Err("DPI-C: harap 'import' atau 'export'".to_string()),
+    };
+    let span = tokens[idx].span;
+    idx += 1;
+
+    // String literal "DPI-C".
+    if idx >= tokens.len() {
+        return Err("DPI-C: string literal 'DPI-C' tidak ditemukan".to_string());
+    }
+    if !matches!(&tokens[idx].token, Token::StringLiteral(s) if s == "DPI-C") {
+        return Err("DPI-C: harap string literal 'DPI-C'".to_string());
+    }
+    idx += 1;
+
+    // Kata kunci "function".
+    if idx >= tokens.len() || tokens[idx].token != Token::Function {
+        return Err("DPI-C: harap kata kunci 'function'".to_string());
+    }
+    idx += 1;
+
+    // Nama fungsi, dengan tipe balik opsional di depannya (LRM §35.5.2):
+    //   function [<tipe_balik>] <nama> ([args] | = <nama_c>);
+    // Identifier/tipe terakhir sebelum `(` / `=` / `;` adalah nama; tipe
+    // sebelumnya (jika diikuti tipe/ident lain) adalah tipe balik.
+    let mut ret_type: Option<String> = None;
+    let mut name: Option<String> = None;
+    while idx < tokens.len() {
+        match &tokens[idx].token {
+            Token::LParen | Token::Assign | Token::Semi => break,
+            _ => {}
+        }
+        let Some(teks) = token_tipe_atau_ident(&tokens[idx].token) else {
+            break;
+        };
+        let diikuti_nama = match tokens.get(idx + 1).map(|t| &t.token) {
+            Some(Token::LParen) | Some(Token::Assign) | Some(Token::Semi) => true,
+            Some(_) => token_tipe_atau_ident(&tokens[idx + 1].token).is_none(),
+            _ => true,
+        };
+        let s = teks.to_string();
+        idx += 1;
+        if diikuti_nama {
+            name = Some(s);
+            break;
+        } else {
+            ret_type = Some(s);
+        }
+    }
+    let name = name.ok_or_else(|| "DPI-C: harap nama fungsi".to_string())?;
+
+    let mut c_name = None;
+    let mut args: Vec<(String, String)> = Vec::new();
+
+    if kind == DpiKind::Export {
+        // `export "DPI-C" function <nama_sv> = <nama_c>;`
+        if idx >= tokens.len() || tokens[idx].token != Token::Eq {
+            return Err("DPI-C export: harap '='".to_string());
+        }
+        idx += 1;
+        if idx >= tokens.len() {
+            return Err("DPI-C export: harap nama fungsi C".to_string());
+        }
+        c_name = Some(match &tokens[idx].token {
+            Token::Ident(n) => {
+                let s = n.clone();
+                idx += 1;
+                s
+            }
+            _ => return Err("DPI-C export: harap identifier".to_string()),
+        });
+    } else {
+        // `import "DPI-C" function [<ret>] <nama> ([args]);`
+        // Daftar argumen dalam kurung (opsional): <tipe> <nama> [, ...]
+        if idx < tokens.len() && tokens[idx].token == Token::LParen {
+            idx += 1;
+            while idx < tokens.len() && tokens[idx].token != Token::RParen {
+                // Arah opsional: input / output / inout (LRM §35.5.2).
+                if matches!(
+                    &tokens[idx].token,
+                    Token::Input | Token::Output | Token::Inout
+                ) {
+                    idx += 1;
+                }
+                let Some(tipe) = token_tipe_atau_ident(&tokens[idx].token) else {
+                    break;
+                };
+                idx += 1;
+                let nama = if idx < tokens.len()
+                    && token_tipe_atau_ident(&tokens[idx].token).is_some()
+                {
+                    let s = token_tipe_atau_ident(&tokens[idx].token)
+                        .unwrap()
+                        .to_string();
+                    idx += 1;
+                    s
+                } else {
+                    String::new()
+                };
+                args.push((nama, tipe.to_string()));
+                if idx < tokens.len() && tokens[idx].token == Token::Comma {
+                    idx += 1;
+                }
+            }
+            if idx < tokens.len() && tokens[idx].token == Token::RParen {
+                idx += 1;
+            }
+        }
+    }
+
+    // Titik koma.
+    if idx >= tokens.len() || tokens[idx].token != Token::Semi {
+        return Err("DPI-C: harap titik koma ';'".to_string());
+    }
+    idx += 1;
+
+    Ok((
+        DpiDecl {
+            kind,
+            name,
+            c_name,
+            ret_type,
+            args,
+            span,
+        },
+        idx,
+    ))
 }
 
 /// True bila token membentuk deklarasi bertipe, misal `byte_t data;`.
@@ -1596,5 +1769,68 @@ mod tests {
                    P: assert property (@(posedge clk) (sig == 1'b1));\nendmodule";
         let module = parse_module(&lex(src).unwrap()).unwrap();
         assert_eq!(module.name, "m");
+    }
+
+    // --- LRM §35: deklarasi DPI-C import / export ---
+
+    #[test]
+    fn dpi_import_tanpa_argumen_dengan_tipe_balik() {
+        let src = "module m;\n  import \"DPI-C\" function int my_c_func();\nendmodule";
+        let module = parse_module(&lex(src).unwrap()).unwrap();
+        assert_eq!(module.dpis.len(), 1);
+        let d = &module.dpis[0];
+        assert_eq!(d.kind, sv_ast::dpi::DpiKind::Import);
+        assert_eq!(d.name, "my_c_func");
+        assert_eq!(d.c_name, None);
+        assert_eq!(d.ret_type, Some("int".to_string()));
+        assert!(d.args.is_empty());
+    }
+
+    #[test]
+    fn dpi_import_dengan_argumen_dan_tanpa_tipe_balik() {
+        let src =
+            "module m;\n  import \"DPI-C\" function void add(input int a, input int b);\nendmodule";
+        let module = parse_module(&lex(src).unwrap()).unwrap();
+        assert_eq!(module.dpis.len(), 1);
+        let d = &module.dpis[0];
+        assert_eq!(d.kind, sv_ast::dpi::DpiKind::Import);
+        assert_eq!(d.name, "add");
+        assert_eq!(d.ret_type, Some("void".to_string()));
+        assert_eq!(
+            d.args,
+            vec![
+                ("a".to_string(), "int".to_string()),
+                ("b".to_string(), "int".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn dpi_export_dengan_nama_c() {
+        let src = "module m;\n  export \"DPI-C\" function sv_func = c_func;\nendmodule";
+        let module = parse_module(&lex(src).unwrap()).unwrap();
+        assert_eq!(module.dpis.len(), 1);
+        let d = &module.dpis[0];
+        assert_eq!(d.kind, sv_ast::dpi::DpiKind::Export);
+        assert_eq!(d.name, "sv_func");
+        assert_eq!(d.c_name, Some("c_func".to_string()));
+        assert_eq!(d.ret_type, None);
+        assert!(d.args.is_empty());
+    }
+
+    #[test]
+    fn dpi_dua_deklarasi_di_satu_modul() {
+        let src = "module m;\n  import \"DPI-C\" function int f1();\n  export \"DPI-C\" function f2 = c2;\nendmodule";
+        let module = parse_module(&lex(src).unwrap()).unwrap();
+        assert_eq!(module.dpis.len(), 2);
+        assert_eq!(module.dpis[0].name, "f1");
+        assert_eq!(module.dpis[1].name, "f2");
+    }
+
+    #[test]
+    fn modul_tanpa_dpi_punya_bidang_kosong() {
+        let src = "module m(input a, output y); assign y = a; endmodule";
+        let module = parse_module(&lex(src).unwrap()).unwrap();
+        assert!(module.dpis.is_empty());
     }
 }
