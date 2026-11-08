@@ -6,3 +6,4 @@ license.workspace = true
 description = "HDL Semantic IR: types, signals, processes, timing"
 
 [dependencies]
+sv-ast = { path = "../sv-ast" }

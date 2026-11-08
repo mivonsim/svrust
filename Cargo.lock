@@ -13,6 +13,7 @@ dependencies = [
 name = "sv-codegen-rust"
 version = "0.1.0"
 dependencies = [
+ "sv-ast",
  "sv-elaborator",
  "sv-ir",
  "sv-lexer",
@@ -40,6 +41,9 @@ dependencies = [
 [[package]]
 name = "sv-ir"
 version = "0.1.0"
+dependencies = [
+ "sv-ast",
+]
 
 [[package]]
 name = "sv-lexer"

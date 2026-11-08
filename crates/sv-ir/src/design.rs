@@ -6,6 +6,7 @@ use crate::time_scale::TimeScale;
 use crate::variable::VarDecl;
 use std::collections::BTreeMap;
 use std::rc::Rc;
+use sv_ast::dpi::DpiDecl;
 
 /// Satu dimensi unpacked: (first, size, descending).
 pub type UnpackedElem = (u64, u64, bool);
@@ -51,6 +52,11 @@ pub struct Design {
     /// Level hierarki `$dumpvars(n)` (LRM §23.2). `None` = semua hierarki,
     /// `Some(n)` = hanya level 0..n dari root.
     pub dump_level: Option<u32>,
+    /// Deklarasi DPI-C `import` / `export "DPI-C" function ...` (LRM §35).
+    /// Codegen menghasilkan blok `extern "C"` untuk tiap entri agar fungsi C
+    /// dapat dipanggil dari generated Rust (pemanggilan nyata diserahkan ke
+    /// runtime DPI-C di fase berikutnya).
+    pub dpis: Vec<DpiDecl>,
 }
 
 impl Design {

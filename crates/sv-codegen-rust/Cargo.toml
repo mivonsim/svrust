@@ -7,6 +7,7 @@ description = "CodeGen: HDL IR → Rust source"
 
 [dependencies]
 sv-ir = { path = "../sv-ir" }
+sv-ast = { path = "../sv-ast" }
 
 [dev-dependencies]
 sv-lexer = { path = "../sv-lexer" }

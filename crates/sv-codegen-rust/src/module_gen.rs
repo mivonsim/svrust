@@ -2,6 +2,7 @@
 use crate::indent::Indent;
 use crate::stmt_gen::write_statements;
 use std::collections::HashSet;
+use sv_ast::dpi::DpiKind;
 use sv_ir::datatype::{NetResolution, ValueKind};
 use sv_ir::expr::Expr;
 use sv_ir::process::{ProcessKind, Statement};
@@ -168,7 +169,52 @@ pub fn generate_module(design: &Design) -> String {
 
     inner.push(&mut out);
     out.push_str("}\n");
+    // DPI-C: emit blok `extern "C"` untuk fungsi import agar generated Rust
+    // dapat memanggil fungsi C (LRM §35).
+    write_dpi_extern(design, &mut out);
     out
+}
+
+/// Tulis blok `extern "C"` untuk setiap deklarasi `import "DPI-C" function`
+/// (LRM §35). Fungsi dieksternal dengan tipe Rust yang setara; nama simbol C
+/// dipakai bila ditulis, lain pakai nama fungsi SV.
+fn write_dpi_extern(design: &Design, out: &mut String) {
+    if design.dpis.is_empty() {
+        return;
+    }
+    for dpi in &design.dpis {
+        if dpi.kind != DpiKind::Import {
+            continue;
+        }
+        let c_name = dpi.c_name.as_deref().unwrap_or(dpi.name.as_str());
+        let ret = rust_tipe(dpi.ret_type.as_deref());
+        let params: Vec<String> = dpi
+            .args
+            .iter()
+            .map(|(nama, tipe)| format!("{nama}: {}", rust_tipe(Some(tipe.as_str()))))
+            .collect();
+        out.push_str("extern \"C\" {\n");
+        out.push_str(&format!(
+            "    #[allow(dead_code)]\n    fn {c_name}({params}) -> {ret};\n",
+            c_name = c_name,
+            params = params.join(", "),
+            ret = ret
+        ));
+        out.push_str("}\n\n");
+    }
+}
+
+/// Peta tipe data DPI-C / SystemVerilog ke tipe primitif Rust (LRM §35.5.2).
+/// Tipe tak dikenal fallback ke `i32`.
+fn rust_tipe(tipe: Option<&str>) -> &str {
+    match tipe {
+        None | Some("void") => "()",
+        Some("bit") | Some("logic") | Some("byte") => "u8",
+        Some("shortint") => "i16",
+        Some("int") | Some("integer") => "i32",
+        Some("longint") | Some("time") => "i64",
+        _ => "i32",
+    }
 }
 
 /// Import runtime untuk satu design.

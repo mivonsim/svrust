@@ -29,6 +29,7 @@ pub fn elaborate(module: &Module) -> Result<Design, ElaborateError> {
     let module = &crate::instance::substitusi_parameter(module, &params_awal, "", None)?;
     let mut symbols = SymbolTable::new();
     let mut design = Design::new(module.name.clone());
+    design.dpis = module.dpis.clone();
     // LRM §21.8: skala waktu top dipakai untuk membulatkan `$time` dan header
     // VCD. Modul anak bisa punya `timescale` sendiri; setelah flatten hanya
     // skala top yang tersisa, jadi `$time` global mengikuti presisi top.
@@ -283,6 +284,7 @@ pub fn elaborate_top(
     };
     let mut symbols = SymbolTable::new();
     let mut design = Design::new(module.name.clone());
+    design.dpis = module.dpis.clone();
     // LRM §21.8: presisi simulasi adalah `timeprecision` **terkecil** di antara
     // seluruh modul, bukan milik modul top saja. Header VCD menulis nilai waktu
     // dalam satuan presisi itu, jadi memakai presisi top akan membuat pembaca VCD
