@@ -856,6 +856,15 @@ impl<'a> Inliner<'a> {
 
     fn expr(&mut self, expr: &Expr) -> Result<Expr, ElaborateError> {
         Ok(match expr {
+            // `$value$plusargs("+nama=fmt", var)` dalam posisi ekspresi
+            // (LRM §20.9): hasil 1 bila plusarg ditemukan. Di inlining
+            // routine cukup konstanta 1; penulisan ke variabel target
+            // ditangani codegen statement.
+            Expr::FunctionCall {
+                name,
+                args: _,
+                span: _,
+            } if name == "$value$plusargs" => Expr::Number(1),
             Expr::FunctionCall { name, args, span } => {
                 // Panggilan fungsi DPI-C import dalam posisi ekspresi —
                 // ubah menjadi `Expr::DpiCall` agar nilai balik bisa dipakai
@@ -871,8 +880,7 @@ impl<'a> Inliner<'a> {
                         .dpis
                         .iter()
                         .find(|d| d.kind == DpiKind::Import && d.name == *name)
-                        .map(|d| d.ret_type.clone())
-                        .flatten();
+                        .and_then(|d| d.ret_type.clone());
                     return Ok(Expr::DpiCall {
                         name: name.clone(),
                         c_name,

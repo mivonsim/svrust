@@ -552,6 +552,26 @@ pub fn lower_expression_dengan_konteks(
             data_type: DataType::signed(64),
             unit: crate::lower_stmt::map_time_unit(*unit),
         }),
+        // `$value$plusargs("+nama=fmt", var)` (LRM §20.9) dalam posisi
+        // ekspresi, misal `if ($value$plusargs(...))`. Baca plusarg dari baris
+        // perintah lalu masukkan ke `var`; sebagai ekspresi hasilnya 1 bila
+        // plusarg ditemukan, 0 bila tidak. Di elaborate cukup menentukan tipe
+        // dari variabel target; nilai runtime ditetapkan oleh codegen.
+        AstExpr::FunctionCall { name, args, span } if name == "$value$plusargs" => {
+            let Some(target) = args.get(1) else {
+                return Err(ElaborateError::new(
+                    "$value$plusargs butuh variabel target sebagai argumen kedua".to_string(),
+                    *span,
+                ));
+            };
+            let target_expr = lower_expression(target, symbols)?;
+            Ok(Expr::Const {
+                value: 1,
+                data_type: target_expr.data_type(),
+                unknown_mask: 0,
+                zmask: 0,
+            })
+        }
         // `expand_module` sudah mengembangkan setiap panggilan function sebelum
         // lowering. Node yang sampai ke sini berarti ada jalur yang melewatkan
         // pass tersebut, jadi dilaporkan sebagai error, bukan diabaikan diam-diam.

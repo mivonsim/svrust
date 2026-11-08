@@ -625,3 +625,24 @@ fn concat_bersamaan_dengan_select_pada_lhs() {
     let design = build(src);
     assert_eq!(design.processes.len(), 2);
 }
+
+// --- BUG-102: $value$plusargs dalam posisi ekspresi (LRM §20.9) ---
+
+#[test]
+fn value_plusargs_sebagai_ekspresi_ambil_tipe_target() {
+    // `$value$plusargs("+en=1", en)` sebagai ekspresi: tipe diambil dari
+    // variabel target `en`, hasil 1 bila plusarg ditemukan.
+    let src = "module m(input en, output v); assign v = $value$plusargs(\"+en=1\", en); endmodule";
+    let design = build(src);
+    match nilai_rhs_mentah(&design) {
+        Expr::Const {
+            value,
+            unknown_mask: 0,
+            zmask: 0,
+            ..
+        } => {
+            assert_eq!(value, 1);
+        }
+        other => panic!("expected const, dapat {other:?}"),
+    }
+}
