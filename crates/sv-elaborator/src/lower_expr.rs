@@ -569,14 +569,12 @@ pub fn lower_expression_dengan_konteks(
                 zmask: 0,
             })
         }
-        // System function sebagai ekspresi (LRM §20), misal `$sformatf`,
-        // `$value$plusargs`. Untuk tahap elaborasi/check cukup kembalikan
         // System function (`$value$plusargs`, `$sformatf`) dan fungsi/task
         // tak dikenal (mis. `aes_transpose` di OpenTitan): placeholder 0 agar
         // `check` tanpa `--top` tetap melenggang (pendekatan lenient,
         // FASA.md). Semantik penuh diterapkan codegen/runtime, bukan di
         // elaborasi. Fungsi pengguna yang diketahui sudah di-inlining oleh
-        // `expand_module` sebelum lowering, jidak pernah sampai ke sini.
+        // `expand_module` sebelum lowering, jadi tidak pernah sampai ke sini.
         AstExpr::FunctionCall { .. } => Ok(Expr::Const {
             value: 0,
             data_type: DataType::logic(32),

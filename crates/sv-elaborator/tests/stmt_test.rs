@@ -172,7 +172,10 @@ fn expr_memakai_binop(expr: &Expr, op: sv_ir::BinOp) -> bool {
         Expr::Concat { items, .. } => items.iter().any(|i| expr_memakai_binop(i, op)),
         Expr::Replicate { value, .. } => expr_memakai_binop(value, op),
         Expr::Cast { operand, .. } => expr_memakai_binop(operand, op),
-        Expr::Const { .. } | Expr::SignalRef { .. } | Expr::SimTime { .. } | Expr::DpiCall { .. } => false,
+        Expr::Const { .. }
+        | Expr::SignalRef { .. }
+        | Expr::SimTime { .. }
+        | Expr::DpiCall { .. } => false,
     }
 }
 
