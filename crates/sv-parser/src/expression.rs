@@ -170,11 +170,31 @@ fn reduction_ganda(first: &Token, next: Option<&Token>) -> Option<UnaryOp> {
 fn parse_postfix(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
     let (mut base, mut idx) = parse_primary(tokens)?;
 
-    // LRM §13.4: `nama(argumen, ...)` adalah pemanggilan function. Sleeve
-    // sequel setelah tanda kurung, misal `f(a)[3:0]`.
-    if let (Token::Ident(_), Some(&Token::LParen)) =
+    // LRM §13.4: `nama(argumen, ...)` adalah pemanggilan function. Handle
+    // keduanya: `f(a)` sederhana dan `pkg::f(a)` hierarkis.
+    if idx < tokens.len() && tokens[idx].token == Token::LParen {
+        let nama = match &base {
+            Expr::Ident { name, .. } => name.clone(),
+            Expr::HierarchicalRef { parts, .. } => parts.join("::"),
+            _ => {
+                return Err(format!(
+                    "expected nama function sebelum '(', dapat {:?}",
+                    base
+                ))
+            }
+        };
+        let span = tokens[idx].span;
+        let (args, consumed) = parse_function_args(&tokens[idx..])?;
+        idx += consumed;
+        base = Expr::FunctionCall {
+            name: nama,
+            args,
+            span,
+        };
+    } else if let (Token::Ident(_), Some(&Token::LParen)) =
         (&tokens[0].token, tokens.get(1).map(|t| &t.token))
     {
+        // `f(a)` dengan nama tunggal: parse_function_call mulai dari tokens[0].
         let (call, consumed) = parse_function_call(tokens)?;
         base = call;
         idx = consumed;
@@ -357,6 +377,29 @@ fn parse_function_call(tokens: &[SpannedToken]) -> Result<(Expr, usize), String>
     idx += 1;
 
     Ok((Expr::FunctionCall { name, args, span }, idx))
+}
+
+/// Parse argumen function `(a, b, ...)` dimulai dari token `(`.
+/// Mengembalikan `(argumen, jumlah_token_dikonsumsi_termasuk_`)_`).
+fn parse_function_args(tokens: &[SpannedToken]) -> Result<(Vec<Expr>, usize), String> {
+    if tokens.is_empty() || tokens[0].token != Token::LParen {
+        return Err("expected '(' untuk argumen function".to_string());
+    }
+    let mut idx = 1; // lewati '('
+    let mut args = Vec::new();
+    while idx < tokens.len() && tokens[idx].token != Token::RParen {
+        let (arg, consumed) = parse_expression(&tokens[idx..])?;
+        args.push(arg);
+        idx += consumed;
+        if tokens.get(idx).map(|t| &t.token) == Some(&Token::Comma) {
+            idx += 1;
+        }
+    }
+    if tokens.get(idx).map(|t| &t.token) != Some(&Token::RParen) {
+        return Err("expected ')' penutup argumen function".to_string());
+    }
+    idx += 1; // lewati ')'
+    Ok((args, idx))
 }
 
 /// Bentuk hasil parsing `[ ... ]` (LRM §7.8).
