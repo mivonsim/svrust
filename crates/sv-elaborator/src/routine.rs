@@ -971,6 +971,17 @@ impl<'a> Inliner<'a> {
                 lsb: *lsb,
                 span: *span,
             },
+            Expr::SelectDynamic {
+                base,
+                msb,
+                lsb,
+                span,
+            } => Expr::SelectDynamic {
+                base: Box::new(self.expr(base)?),
+                msb: Box::new(self.expr(msb)?),
+                lsb: Box::new(self.expr(lsb)?),
+                span: *span,
+            },
             Expr::IndexDynamic { base, index, span } => Expr::IndexDynamic {
                 base: Box::new(self.expr(base)?),
                 index: Box::new(self.expr(index)?),

@@ -156,6 +156,11 @@ fn expr_memakai_binop(expr: &Expr, op: sv_ir::BinOp) -> bool {
         } => *o == op || expr_memakai_binop(lhs, op) || expr_memakai_binop(rhs, op),
         Expr::Un { operand, .. } => expr_memakai_binop(operand, op),
         Expr::Select { base, .. } => expr_memakai_binop(base, op),
+        Expr::SelectDynamic { base, msb, lsb, .. } => {
+            expr_memakai_binop(base, op)
+                || expr_memakai_binop(msb, op)
+                || expr_memakai_binop(lsb, op)
+        }
         Expr::Index { base, index, .. } => {
             expr_memakai_binop(base, op) || expr_memakai_binop(index, op)
         }

@@ -364,6 +364,11 @@ fn nama_expr(expr: &mut Expr, ctx: &Ctx) {
             nama_expr(base, ctx);
             nama_expr(index, ctx);
         }
+        Expr::SelectDynamic { base, msb, lsb, .. } => {
+            nama_expr(base, ctx);
+            nama_expr(msb, ctx);
+            nama_expr(lsb, ctx);
+        }
         Expr::Number(_)
         | Expr::Sized { .. }
         | Expr::SystemTime { .. }

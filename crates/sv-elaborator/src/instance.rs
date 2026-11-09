@@ -744,6 +744,17 @@ fn lingkup_expr(e: &AstExpr, prefix: &str, koneksi: &KoneksiMap, _asal: Span) ->
             lsb: *lsb,
             span: *span,
         },
+        AstExpr::SelectDynamic {
+            base,
+            msb,
+            lsb,
+            span,
+        } => AstExpr::SelectDynamic {
+            base: Box::new(lingkup_expr(base, prefix, koneksi, *span)),
+            msb: Box::new(lingkup_expr(msb, prefix, koneksi, *span)),
+            lsb: Box::new(lingkup_expr(lsb, prefix, koneksi, *span)),
+            span: *span,
+        },
         AstExpr::IndexDynamic { base, index, span } => AstExpr::IndexDynamic {
             base: Box::new(lingkup_expr(base, prefix, koneksi, *span)),
             index: Box::new(lingkup_expr(index, prefix, koneksi, *span)),

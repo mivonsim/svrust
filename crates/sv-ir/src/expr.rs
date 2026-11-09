@@ -139,6 +139,14 @@ pub enum Expr {
         lsb: u32,
         data_type: DataType,
     },
+    /// Part-select dinamis `a[msb:lsb]` dengan batas non-konstanta (LRM §7.8).
+    /// Codegen menghasilkan helper runtime untuk hitung irisan.
+    SelectDynamic {
+        base: Box<Expr>,
+        msb: Box<Expr>,
+        lsb: Box<Expr>,
+        data_type: DataType,
+    },
     /// Operator kondisional `cond ? a : b` (LRM §11.4.11).
     Ternary {
         condition: Box<Expr>,
@@ -240,6 +248,7 @@ impl Expr {
             | Expr::Replicate { data_type, .. }
             | Expr::Cast { data_type, .. }
             | Expr::Index { data_type, .. }
+            | Expr::SelectDynamic { data_type, .. }
             | Expr::SimTime { data_type, .. }
             | Expr::DpiCall { data_type, .. } => *data_type,
         }

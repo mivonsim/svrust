@@ -259,6 +259,13 @@ pub fn evaluasi(expr: &Expr, signals: &mut Vec<u64>) -> u64 {
             let a = evaluasi(base, signals);
             (a >> lsb) & lebar_mask(msb - lsb + 1)
         }
+        Expr::SelectDynamic { base, msb, lsb, .. } => {
+            let a = evaluasi(base, signals);
+            let m = evaluasi(msb, signals);
+            let l = evaluasi(lsb, signals);
+            let width = (std::cmp::max(m, l) + 1) as u32;
+            (a >> l) & lebar_mask(width)
+        }
         Expr::Ternary {
             condition,
             when_true,

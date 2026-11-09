@@ -329,6 +329,11 @@ fn semua_ident_dikenal(expr: &Expr, params: &ParamTable) -> bool {
                 && semua_ident_dikenal(when_false, params)
         }
         Expr::Select { base, .. } => semua_ident_dikenal(base, params),
+        Expr::SelectDynamic { base, msb, lsb, .. } => {
+            semua_ident_dikenal(base, params)
+                && semua_ident_dikenal(msb, params)
+                && semua_ident_dikenal(lsb, params)
+        }
         Expr::IndexDynamic { base, index, .. } => {
             semua_ident_dikenal(base, params) && semua_ident_dikenal(index, params)
         }

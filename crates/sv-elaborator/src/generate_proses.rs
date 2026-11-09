@@ -286,6 +286,17 @@ pub(crate) fn subst_expr(expr: &AstExpr, env: &GenvarEnv, scope: &ScopeBlok) -> 
             lsb: *lsb,
             span: *span,
         },
+        AstExpr::SelectDynamic {
+            base,
+            msb,
+            lsb,
+            span,
+        } => AstExpr::SelectDynamic {
+            base: Box::new(subst_expr(base, env, scope)),
+            msb: Box::new(subst_expr(msb, env, scope)),
+            lsb: Box::new(subst_expr(lsb, env, scope)),
+            span: *span,
+        },
         AstExpr::IndexDynamic { base, index, span } => AstExpr::IndexDynamic {
             base: Box::new(subst_expr(base, env, scope)),
             index: Box::new(subst_expr(index, env, scope)),

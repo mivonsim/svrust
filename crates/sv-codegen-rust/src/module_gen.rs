@@ -1955,6 +1955,10 @@ fn max_width_expr(expr: &Expr) -> u32 {
         // `Bits::<MAX_WIDTH>` dan indeks di atas `MAX_WIDTH` membaca bit yang
         // tidak ada (`Logic::X`) padahal nilainya ada di sinyal.
         Expr::Select { base, .. } => max_width_expr(base).max(base.data_type().width),
+        Expr::SelectDynamic { base, msb, lsb, .. } => max_width_expr(base)
+            .max(max_width_expr(msb))
+            .max(max_width_expr(lsb))
+            .max(base.data_type().width),
         Expr::Ternary {
             condition,
             when_true,

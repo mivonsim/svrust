@@ -247,6 +247,12 @@ fn parse_postfix(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
                     index: Box::new(index),
                     span,
                 },
+                Indeks::PartDinamis { msb, lsb } => Expr::SelectDynamic {
+                    base: Box::new(base),
+                    msb: Box::new(msb),
+                    lsb: Box::new(lsb),
+                    span,
+                },
             };
         } else {
             break;
@@ -406,8 +412,11 @@ fn parse_function_args(tokens: &[SpannedToken]) -> Result<(Vec<Expr>, usize), St
 enum Indeks {
     /// `[N]` atau `[MSB:LSB]` dengan kedua batas konstanta.
     Konstanta(u32, u32),
-    /// `[expr]` dengan `expr` non-konstanta; hanya untuk baca.
+    /// `[expr]` dengan `expr` non-konstanta; hanya untuk baca bit tunggal.
     Dinamis(Expr),
+    /// `[MSB:LSB]` dengan salah satu atau kedua batas non-konstanta;
+    /// irisan dinamis yang perlu helper runtime.
+    PartDinamis { msb: Expr, lsb: Expr },
 }
 
 /// Parse isi `[ ... ]` setelah kurung siku pertama sudah dimakan.
@@ -465,8 +474,7 @@ fn parse_select_index(tokens: &[SpannedToken]) -> Result<(Indeks, usize), String
 
     match setelah {
         None => Err("expected ']' closing select".to_string()),
-        // Part-select `[msb:lsb]`: kedua batas harus konstanta karena helper
-        // runtime-nya hanya menangani indeks tunggal.
+        // Part-select `[msb:lsb]`: batas boleh konstan atau dinamis.
         Some(Token::Colon) => {
             if consumed + 1 >= closing {
                 return Err(crate::pesan::tandai(
@@ -475,8 +483,7 @@ fn parse_select_index(tokens: &[SpannedToken]) -> Result<(Indeks, usize), String
                     "part-select dengan batas atas kosong `[msb:]` belum didukung".to_string(),
                 ));
             }
-            let msb = batas_part_select_konstan(&expr, "atas")
-                .map_err(|pesan| crate::pesan::tandai(tokens, 0, pesan))?;
+            // `expr` sudah berisi msb expression (dari parse_expression di atas).
             let (lsb_expr, lsb_consumed) = parse_expression(&tokens[consumed + 1..closing])?;
             if consumed + 1 + lsb_consumed != closing {
                 return Err(crate::pesan::tandai(
@@ -486,14 +493,21 @@ fn parse_select_index(tokens: &[SpannedToken]) -> Result<(Indeks, usize), String
                         "sisa token tak dikenal pada part-select: {:?}",
                         tokens[consumed + 1 + lsb_consumed..closing]
                             .iter()
-                            .map(|t| &t.token)
+                            .map(|t| format!("{:?}", t.token))
                             .collect::<Vec<_>>()
+                            .join(" ")
                     ),
                 ));
             }
-            let lsb = batas_part_select_konstan(&lsb_expr, "bawah")
-                .map_err(|pesan| crate::pesan::tandai(tokens, consumed + 1, pesan))?;
-            Ok((Indeks::Konstanta(msb, lsb), closing))
+            let lsb = lsb_expr;
+            // Kalau kedua batas konstanta, jadi Select konstan; kalau tidak,
+            // jadi SelectDynamic yang butuh helper runtime.
+            match (indeks_konstan(&expr), indeks_konstan(&lsb)) {
+                (Some(msb_val), Some(lsb_val)) => {
+                    Ok((Indeks::Konstanta(msb_val, lsb_val), closing))
+                }
+                _ => Ok((Indeks::PartDinamis { msb: expr, lsb }, closing)),
+            }
         }
         Some(Token::RBracket) => {
             // Bentuk tunggal: literal berarti select konstan, selain itu dinamis.
@@ -508,18 +522,6 @@ fn parse_select_index(tokens: &[SpannedToken]) -> Result<(Indeks, usize), String
             format!("expected ']' closing select, ditemukan {other:?}"),
         )),
     }
-}
-
-/// Batas part-select harus literal; helper runtime hanya bisa menghitung irisan
-/// statis. Pesannya menyebut posisi batas supaya dua sisi bisa dibedakan.
-fn batas_part_select_konstan(expr: &Expr, posisi: &str) -> Result<u32, String> {
-    indeks_konstan(expr).ok_or_else(|| {
-        format!(
-            "part-select dengan batas {posisi} dinamis belum didukung; \
-             helper runtime hanya bisa menghitung irisan statis, \
-             misal `a[7:0]`"
-        )
-    })
 }
 
 /// Nilai indeks harus literal non-negatif dan diketahui; indeks parametrik belum
@@ -1396,11 +1398,13 @@ mod tests {
 
     #[test]
     fn part_select_dengan_batas_dinamis_ditolak() {
-        // Helper runtime hanya menangani indeks tunggal, jadi bentuk `a[hi:3]`
-        // ditolak eksplisit — bukan diam-diam jadi bit-select.
+        // Batas dinamis sekarang menghasilkan SelectDynamic (tidak error).
         let tokens = lex("a[W:3]").unwrap();
-        let err = parse_expression(&tokens).expect_err("batas dinamis ditolak");
-        assert!(err.contains("batas atas dinamis"), "pesan: {err}");
+        let (expr, _) = parse_expression(&tokens).expect("parse");
+        assert!(
+            matches!(expr, Expr::SelectDynamic { .. }),
+            "harus SelectDynamic, dapat {expr:?}"
+        );
     }
 
     // Bug: `a[` membuat `parse_select_index` dipanggil dengan slice kosong lalu
@@ -1422,19 +1426,13 @@ mod tests {
     // gagal dengan pesan "expected ']'" yang tidak masuk akal.
     #[test]
     fn part_select_dengan_batas_ekspresi_pesan_jelas() {
-        for src in [
-            "a[W-1:0]",
-            "a[N-1:0]",
-            "a[i+1:j+1]",
-            "a[-1:0]",
-            "a[3:0][W-1:0]",
-        ] {
+        // Batas ekspresi menghasilkan SelectDynamic (tidak error).
+        for src in ["a[W-1:0]", "a[N-1:0]", "a[i+1:j+1]", "a[3:0][W-1:0]"] {
             let tokens = lex(src).unwrap();
-            let err =
-                parse_expression(&tokens).expect_err("batas ekspresi tanpa dukungan harus error");
+            let (expr, _) = parse_expression(&tokens).expect("parse");
             assert!(
-                err.contains("part-select") && err.contains("dinamis"),
-                "{src} dapat pesan tak berguna: {err}"
+                matches!(expr, Expr::SelectDynamic { .. }),
+                "{src} harus SelectDynamic, dapat {expr:?}"
             );
         }
     }
@@ -1562,11 +1560,16 @@ mod tests {
         }
     }
 
-    // Part-select dengan batas `x` juga bukan irisan statis.
+    // Part-select dengan batas `x` juga bukan irisan statis, jadi
+    // menghasilkan SelectDynamic.
     #[test]
     fn part_select_dengan_batas_x_bukan_select_konstan() {
         let tokens = lex("a[3:1'bx]").unwrap();
-        assert!(parse_expression(&tokens).is_err());
+        let (expr, _) = parse_expression(&tokens).expect("parse");
+        assert!(
+            matches!(expr, Expr::SelectDynamic { .. }),
+            "harus SelectDynamic, dapat {expr:?}"
+        );
     }
 
     #[test]

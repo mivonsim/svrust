@@ -376,6 +376,11 @@ fn ekspresi(expr: &mut Expr, scale: TimeScale) {
             ekspresi(when_false, scale);
         }
         Expr::Select { base, .. } => ekspresi(base, scale),
+        Expr::SelectDynamic { base, msb, lsb, .. } => {
+            ekspresi(base, scale);
+            ekspresi(msb, scale);
+            ekspresi(lsb, scale);
+        }
         Expr::IndexDynamic { base, index, .. } => {
             ekspresi(base, scale);
             ekspresi(index, scale);

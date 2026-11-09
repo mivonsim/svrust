@@ -62,6 +62,15 @@ pub enum Expr {
         index: Box<Expr>,
         span: Span,
     },
+    /// Part-select dinamis `a[msb:lsb]` dengan batas non-konstanta (LRM §7.8).
+    ///
+    /// Memerlukan helper runtime untuk menghitung irisan pada saat simulasi.
+    SelectDynamic {
+        base: Box<Expr>,
+        msb: Box<Expr>,
+        lsb: Box<Expr>,
+        span: Span,
+    },
     /// Concatenation `{a, b, c}` — lebar = jumlah lebar seluruh item (LRM §11.8.1).
     Concat {
         items: Vec<Expr>,

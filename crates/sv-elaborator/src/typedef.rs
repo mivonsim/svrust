@@ -316,6 +316,17 @@ impl TypeTable {
                 lsb: *lsb,
                 span: *span,
             },
+            Expr::SelectDynamic {
+                base,
+                msb,
+                lsb,
+                span,
+            } => Expr::SelectDynamic {
+                base: Box::new(self.ganti_literal(base)),
+                msb: Box::new(self.ganti_literal(msb)),
+                lsb: Box::new(self.ganti_literal(lsb)),
+                span: *span,
+            },
             Expr::Concat { items, span } => Expr::Concat {
                 items: items.iter().map(|i| self.ganti_literal(i)).collect(),
                 span: *span,

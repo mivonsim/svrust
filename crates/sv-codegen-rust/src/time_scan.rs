@@ -172,6 +172,9 @@ pub fn expr_uses_time(expr: &Expr) -> bool {
         Expr::Bin { lhs, rhs, .. } => expr_uses_time(lhs) || expr_uses_time(rhs),
         Expr::Un { operand, .. } => expr_uses_time(operand),
         Expr::Select { base, .. } => expr_uses_time(base),
+        Expr::SelectDynamic { base, msb, lsb, .. } => {
+            expr_uses_time(base) || expr_uses_time(msb) || expr_uses_time(lsb)
+        }
         Expr::Ternary {
             condition,
             when_true,

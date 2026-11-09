@@ -223,6 +223,11 @@ fn fold_children(expr: &mut Expr, n: &mut u32) {
         }
         Expr::Un { operand, .. } => *n += fold_expr(operand),
         Expr::Select { base, .. } => *n += fold_expr(base),
+        Expr::SelectDynamic { base, msb, lsb, .. } => {
+            *n += fold_expr(base);
+            *n += fold_expr(msb);
+            *n += fold_expr(lsb);
+        }
         Expr::Ternary {
             condition,
             when_true,

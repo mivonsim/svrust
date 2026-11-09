@@ -700,6 +700,17 @@ fn rename_expr(expr: &Expr, peta: &HashMap<String, String>) -> Expr {
             lsb: *lsb,
             span: *span,
         },
+        Expr::SelectDynamic {
+            base,
+            msb,
+            lsb,
+            span,
+        } => Expr::SelectDynamic {
+            base: Box::new(rename_expr(base, peta)),
+            msb: Box::new(rename_expr(msb, peta)),
+            lsb: Box::new(rename_expr(lsb, peta)),
+            span: *span,
+        },
         Expr::IndexDynamic { base, index, span } => Expr::IndexDynamic {
             base: Box::new(rename_expr(base, peta)),
             index: Box::new(rename_expr(index, peta)),

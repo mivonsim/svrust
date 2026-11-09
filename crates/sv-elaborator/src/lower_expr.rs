@@ -430,6 +430,35 @@ pub fn lower_expression_dengan_konteks(
                 data_type,
             })
         }
+        AstExpr::SelectDynamic {
+            base,
+            msb,
+            lsb,
+            span: _,
+        } => {
+            // Part-select dinamis: batasnya ekspresi yang dievaluasi runtime.
+            let lowered_base = lower_expression(base, symbols)?;
+            let lowered_msb = lower_expression(msb, symbols)?;
+            let lowered_lsb = lower_expression(lsb, symbols)?;
+            let lebar = lowered_base.data_type().width as u64;
+            if u64::from(lowered_msb.data_type().width) > lebar
+                || u64::from(lowered_lsb.data_type().width) > lebar
+            {
+                return Err(ElaborateError::new(
+                    format!(
+                        "batas part-select dinamis melebihi lebar sinyal ({} bit)",
+                        lebar
+                    ),
+                    span_expr(base),
+                ));
+            }
+            Ok(Expr::SelectDynamic {
+                base: Box::new(lowered_base),
+                msb: Box::new(lowered_msb),
+                lsb: Box::new(lowered_lsb),
+                data_type: DataType::logic(lebar as u32),
+            })
+        }
         // LRM §7.8: indeks dinamis `a[i]`. Semantiknya ditentukan dari base LANGSUNG,
         // bukan dari simbol yang dicari secara rekursif: `mem[2][k]` berarti baca
         // bit `k` dari elemen `mem[2]` — base-nya sudah diekstrak jadi skalar
@@ -762,6 +791,7 @@ pub fn span_expr(expr: &AstExpr) -> sv_lexer::span::Span {
         | AstExpr::Unary { span, .. }
         | AstExpr::Ternary { span, .. }
         | AstExpr::Select { span, .. }
+        | AstExpr::SelectDynamic { span, .. }
         | AstExpr::IndexDynamic { span, .. }
         | AstExpr::Concat { span, .. }
         | AstExpr::Replicate { span, .. }
@@ -921,6 +951,11 @@ pub fn collect_signals(expr: &Expr, out: &mut Vec<SignalId>) {
         }
         Expr::Un { operand, .. } => collect_signals(operand, out),
         Expr::Select { base, .. } => collect_signals(base, out),
+        Expr::SelectDynamic { base, msb, lsb, .. } => {
+            collect_signals(base, out);
+            collect_signals(msb, out);
+            collect_signals(lsb, out);
+        }
         Expr::Ternary {
             condition,
             when_true,

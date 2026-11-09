@@ -139,6 +139,18 @@ fn write_bits_expr(expr: &Expr, out: &mut String, indent: &Indent) {
             out.push_str(&format!(", {lsb}, {}", expr_width(expr)));
             out.push(')');
         }
+        Expr::SelectDynamic { base, msb, lsb, .. } => {
+            // Part-select dinamis: helper runtime hitung irisan pada saat
+            // simulasi. `select_dynamic(base, msb, lsb, width)`.
+            let w = base.data_type().width as usize;
+            out.push_str(&format!("sv_runtime::select_dynamic::<{w}, MAX_WIDTH>("));
+            write_expr(base, out, indent);
+            out.push_str(", ");
+            write_expr(msb, out, indent);
+            out.push_str(", ");
+            write_expr(lsb, out, indent);
+            out.push_str(&format!(", {})", expr_width(expr)));
+        }
         Expr::Ternary {
             condition,
             when_true,
