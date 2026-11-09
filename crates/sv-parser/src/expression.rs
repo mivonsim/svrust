@@ -635,6 +635,12 @@ fn parse_primary(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
                 idx,
             ))
         }
+        // LRM §6.14: `'{...}` adalah concatenation dengan lebar yang diturunkan
+        // dari konteks (unsized concatenation). `'` diabaikan, hanya parse brace.
+        Token::Cast if matches!(tokens.get(1).map(|t| &t.token), Some(&Token::LBrace)) => {
+            let (expr, consumed) = parse_brace(&tokens[1..])?;
+            Ok((expr, consumed + 1))
+        }
         // LRM §6.14: `'` tanpa lebar eksplisit bukan size cast yang sah, dan
         // tanpa `s`/`b`/`o`/`d`/`h` juga bukan literal. Pesannya menyebut
         // bentuk yang benar.

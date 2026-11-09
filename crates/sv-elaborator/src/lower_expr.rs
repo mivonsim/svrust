@@ -493,15 +493,18 @@ pub fn lower_expression_dengan_konteks(
                 flat_element,
             })
         }
-        // LRM §11.8.1: lebar concatenation = jumlah lebar seluruh item.
+        // LRM §11.8.1: lebar concatenation = max(lebar konteks, jumlah lebar
+        // seluruh item). Concatenation tidak terukur (`'{a, b}`) mengambil
+        // lebar dari konteks assignment (LRM §11.6.1 Tabel 11-21).
         AstExpr::Concat { items, .. } => {
             let mut lowered = Vec::with_capacity(items.len());
-            let mut lebar = 0u32;
+            let mut lebar_seluruh_item = 0u32;
             for item in items {
                 let e = lower_expression(item, symbols)?;
-                lebar = lebar.saturating_add(e.data_type().width);
+                lebar_seluruh_item = lebar_seluruh_item.saturating_add(e.data_type().width);
                 lowered.push(e);
             }
+            let lebar = lebar_konteks.max(lebar_seluruh_item);
             if lowered.len() == 1 {
                 // `{a}` sah tetapi tidak mengubah apa pun.
                 let mut out = lowered;
