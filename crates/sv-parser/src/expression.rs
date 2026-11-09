@@ -8,7 +8,6 @@ pub fn parse_expression(tokens: &[SpannedToken]) -> Result<(Expr, usize), String
     if tokens.is_empty() {
         return Err("empty expression".to_string());
     }
-    eprintln!("DEBUG parse_expression: tokens[0] = {:?}", tokens.get(0).map(|t| &t.token));
     // BUG-30: bentuk prefix `++a` punya efek samping dan bisa dievaluasi
     // berulang pada proses combinational, jadi belum didukung. Hanya posisi
     // awal yang diperiksa, karena slice token menyisipkan sisa statement

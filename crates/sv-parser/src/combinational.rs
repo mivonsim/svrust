@@ -49,12 +49,10 @@ pub fn parse_combinational_statement(
         // LRM §14: `assign lhs = rhs;` di dalam blok prosedural adalah
         // penetapans berkelanjutan prosedural yang override penulangan biasa.
         Token::Assign => {
-            eprintln!("DEBUG combinational::Assign: tokens[0] = {:?}, tokens[1] = {:?}", tokens.get(0).map(|t| &t.token), tokens.get(1).map(|t| &t.token));
             let span = tokens[0].span;
             let mut idx = 1; // skip 'assign'
-            eprintln!("DEBUG combinational::Assign: tokens[1] = {:?}, tokens.len = {}", tokens.get(1).map(|t| &t.token), tokens.len());
-                             // LRM §11.8.1: concatenation pada LHS, misal `{a, b} = {c, d}`,
-                             // setara dengan `a = c; b = d;`. Parse setiap elemen LHS terpisah.
+            // LRM §11.8.1: concatenation pada LHS, misal `{a, b} = {c, d}`,
+            // setara dengan `a = c; b = d;`. Parse setiap elemen LHS terpisah.
             let lhss = if tokens.get(idx).map(|t| &t.token) == Some(&Token::LBrace) {
                 let (lhs_vec, consumed) = parse_concat_lvalue(&tokens[idx..])?;
                 idx += consumed;

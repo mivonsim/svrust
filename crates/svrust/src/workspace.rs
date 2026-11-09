@@ -21,7 +21,7 @@ fn trace_path() -> Result<PathBuf, String> {
 }
 
 pub struct Workspace {
-    target_sv: PathBuf,
+    pub target_sv: PathBuf,
     sim_dir: PathBuf,
 }
 

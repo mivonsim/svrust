@@ -7,3 +7,4 @@ description = "Definisi AST SystemVerilog"
 
 [dependencies]
 sv-lexer = { path = "../sv-lexer" }
+serde = { version = "1", features = ["derive"] }

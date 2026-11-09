@@ -6,3 +6,4 @@ license.workspace = true
 description = "Diagnostic data types, source locations, and rendering"
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }

@@ -1,5 +1,6 @@
 // Tanggung jawab: orkestrasi SV source menjadi Design dan Rust source.
 use rayon::prelude::*;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
@@ -11,6 +12,8 @@ use sv_cache::SvCache;
 use sv_diag::{SourceId, SourceMap};
 use sv_ir::Design;
 use sv_lexer::SpannedToken;
+
+use crate::workspace::Workspace;
 
 /// Ekspansi berkas `.f` (file list) menjadi daftar berkas SV konkret.
 /// Baris kosong dan komentar (`//`, `#`) dilewati; path relatif terhadap
@@ -112,10 +115,6 @@ pub fn compile_with_top(source: &str, top: Option<&str>) -> Result<Design, Strin
 /// karena pemformat dan penulisan sinyal sudah memask.
 pub fn optimalkan(design: &mut Design) -> sv_opt::Report {
     let laporan = sv_opt::optimize(design);
-    eprintln!(
-        "sv-opt: {} ekspresi terlipat dari {} proses",
-        laporan.folded, laporan.processes
-    );
     laporan
 }
 
@@ -301,14 +300,6 @@ pub fn collect_modules(
             .into_iter()
             .filter(|m| reachable.contains(&m.name))
             .collect();
-        eprintln!(
-            "DEBUG reachable modules: {} kept out of {} total",
-            kept.len(),
-            total_modules
-        );
-        for m in &kept {
-            eprintln!("  kept: {}", m.name);
-        }
         kept
     } else {
         modules
@@ -593,14 +584,32 @@ pub fn compile_semua_root(
     let collection = collect_modules(paths, incdir, top)?;
     let tops = tops_dipakai(&collection.modules, top)
         .map_err(|error| diagnostic_top_error(error, &collection))?;
-    let mut cache = SvCache::baru();
-    elaborate_tops(&collection, &tops, &mut cache)
+
+    // Hash gabungan seluruh sumber RTL sebagai kunci cache: perubahan satu file
+    // merubah hash → seluruh cache elaborate invalid (aman, meski konsentrat).
+    let sumber_hash = hash_sumber(&collection);
+
+    let workspace = Workspace::detect()?;
+    let cache_root = workspace.target_sv.join("cache");
+    let mut cache = SvCache::baru_dengan_root(cache_root)?;
+    elaborate_tops(&collection, &tops, &sumber_hash, &mut cache)
+}
+
+/// Hitung hash SHA256 atas seluruh sumber RTL (preprocessed + asli) untuk
+/// kunci cache elaborate. Perubahan satu file merubah hash → cache invalid.
+pub fn hash_sumber(collection: &ModuleCollection) -> String {
+    let mut hasher = Sha256::new();
+    for sumber in collection.source_preprocessed.values() {
+        hasher.update(sumber.as_bytes());
+    }
+    format!("{:x}", hasher.finalize())
 }
 
 #[allow(clippy::result_large_err)]
 pub(crate) fn elaborate_tops(
     collection: &ModuleCollection,
     tops: &[String],
+    dependensi_hash: &str,
     cache: &mut SvCache,
 ) -> Result<Vec<sv_ir::Design>, crate::CliError> {
     let mut diagnostics = collection.diagnostics.clone();
@@ -609,12 +618,16 @@ pub(crate) fn elaborate_tops(
     let mut kunci_untuk_top: Vec<(String, sv_cache::CacheKey)> = Vec::new();
     let mut cached_designs: Vec<sv_ir::Design> = Vec::new();
     for nama in tops {
-        let kunci = sv_cache::CacheKey::baru(nama, cache.ambil_dependensi_hash(nama).unwrap_or(""));
+        let kunci =
+            sv_cache::CacheKey::baru(nama, cache.ambil_dependensi_hash(nama).unwrap_or(dependensi_hash));
         if let Some(cached) = cache.cek_elaborate(&kunci) {
-            cached_designs.push(cached.design.clone());
-        } else {
-            kunci_untuk_top.push((nama.clone(), kunci));
+            if cached.sukses {
+                cached_designs.push(sv_ir::Design::new(&cached.nama_modul));
+            }
+            diagnostics.extend(cached.diagnistik.clone());
+            continue;
         }
+        kunci_untuk_top.push((nama.clone(), kunci));
     }
 
     // Langkah 2 (parallel): elaborate root yang belum di-cache secara independen dengan rayon.
@@ -664,15 +677,14 @@ pub(crate) fn elaborate_tops(
     for hasil in hasil_elaborasi {
         match hasil {
             Ok((nama, design)) => {
-                let kunci = sv_cache::CacheKey::baru(
-                    &nama,
-                    cache.ambil_dependensi_hash(&nama).unwrap_or(""),
-                );
+                let kunci =
+                    sv_cache::CacheKey::baru(&nama, cache.ambil_dependensi_hash(&nama).unwrap_or(dependensi_hash));
                 cache.simpan_elaborate(
                     kunci,
                     sv_cache::CachedElaborate {
-                        design: design.clone(),
+                        nama_modul: nama.clone(),
                         diagnistik: vec![],
+                        sukses: true,
                     },
                 );
                 designs.push(design);
@@ -680,6 +692,9 @@ pub(crate) fn elaborate_tops(
             Err(d) => diagnostics.push(d),
         }
     }
+
+    // Simpan cache ke disk untuk panggilan CLI berikutnya.
+    cache.simpan_ke_disk()?;
 
     if !diagnostics.is_empty() {
         // Deduplikasi: error sama dari banyak top module hanya ditampilkan sekali.
@@ -1148,7 +1163,7 @@ mod tests {
         };
 
         let mut cache = SvCache::baru();
-        let error = elaborate_tops(&collection, &["a".to_string(), "b".to_string()], &mut cache)
+        let error = elaborate_tops(&collection, &["a".to_string(), "b".to_string()], "", &mut cache)
             .expect_err("kedua root mengandung sinyal target yang tidak dikenal");
         let report = error
             .report()
@@ -1356,7 +1371,7 @@ mod tests {
             module_origins: HashMap::new(),
         };
         let mut cache = sv_cache::SvCache::baru();
-        let designs = elaborate_tops(&collection, &tops, &mut cache).expect("elaborate semua root");
+        let designs = elaborate_tops(&collection, &tops, "", &mut cache).expect("elaborate semua root");
         assert_eq!(designs.len(), 2, "harus ada 2 design untuk 2 root");
         let nama: Vec<_> = designs.iter().map(|d| d.name.clone()).collect();
         assert!(

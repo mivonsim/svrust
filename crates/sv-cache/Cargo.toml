@@ -6,9 +6,9 @@ license.workspace = true
 description = "Content-addressed cache untuk parsing, elaboration, dan codegen SVRust"
 
 [dependencies]
-sv-ast = { path = "../sv-ast" }
 sv-diag = { path = "../sv-diag" }
-sv-ir = { path = "../sv-ir" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 sha2 = "0.10"
 
 [dev-dependencies]

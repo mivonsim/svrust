@@ -7,3 +7,4 @@ description = "HDL Semantic IR: types, signals, processes, timing"
 
 [dependencies]
 sv-ast = { path = "../sv-ast" }
+serde = { version = "1", features = ["derive"] }

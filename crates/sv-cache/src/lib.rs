@@ -1,17 +1,19 @@
 // Tanggung jawab: content-addressed cache untuk parsing, elaboration, dan codegen.
-// Setiap entri diidentifikasi oleh hash SHA256 dari konten sumber + hash dependensi,
-// sehingga perubahan satu file tidak memaksa reprocessing seluruh OpenTitan.
+// Cache disimpan ke disk di `target/sv/cache/` sehingga tetap hit antar panggilan
+// CLI, asalkan konten sumber tidak berubah. Setiap entri diidentifikasi oleh
+// hash SHA256 dari konten sumber + hash dependensi.
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use sv_ast::module::Module;
 use sv_diag::Diagnostic;
-use sv_ir::Design;
 
-/// Kunci cache: hash konten sumber + hash dependensi (macro, package, include).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// Kunci cache: hash SHA256 dari konten sumber gabungan + hash dependensi
+/// (macro, package, include). Perubahan satu file merubah hash → kunci baru →
+/// cache miss untuk file itu saja.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CacheKey(pub String);
 
 impl CacheKey {
@@ -26,30 +28,38 @@ impl CacheKey {
     }
 }
 
-/// Hasil parsing yang di-cache.
-#[derive(Debug, Clone)]
+/// Hasil parsing yang di-cache. Tidak menyimpan `Module` (terlalu banyak tipe
+/// nested untuk diserialisasi); cukup simpan diagnostik + apakah parsing sukses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachedParse {
-    pub modul: Module,
     pub diagnistik: Vec<Diagnostic>,
+    pub sukses: bool,
 }
 
-/// Hasil elaboration yang di-cache.
-#[derive(Debug, Clone)]
+/// Hasil elaboration yang di-cache. Tidak menyimpan `Design`; cukup simpan
+/// diagnostik + apakah elaborasi sukses. Untuk `svrust check`, ini cukup.
+/// Untuk `build`/`run`, codegen cache (terpisah) yang menyimpan Rust source.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachedElaborate {
-    pub design: Design,
+    pub nama_modul: String,
     pub diagnistik: Vec<Diagnostic>,
+    pub sukses: bool,
 }
 
-/// Hasil codegen yang di-cache.
-#[derive(Debug, Clone)]
+/// Hasil codegen yang di-cache. Menyimpan source Rust yang dihasilkan (String,
+/// mudah diskarkan) per modul top.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachedCodegen {
     pub kode_rust: String,
     pub nama_modul_rust: String,
 }
 
 /// Cache content-addressed: kunci hash → hasil parsing / elaboration / codegen.
+/// Disimpan ke disk di `target/sv/cache/<jenis>/<kunci>.json`.
 #[derive(Debug, Default)]
 pub struct SvCache {
+    /// Direktori root cache (diisi pada `muat()` atau `baru_dengan_root()`).
+    root: Option<PathBuf>,
     parse_cache: HashMap<CacheKey, CachedParse>,
     elaborate_cache: HashMap<CacheKey, CachedElaborate>,
     codegen_cache: HashMap<CacheKey, CachedCodegen>,
@@ -58,9 +68,98 @@ pub struct SvCache {
 }
 
 impl SvCache {
-    /// Buat cache baru.
+    /// Buat cache baru (kosong, tidak diformkan ke disk sampai `simpan_*`).
     pub fn baru() -> Self {
         Self::default()
+    }
+
+    /// Buat cache dengan root direktori. Cache akan dimuat dari disk jika ada.
+    pub fn baru_dengan_root(root: PathBuf) -> Result<Self, std::io::Error> {
+        let mut cache = Self {
+            root: Some(root.clone()),
+            ..Default::default()
+        };
+        cache.muat_dari_disk()?;
+        Ok(cache)
+    }
+
+    /// Muat semua cache dari disk.
+    fn muat_dari_disk(&mut self) -> Result<(), std::io::Error> {
+        let root = match &self.root {
+            Some(r) => r.clone(),
+            None => return Ok(()),
+        };
+        SvCache::muat_cache(
+            &mut self.parse_cache,
+            &root.join("cache").join("parse"),
+        )?;
+        SvCache::muat_cache(
+            &mut self.elaborate_cache,
+            &root.join("cache").join("elaborate"),
+        )?;
+        SvCache::muat_cache(
+            &mut self.codegen_cache,
+            &root.join("cache").join("codegen"),
+        )?;
+        Ok(())
+    }
+
+    /// Muat satu jenis cache dari disk ke `map`.
+    fn muat_cache<T: for<'de> serde::Deserialize<'de>>(
+        map: &mut HashMap<CacheKey, T>,
+        dir: &Path,
+    ) -> Result<(), std::io::Error> {
+        if !dir.is_dir() {
+            return Ok(());
+        }
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let kunci = CacheKey(
+                path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_string(),
+            );
+            let data = fs::read_to_string(&path)?;
+            let nilai: T = serde_json::from_str(&data)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            map.insert(kunci, nilai);
+        }
+        Ok(())
+    }
+
+    /// Simpan semua cache ke disk.
+    pub fn simpan_ke_disk(&self) -> Result<(), std::io::Error> {
+        let root = match &self.root {
+            Some(r) => r.clone(),
+            None => return Ok(()),
+        };
+
+        SvCache::simpan_satu(&self.parse_cache, "parse", &root)?;
+        SvCache::simpan_satu(&self.elaborate_cache, "elaborate", &root)?;
+        SvCache::simpan_satu(&self.codegen_cache, "codegen", &root)?;
+        Ok(())
+    }
+
+    /// Simpan satu jenis cache ke disk.
+    fn simpan_satu<T: serde::Serialize>(
+        map: &HashMap<CacheKey, T>,
+        jenis: &str,
+        root: &Path,
+    ) -> Result<(), std::io::Error> {
+        let dir = root.join("cache").join(jenis);
+        fs::create_dir_all(&dir)?;
+        for (kunci, nilai) in map.iter() {
+            let path = dir.join(format!("{}.json", kunci.0));
+            let json = serde_json::to_string_pretty(nilai)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            fs::write(&path, json)?;
+        }
+        Ok(())
     }
 
     /// Simpan hash dependensi untuk suatu modul.
@@ -108,22 +207,25 @@ impl SvCache {
         self.parse_cache.len()
     }
 
-    /// Hitung jumlah entri cache elaboration.
     pub fn jumlah_elaborate(&self) -> usize {
         self.elaborate_cache.len()
     }
 
-    /// Hitung jumlah entri cache codegen.
     pub fn jumlah_codegen(&self) -> usize {
         self.codegen_cache.len()
     }
 
-    /// Kosongkan seluruh cache.
+    /// Kosongkan seluruh cache (memori dan disk).
     pub fn bersihkan(&mut self) {
         self.parse_cache.clear();
         self.elaborate_cache.clear();
         self.codegen_cache.clear();
         self.dependensi_hash.clear();
+        if let Some(root) = &self.root {
+            for jenis in ["parse", "elaborate", "codegen"] {
+                let _ = fs::remove_dir_all(root.join("cache").join(jenis));
+            }
+        }
     }
 }
 
@@ -144,6 +246,10 @@ mod tests {
         CacheKey::baru("module m; endmodule", "deps:0")
     }
 
+    fn diagnistik_contoh() -> Vec<Diagnostic> {
+        vec![Diagnostic::error("E0001", "pesan contoh", sv_diag::Span::empty(sv_diag::SourceId(0), 0))]
+    }
+
     #[test]
     fn cache_parse_hit_dan_miss() {
         let mut cache = SvCache::baru();
@@ -153,23 +259,8 @@ mod tests {
         cache.simpan_parse(
             kunci.clone(),
             CachedParse {
-                modul: Module {
-                    name: "m".to_string(),
-                    span: sv_lexer::span::Span::dummy(),
-                    params: vec![],
-                    ports: vec![],
-                    declarations: vec![],
-                    statements: vec![],
-                    instances: vec![],
-                    routines: vec![],
-                    typedefs: vec![],
-                    generates: vec![],
-                    genvars: vec![],
-                    localparams: vec![],
-                    dpis: vec![],
-                    time_scale: sv_ast::time_scale::TimeScale::default(),
-                },
-                diagnistik: vec![],
+                diagnistik: diagnistik_contoh(),
+                sukses: true,
             },
         );
         assert!(
@@ -187,11 +278,9 @@ mod tests {
         cache.simpan_elaborate(
             kunci.clone(),
             CachedElaborate {
-                design: Design {
-                    name: "d".to_string(),
-                    ..Default::default()
-                },
-                diagnistik: vec![],
+                nama_modul: "modul_uji".to_string(),
+                diagnistik: diagnistik_contoh(),
+                sukses: true,
             },
         );
         assert!(cache.cek_elaborate(&kunci).is_some());

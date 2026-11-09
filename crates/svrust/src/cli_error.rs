@@ -45,6 +45,12 @@ impl From<&str> for CliError {
     }
 }
 
+impl From<std::io::Error> for CliError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Message(format!("I/O error: {}", e))
+    }
+}
+
 impl fmt::Display for CliError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
