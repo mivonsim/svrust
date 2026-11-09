@@ -253,6 +253,46 @@ fn parse_postfix(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
                     lsb: Box::new(lsb),
                     span,
                 },
+                // Indexed part-select `[base +: width]`: MSB = base+width-1, LSB = base.
+                Indeks::PartDinamisPlus { base, width } => {
+                    let msb = Expr::Binary {
+                        op: BinaryOp::Add,
+                        lhs: Box::new(base.clone()),
+                        rhs: Box::new(Expr::Binary {
+                            op: BinaryOp::Sub,
+                            lhs: Box::new(width.clone()),
+                            rhs: Box::new(Expr::Number(1)),
+                            span,
+                        }),
+                        span,
+                    };
+                    Expr::SelectDynamic {
+                        base: Box::new(base.clone()),
+                        msb: Box::new(msb),
+                        lsb: Box::new(base),
+                        span,
+                    }
+                }
+                // Indexed part-select `[base -: width]`: MSB = base, LSB = base-width+1.
+                Indeks::PartDinamisMinus { base, width } => {
+                    let lsb = Expr::Binary {
+                        op: BinaryOp::Sub,
+                        lhs: Box::new(base.clone()),
+                        rhs: Box::new(Expr::Binary {
+                            op: BinaryOp::Sub,
+                            lhs: Box::new(width.clone()),
+                            rhs: Box::new(Expr::Number(1)),
+                            span,
+                        }),
+                        span,
+                    };
+                    Expr::SelectDynamic {
+                        base: Box::new(base.clone()),
+                        msb: Box::new(base),
+                        lsb: Box::new(lsb),
+                        span,
+                    }
+                }
             };
         } else {
             break;
@@ -417,6 +457,12 @@ enum Indeks {
     /// `[MSB:LSB]` dengan salah satu atau kedua batas non-konstanta;
     /// irisan dinamis yang perlu helper runtime.
     PartDinamis { msb: Expr, lsb: Expr },
+    /// Indexed part-select `[base +: width]` (LRM §7.8):
+    /// ambil `width` bit mulai dari `base`, MSB = base+width-1, LSB = base.
+    PartDinamisPlus { base: Expr, width: Expr },
+    /// Indexed part-select `[base -: width]` (LRM §7.8):
+    /// ambil `width` bit ending at `base`, MSB = base, LSB = base-width+1.
+    PartDinamisMinus { base: Expr, width: Expr },
 }
 
 /// Parse isi `[ ... ]` setelah kurung siku pertama sudah dimakan.
@@ -451,9 +497,10 @@ fn parse_select_index(tokens: &[SpannedToken]) -> Result<(Indeks, usize), String
     if tokens[0].token == Token::Star {
         return Err("wildcard indeks `a[*]` belum didukung di seleksi".to_string());
     }
-    // Indexed part-select `[base +: width]` (LRM §7.8) dikenali dari token
-    // sebelum parsing: kalau ditunggu, ekspresi `b +` lalu `:` menggagalkan
-    // parse dengan pesan "expected identifier or number" yang tidak menjelaskan.
+    // Indexed part-select `[base +: width]` (LRM §7.8):
+    // ambil `width` bit mulai dari `base`, MSB = base+width-1, LSB = base.
+    // Indexed part-select `[base -: width]` (LRM §7.8):
+    // ambil `width` bit ending at `base`, MSB = base, LSB = base-width+1.
     if let Some(pos) = (1..closing).find(|&i| tokens[i].token == Token::Colon) {
         let arah = match tokens[pos - 1].token {
             Token::Plus => Some("+"),
@@ -461,11 +508,58 @@ fn parse_select_index(tokens: &[SpannedToken]) -> Result<(Indeks, usize), String
             _ => None,
         };
         if let Some(arah) = arah {
-            return Err(crate::pesan::tandai(
-                tokens,
-                pos,
-                format!("indexed part-select `a[base {arah}: width]` belum didukung"),
-            ));
+            // Parse base expression (tokens before `+`/`-`)
+            let (base_expr, base_consumed) = parse_expression(&tokens[..pos - 1])?;
+            if base_consumed != pos - 1 {
+                return Err(crate::pesan::tandai(
+                    tokens,
+                    pos - 1,
+                    format!(
+                        "sisa token tak dikenal pada base indexed part-select: {:?}",
+                        tokens[base_consumed..pos - 1]
+                            .iter()
+                            .map(|t| format!("{:?}", t.token))
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    ),
+                ));
+            }
+            // Skip `+` or `-` and `:`
+            let after_op = pos + 1;
+            // Parse width expression
+            let (width_expr, width_consumed) =
+                parse_expression(&tokens[after_op..closing])?;
+            if after_op + width_consumed != closing {
+                return Err(crate::pesan::tandai(
+                    tokens,
+                    after_op + width_consumed,
+                    format!(
+                        "sisa token tak dikenal pada width indexed part-select: {:?}",
+                        tokens[after_op + width_consumed..closing]
+                            .iter()
+                            .map(|t| format!("{:?}", t.token))
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    ),
+                ));
+            }
+            if arah == "+" {
+                return Ok((
+                    Indeks::PartDinamisPlus {
+                        base: base_expr,
+                        width: width_expr,
+                    },
+                    closing,
+                ));
+            } else {
+                return Ok((
+                    Indeks::PartDinamisMinus {
+                        base: base_expr,
+                        width: width_expr,
+                    },
+                    closing,
+                ));
+            }
         }
     }
 
@@ -1471,16 +1565,25 @@ mod tests {
         }
     }
 
-    // Bug: `a[b +: 4]` / `a[b -: 4]` (indexed part-select, LRM §7.8) dan `a[*]`
-    // bocorkan error internal lexer/parser, bukan "belum didukung".
+    // Bug: `a[*]` bocorkan error internal lexer/parser, bukan "belum didukung".
+    // Indexed part-select `a[b +: 4]` / `a[b -: 4]` (LRM §7.8) sekarang didukung.
     #[test]
     fn bentuk_indeks_lain_didiagnosis_sebagai_belum_dukung() {
-        for src in ["a[b +: 4]", "a[b -: 4]", "a[7 +: 4]", "a[*]"] {
+        // `a[*]` masih harus error (wildcard indeks belum didukung di seleksi).
+        let tokens = lex("a[*]").unwrap();
+        let err = parse_expression(&tokens).expect_err("a[*] harus error");
+        assert!(
+            err.contains("belum didukung"),
+            "a[*] dapat pesan tak berguna: {err}"
+        );
+
+        // Indexed part-select sekarang didukung, bukan error.
+        for src in ["a[b +: 4]", "a[b -: 4]", "a[7 +: 4]"] {
             let tokens = lex(src).unwrap();
-            let err = parse_expression(&tokens).expect_err("{src} harus error");
+            let (expr, _) = parse_expression(&tokens).expect("{src} harus parse");
             assert!(
-                err.contains("belum didukung"),
-                "{src} dapat pesan tak berguna: {err}"
+                matches!(expr, Expr::SelectDynamic { .. }),
+                "{src} harus SelectDynamic, dapat {expr:?}"
             );
         }
     }

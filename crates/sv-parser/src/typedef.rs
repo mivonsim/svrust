@@ -401,8 +401,12 @@ pub fn parse_typed_declaration(
         idx += 1;
     }
 
-    let (width, consumed) = super::dimension::parse_dimension(tokens, idx)?;
+    let mut width = WidthExpr::Literal(1);
+    let (width_parsed, consumed) = super::dimension::parse_dimension(tokens, idx)?;
     idx += consumed;
+    if consumed > 0 {
+        width = width_parsed;
+    }
 
     let span = tokens[0].span;
     let name = match tokens.get(idx).map(|t| &t.token) {
@@ -410,6 +414,14 @@ pub fn parse_typed_declaration(
         other => return Err(format!("expected nama signal, dapat {other:?}")),
     };
     idx += 1;
+
+    // Packed dimension setelah nama: `tlul_pkg::tl_h2d_t tl_demux_h2d[32'd2];`
+    let (width_packed, consumed_packed) = super::dimension::parse_dimension(tokens, idx)?;
+    if consumed_packed > 0 {
+        idx += consumed_packed;
+        // Override width dari packed dimension setelah nama
+        width = width_packed;
+    }
 
     let init = if tokens.get(idx).map(|t| &t.token) == Some(&Token::Eq) {
         idx += 1;

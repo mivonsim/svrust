@@ -35,4 +35,10 @@ target/sv/
 /fuzzkit/Cargo.lock
 
 # Debug symbolize
-*.dSYM/
+*.dSYM/obj_dir/
+obj_dir/
+fix_*.py
+fix_final*.py
+libdpi.so
+call_dpi
+debug_driver*.py
