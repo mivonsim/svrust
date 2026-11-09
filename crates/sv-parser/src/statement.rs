@@ -9,22 +9,28 @@ pub fn parse_continuous_assign(tokens: &[SpannedToken]) -> Result<(Statement, us
         return Err("expected 'assign'".to_string());
     }
     let span = tokens[0].span;
-    let mut idx = 1;
-
-    // LHS: signal name, opsional dengan irisan `nama[msb:lsb]`.
-    let (lhs, consumed) = super::lvalue::parse_lvalue(&tokens[idx..])?;
-    idx += consumed;
-
-    // Expect '='
+    let mut idx = 1; // skip 'assign'
+    // LRM §11.8.1: concatenation pada LHS, misal `{a, b} = {c, d}`,
+    // saat ini hanya LHS pertama yang dipakai di level modul.
+    let lhss = if tokens.get(idx).map(|t| &t.token) == Some(&Token::LBrace) {
+        let (lhss, consumed) = super::combinational::parse_concat_lvalue(&tokens[idx..])?;
+        idx += consumed;
+        lhss
+    } else {
+        let (lhs, consumed) = super::lvalue::parse_lvalue(&tokens[idx..])?;
+        idx += consumed;
+        vec![lhs]
+    };
+    let lhs = lhss.into_iter().next().ok_or_else(|| {
+        "expected LHS signal name".to_string()
+    })?;
     if idx >= tokens.len() || tokens[idx].token != Token::Eq {
         return Err(pesan::harap(tokens, idx, "expected '='"));
     }
     idx += 1;
-
     // RHS: expression
     let (rhs, consumed) = super::expression::parse_expression(&tokens[idx..])?;
     idx += consumed;
-
     // Expect ';'
     if idx >= tokens.len() || tokens[idx].token != Token::Semi {
         return Err(pesan::harap(tokens, idx, "expected ';'"));

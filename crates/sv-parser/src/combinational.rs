@@ -49,10 +49,21 @@ pub fn parse_combinational_statement(
         // LRM §14: `assign lhs = rhs;` di dalam blok prosedural adalah
         // penetapans berkelanjutan prosedural yang override penulangan biasa.
         Token::Assign => {
+            eprintln!("DEBUG combinational::Assign: tokens[0] = {:?}, tokens[1] = {:?}", tokens.get(0).map(|t| &t.token), tokens.get(1).map(|t| &t.token));
             let span = tokens[0].span;
             let mut idx = 1; // skip 'assign'
-            let (lhs, consumed) = super::lvalue::parse_lvalue(&tokens[idx..])?;
-            idx += consumed;
+            eprintln!("DEBUG combinational::Assign: tokens[1] = {:?}, tokens.len = {}", tokens.get(1).map(|t| &t.token), tokens.len());
+                             // LRM §11.8.1: concatenation pada LHS, misal `{a, b} = {c, d}`,
+                             // setara dengan `a = c; b = d;`. Parse setiap elemen LHS terpisah.
+            let lhss = if tokens.get(idx).map(|t| &t.token) == Some(&Token::LBrace) {
+                let (lhs_vec, consumed) = parse_concat_lvalue(&tokens[idx..])?;
+                idx += consumed;
+                lhs_vec
+            } else {
+                let (lhs, consumed) = super::lvalue::parse_lvalue(&tokens[idx..])?;
+                idx += consumed;
+                vec![lhs]
+            };
             if idx >= tokens.len() || tokens[idx].token != Token::Eq {
                 return Err("expected '=' setelah 'assign'".to_string());
             }
@@ -63,10 +74,27 @@ pub fn parse_combinational_statement(
                 return Err("expected ';' setelah ekspresi 'assign'".to_string());
             }
             idx += 1;
-            Ok((
-                CombinationalStatement::ProceduralAssign { lhs, rhs, span },
-                idx,
-            ))
+            // Gabungkan multiple LHS jadi satu blok ProceduralAssign
+            let assigns: Vec<CombinationalStatement> = lhss
+                .into_iter()
+                .map(|lhs| CombinationalStatement::ProceduralAssign {
+                    lhs,
+                    rhs: rhs.clone(),
+                    span,
+                })
+                .collect();
+            if assigns.len() == 1 {
+                Ok((assigns.into_iter().next().unwrap(), idx))
+            } else {
+                Ok((
+                    CombinationalStatement::Block {
+                        label: None,
+                        body: assigns,
+                        span,
+                    },
+                    idx,
+                ))
+            }
         }
         // LRM §14: `deassign lhs;` melepasi penetapans berkelanjutan prosedural.
         Token::Deassign => {
@@ -1277,4 +1305,43 @@ mod tests {
         let tokens = sv_lexer::lex(": begin x = 1; end;").unwrap();
         assert!(parse_combinational_statement(&tokens).is_err());
     }
+}
+
+/// Parse concatenation pada LHS: `{lhs1, lhs2, ...}`.
+/// Setiap elemen harus nama sinyal polos (bukan irisan atau member).
+/// Mengembalikan `(daftar_lvalue, consumed)`.
+pub fn parse_concat_lvalue(tokens: &[SpannedToken]) -> Result<(Vec<Lvalue>, usize), String> {
+    if tokens.is_empty() || tokens[0].token != Token::LBrace {
+        return Err("expected '{' untuk concatenation LHS".to_string());
+    }
+    let mut idx = 1; // skip '{'
+    let mut lhss = Vec::new();
+    loop {
+        if idx >= tokens.len() {
+            return Err("expected '}' penutup concatenation LHS".to_string());
+        }
+        if tokens[idx].token == Token::RBrace {
+            idx += 1;
+            break;
+        }
+        // Parse LHS element (simple signal name)
+        let (lhs, consumed) = super::lvalue::parse_lvalue(&tokens[idx..])?;
+        lhss.push(lhs);
+        idx += consumed;
+        if idx >= tokens.len() {
+            return Err("expected '}' atau ',' pada concatenation LHS".to_string());
+        }
+        if tokens[idx].token == Token::Comma {
+            idx += 1;
+            continue;
+        }
+        if tokens[idx].token == Token::RBrace {
+            continue; // will be caught by loop top
+        }
+        return Err(format!(
+            "expected ',' atau '}}' pada concatenation LHS, ditemukan {:?}",
+            tokens[idx].token
+        ));
+    }
+    Ok((lhss, idx))
 }

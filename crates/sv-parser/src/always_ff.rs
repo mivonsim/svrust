@@ -416,14 +416,24 @@ fn parse_seq_statement(tokens: &[SpannedToken]) -> Result<(SequentialStatement, 
         return parse_seq_if(tokens);
     }
 
-    // LHS boleh sliced, misal `q[3:0] <= d[3:0];`.
-    let (lhs, mut idx) = super::lvalue::parse_lvalue(tokens)?;
+    // LHS boleh sliced, misal `q[3:0] <= d[3:0];` atau concatenation `{a, b} <= {c, d}`.
+    let lhss = if tokens.get(0).map(|t| &t.token) == Some(&Token::LBrace) {
+        super::combinational::parse_concat_lvalue(tokens)?
+    } else {
+        let (lhs, consumed) = super::lvalue::parse_lvalue(tokens)?;
+        (vec![lhs], consumed)
+    };
+    let mut idx = lhss.1;
+    let lhss = lhss.0;
 
     // BUG-27: `a++;` sebagai statement sama dengan `a = a + 1`.
-    if matches!(
-        tokens.get(idx).map(|t| &t.token),
-        Some(&Token::Incr) | Some(&Token::Decr)
-    ) {
+    // Only for single LHS.
+    if lhss.len() == 1
+        && matches!(
+            tokens.get(idx).map(|t| &t.token),
+            Some(&Token::Incr) | Some(&Token::Decr)
+        )
+    {
         let naik = tokens[idx].token == Token::Incr;
         let span = tokens[0].span;
         idx += 1;
@@ -431,7 +441,7 @@ fn parse_seq_statement(tokens: &[SpannedToken]) -> Result<(SequentialStatement, 
             return Err("expected ';' after increment".to_string());
         }
         idx += 1;
-        let target = lhs.name.clone();
+        let target = lhss[0].name.clone();
         return Ok((
             SequentialStatement::BlockingAssign {
                 rhs: sv_ast::expression::Expr::Binary {
@@ -444,7 +454,7 @@ fn parse_seq_statement(tokens: &[SpannedToken]) -> Result<(SequentialStatement, 
                     rhs: Box::new(sv_ast::expression::Expr::Number(1)),
                     span,
                 },
-                lhs,
+                lhs: lhss[0].clone(),
                 span,
             },
             idx,
@@ -469,12 +479,37 @@ fn parse_seq_statement(tokens: &[SpannedToken]) -> Result<(SequentialStatement, 
     idx += 1;
 
     let span = tokens[0].span;
-    let statement = if blocking {
-        SequentialStatement::BlockingAssign { lhs, rhs, span }
+    // Multiple LHS -> multiple assignments in a block
+    let assigns: Vec<SequentialStatement> = lhss
+        .into_iter()
+        .map(|lhs| {
+            if blocking {
+                SequentialStatement::BlockingAssign {
+                    lhs,
+                    rhs: rhs.clone(),
+                    span,
+                }
+            } else {
+                SequentialStatement::NonBlockingAssign {
+                    lhs,
+                    rhs: rhs.clone(),
+                    span,
+                }
+            }
+        })
+        .collect();
+    if assigns.len() == 1 {
+        Ok((assigns.into_iter().next().unwrap(), idx))
     } else {
-        SequentialStatement::NonBlockingAssign { lhs, rhs, span }
-    };
-    Ok((statement, idx))
+        Ok((
+            SequentialStatement::Block {
+                label: None,
+                body: assigns,
+                span,
+            },
+            idx,
+        ))
+    }
 }
 
 /// Parse `forever body` di dalam blok sekuensial (LRM §12.8).
@@ -506,8 +541,17 @@ fn parse_procedural_assign_seq(
 ) -> Result<(SequentialStatement, usize), String> {
     let span = tokens[0].span;
     let mut idx = 1; // skip 'assign'
-    let (lhs, consumed) = super::lvalue::parse_lvalue(&tokens[idx..])?;
-    idx += consumed;
+                     // LRM §11.8.1: concatenation pada LHS, misal `{a, b} = {c, d}`,
+                     // setara dengan `a = c; b = d;`.
+    let lhss = if tokens.get(idx).map(|t| &t.token) == Some(&Token::LBrace) {
+        let (lhs_vec, consumed) = super::combinational::parse_concat_lvalue(&tokens[idx..])?;
+        idx += consumed;
+        lhs_vec
+    } else {
+        let (lhs, consumed) = super::lvalue::parse_lvalue(&tokens[idx..])?;
+        idx += consumed;
+        vec![lhs]
+    };
     if idx >= tokens.len() || tokens[idx].token != Token::Eq {
         return Err("expected '=' setelah 'assign'".to_string());
     }
@@ -518,10 +562,27 @@ fn parse_procedural_assign_seq(
         return Err("expected ';' setelah ekspresi 'assign'".to_string());
     }
     idx += 1;
-    Ok((
-        SequentialStatement::ProceduralAssign { lhs, rhs, span },
-        idx,
-    ))
+    // Gabungkan multiple LHS jadi sequential assignments
+    let assigns: Vec<SequentialStatement> = lhss
+        .into_iter()
+        .map(|lhs| SequentialStatement::ProceduralAssign {
+            lhs,
+            rhs: rhs.clone(),
+            span,
+        })
+        .collect();
+    if assigns.len() == 1 {
+        Ok((assigns.into_iter().next().unwrap(), idx))
+    } else {
+        Ok((
+            SequentialStatement::Block {
+                label: None,
+                body: assigns,
+                span,
+            },
+            idx,
+        ))
+    }
 }
 
 /// Parse `deassign lhs;` di dalam blok sekuensial (LRM §14).

@@ -1125,6 +1125,16 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                     }
                 }
             }
+            // `assign lhs = rhs;` di level modul — continuous assignment.
+            // Lewati seluruh pernyataan hingga ';'.
+            Token::Assign => {
+                while idx < tokens.len() && tokens[idx].token != Token::Semi {
+                    idx += 1;
+                }
+                if idx < tokens.len() {
+                    idx += 1;
+                }
+            }
             _ => {
                 // Konstruk yang tidak didukung di level modul — lewati satu
                 // token dan lanjutkan, agar error tidak merambat ke

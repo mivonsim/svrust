@@ -8,6 +8,7 @@ pub fn parse_expression(tokens: &[SpannedToken]) -> Result<(Expr, usize), String
     if tokens.is_empty() {
         return Err("empty expression".to_string());
     }
+    eprintln!("DEBUG parse_expression: tokens[0] = {:?}", tokens.get(0).map(|t| &t.token));
     // BUG-30: bentuk prefix `++a` punya efek samping dan bisa dievaluasi
     // berulang pada proses combinational, jadi belum didukung. Hanya posisi
     // awal yang diperiksa, karena slice token menyisipkan sisa statement
@@ -685,6 +686,24 @@ fn parse_primary(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
         Token::Cast if matches!(tokens.get(1).map(|t| &t.token), Some(&Token::LBrace)) => {
             let (expr, consumed) = parse_brace(&tokens[1..])?;
             Ok((expr, consumed + 1))
+        }
+        // LRM §6.14: `'` tanpa lebar eksplisit diikuti based literal atau
+        // number, misal `'0` atau `'hFF`. Ini adalah unsized cast — width
+        // diturunkan dari konteks. Kita treat sebagai `'{1'b0}` (concat satu item).
+        Token::Cast
+            if matches!(
+                tokens.get(1).map(|t| &t.token),
+                Some(Token::Number(_)) | Some(Token::BasedNumber { .. })
+            ) =>
+        {
+            let (operand, consumed) = parse_expression(&tokens[1..])?;
+            Ok((
+                Expr::Concat {
+                    items: vec![operand],
+                    span: tokens[0].span,
+                },
+                consumed + 1,
+            ))
         }
         // LRM §6.14: `'` tanpa lebar eksplisit bukan size cast yang sah, dan
         // tanpa `s`/`b`/`o`/`d`/`h` juga bukan literal. Pesannya menyebut
