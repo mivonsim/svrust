@@ -430,28 +430,40 @@ fn lower_item(ctx: &mut GenerateCtx, item: &GenerateItem) -> Result<(), Elaborat
             // blok iterasi, jadi namanya harus di-prefix seperti LHS lain.
             let mut inst = inst.clone();
             for conn in &mut inst.port_conns {
+                // Sinyal ekspresi (misal concatenation) tidak bisa di-qualify
+                // sebagai nama sinyal; biarkan apa adanya.
+                if matches!(conn.signal, sv_ast::instance::PortSignal::Expr(_)) {
+                    continue;
+                }
+                let signal_str = conn.signal.as_str().unwrap();
                 // Sinyal lokal blok generate ikut dipetakan, lalu port
                 // tersambung ke parent, lalu sisanya bawa prefix instans.
-                match scope.qualify_nama(&conn.signal) {
-                    Some(baru) => conn.signal = baru,
+                match scope.qualify_nama(signal_str) {
+                    Some(baru) => {
+                        conn.signal = sv_ast::instance::PortSignal::Signal(baru);
+                    }
                     None => {
                         let Some(koneksi) = scope.koneksi else {
-                            conn.signal = scope.nama_luar(&conn.signal, conn.span);
+                            conn.signal = sv_ast::instance::PortSignal::Signal(
+                                scope.nama_luar(signal_str, conn.span),
+                            );
                             continue;
                         };
                         if matches!(
-                            koneksi.get(&conn.signal),
+                            koneksi.get(signal_str),
                             Some(crate::instance::Target::Param { .. })
                         ) {
                             return Err(ElaborateError::new(
                                 format!(
                                     "parameter '{}' tidak bisa jadi sinyal koneksi port",
-                                    conn.signal
+                                    signal_str
                                 ),
                                 conn.span,
                             ));
                         }
-                        conn.signal = scope.nama_luar(&conn.signal, conn.span);
+                        conn.signal = sv_ast::instance::PortSignal::Signal(
+                            scope.nama_luar(signal_str, conn.span),
+                        );
                     }
                 }
             }

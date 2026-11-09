@@ -324,14 +324,19 @@ fn lower_instance_body(
                     inst.span,
                 )
             })?;
-        let induk = symbols.lookup(&c.signal).cloned().unwrap_or(Symbol {
-            name: c.signal.clone(),
-            signal_id: 0 as SignalId,
-            data_type: DataType::logic(1),
-            kind: VarKind::Variable,
-            unpacked: None,
-            span: c.span,
-        });
+        let induk = c
+            .signal
+            .as_str()
+            .and_then(|s| symbols.lookup(s))
+            .cloned()
+            .unwrap_or(Symbol {
+                name: c.signal.to_string(),
+                signal_id: 0 as SignalId,
+                data_type: DataType::logic(1),
+                kind: VarKind::Variable,
+                unpacked: None,
+                span: c.span,
+            });
         let lebar_anak = params.lebar(&port_decl.width, packages, inst.span)? as u32;
         let slice = resolve_index(c, env)?;
         let lebar_koneksi = match &slice {
@@ -377,7 +382,10 @@ fn lower_instance_body(
         koneksi.insert(
             c.port.clone(),
             Target::Sinyal {
-                signal: c.signal.clone(),
+                signal: match &c.signal {
+                    sv_ast::instance::PortSignal::Signal(s) => s.clone(),
+                    sv_ast::instance::PortSignal::Expr(_) => format!("{:?}", c.signal),
+                },
                 slice,
             },
         );
@@ -548,7 +556,13 @@ fn lower_instance_body(
         let mut turunan = inst_anak.clone();
         turunan.inst_name = format!("{}{}", prefix, inst_anak.inst_name);
         for conn in &mut turunan.port_conns {
-            conn.signal = petakan_nama(&conn.signal, &prefix, &koneksi);
+            match &conn.signal {
+                sv_ast::instance::PortSignal::Signal(s) => {
+                    conn.signal =
+                        sv_ast::instance::PortSignal::Signal(petakan_nama(s, &prefix, &koneksi));
+                }
+                sv_ast::instance::PortSignal::Expr(_) => {}
+            }
             // Indeks genvar sudah diselesaikan oleh elaborator generate
             // ketika memproses region anak, sehingga di sini selalu konkret.
         }

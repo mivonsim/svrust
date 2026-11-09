@@ -42,11 +42,38 @@ impl PortIndex {
     }
 }
 
-/// Koneksi port bernama, misal `.a(sig_a)` atau `.y(q[i])`.
+/// Sinyal yang tersambung ke port: bisa nama sinyal polos atau ekspresi
+/// (misal concatenation `{a, b}`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PortSignal {
+    Signal(String),
+    Expr(Expr),
+}
+
+impl PortSignal {
+    /// Nama sinyal bila ini `Signal(nama)`, `None` bila `Expr`.
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            PortSignal::Signal(n) => Some(n),
+            PortSignal::Expr(_) => None,
+        }
+    }
+}
+
+impl std::fmt::Display for PortSignal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PortSignal::Signal(n) => write!(f, "{n}"),
+            PortSignal::Expr(e) => write!(f, "{e:?}"),
+        }
+    }
+}
+
+/// Koneksi port bernama, misal `.a(sig_a)` atau `.y(q[i])` atau `.a({b, c})`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PortConn {
     pub port: String,
-    pub signal: String,
+    pub signal: PortSignal,
     /// `None` berarti koneksi ke seluruh sinyal.
     pub index: Option<PortIndex>,
     pub span: Span,

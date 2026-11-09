@@ -130,41 +130,58 @@ pub fn parse_instance(tokens: &[SpannedToken]) -> Result<(Instance, usize), Stri
                 return Err(crate::pesan::harap(tokens, idx, "expected nama sinyal"));
             }
             let signal_span = tokens[idx].span;
-            // Baca nama sinyal, mungkin hirarkis dengan titik (mis. `a.b.c`).
-            let mut signal_parts: Vec<String> = Vec::new();
-            loop {
-                let part = match &tokens[idx].token {
-                    Token::Ident(n) => n.clone(),
-                    _ => return Err(crate::pesan::harap(tokens, idx, "expected nama sinyal")),
-                };
-                signal_parts.push(part);
-                idx += 1;
-                if idx < tokens.len() && tokens[idx].token == Token::Dot {
-                    idx += 1; // lewati titik, lanjut ke bagian berikutnya
-                } else {
-                    break;
+            // Jika diawali dengan '{', ini concatenation expression (misal
+            // `.a({b, c})`), bukan nama sinyal polos.
+            if tokens[idx].token == Token::LBrace {
+                let (expr, consumed) = super::expression::parse_expression(&tokens[idx..])?;
+                idx += consumed;
+                if idx >= tokens.len() || tokens[idx].token != Token::RParen {
+                    return Err("expected ')' penutup sinyal".to_string());
                 }
+                idx += 1;
+                port_conns.push(PortConn {
+                    port,
+                    signal: sv_ast::instance::PortSignal::Expr(expr),
+                    index: None,
+                    span: signal_span,
+                });
+            } else {
+                // Baca nama sinyal, mungkin hirarkis dengan titik (mis. `a.b.c`).
+                let mut signal_parts: Vec<String> = Vec::new();
+                loop {
+                    let part = match &tokens[idx].token {
+                        Token::Ident(n) => n.clone(),
+                        _ => return Err(crate::pesan::harap(tokens, idx, "expected nama sinyal")),
+                    };
+                    signal_parts.push(part);
+                    idx += 1;
+                    if idx < tokens.len() && tokens[idx].token == Token::Dot {
+                        idx += 1; // lewati titik, lanjut ke bagian berikutnya
+                    } else {
+                        break;
+                    }
+                }
+                let signal = signal_parts.join(".");
+                // LRM §23.3.3.7: sinyal koneksi boleh berupa bit/part-select, misal
+                // `.y(q[i])` pada pola kanonik loop generate.
+                let (index, index_consumed) = parse_port_index(&tokens[idx..])?;
+                idx += index_consumed;
+                if idx >= tokens.len() || tokens[idx].token != Token::RParen {
+                    return Err("expected ')' penutup sinyal".to_string());
+                }
+                idx += 1;
+                port_conns.push(PortConn {
+                    port,
+                    signal: sv_ast::instance::PortSignal::Signal(signal),
+                    index,
+                    span: signal_span,
+                });
             }
-            let signal = signal_parts.join(".");
-            // LRM §23.3.3.7: sinyal koneksi boleh berupa bit/part-select, misal
-            // `.y(q[i])` pada pola kanonik loop generate.
-            let (index, index_consumed) = parse_port_index(&tokens[idx..])?;
-            idx += index_consumed;
-            if idx >= tokens.len() || tokens[idx].token != Token::RParen {
-                return Err("expected ')' penutup sinyal".to_string());
-            }
-            idx += 1;
-            port_conns.push(PortConn {
-                port,
-                signal,
-                index,
-                span: signal_span,
-            });
         } else {
             // `.name` tanpa sinyal eksplisit → signal = port name (implicit).
             port_conns.push(PortConn {
                 port: port.clone(),
-                signal: port,
+                signal: sv_ast::instance::PortSignal::Signal(port),
                 index: None,
                 span: tokens[idx.saturating_sub(1)].span,
             });
@@ -256,7 +273,10 @@ mod tests {
         assert!(inst.param_overrides.is_empty());
         assert_eq!(inst.port_conns.len(), 2);
         assert_eq!(inst.port_conns[0].port, "a");
-        assert_eq!(inst.port_conns[0].signal, "x");
+        assert_eq!(
+            inst.port_conns[0].signal,
+            sv_ast::instance::PortSignal::Signal("x".to_string())
+        );
     }
 
     #[test]
@@ -309,7 +329,10 @@ mod tests {
         let tokens = lex("adder u0 (.y(q));").unwrap();
         let (inst, _) = parse_instance(&tokens).unwrap();
         assert_eq!(inst.port_conns[0].index, None);
-        assert_eq!(inst.port_conns[0].signal, "q");
+        assert_eq!(
+            inst.port_conns[0].signal,
+            sv_ast::instance::PortSignal::Signal("q".to_string())
+        );
     }
 
     #[test]
