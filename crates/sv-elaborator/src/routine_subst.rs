@@ -159,9 +159,7 @@ impl Substitution {
                 name: name.clone(),
                 slice: lhs.slice,
                 extra_slices: lhs.extra_slices.clone(),
-                // `genvar_index` harus ikut dibawa. Kalau dipaksa jadi `None`,
-                // LHS `q[i]` berubah jadi `q` polos sehingga seluruh sinyal
-                // ditulis — nilai simulasi salah tanpa pesan apa pun.
+                members: lhs.members.clone(),
                 genvar_index: lhs.genvar_index.clone(),
                 span: lhs.span,
             },
@@ -615,6 +613,7 @@ fn rename_lvalue(lhs: &Lvalue, peta: &HashMap<String, String>) -> Lvalue {
             .unwrap_or_else(|| lhs.name.clone()),
         slice: lhs.slice,
         extra_slices: lhs.extra_slices.clone(),
+        members: lhs.members.clone(),
         genvar_index: lhs.genvar_index.clone(),
         span: lhs.span,
     }

@@ -111,6 +111,7 @@ pub struct Process {
 }
 
 /// Statement IR untuk process sequential/combinational.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
     Assign {

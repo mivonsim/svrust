@@ -15,11 +15,12 @@ impl Slice {
     }
 }
 
-/// Sisi kiri assignment: nama sinyal dengan irisan bit opsional.
+/// Sisi kiri assignment: nama sinyal dengan irisan bit opsional dan path
+/// hierarkis melalui titik, misal `tl_if.h2d` atau `adc_chn_val_o[0].de`.
 ///
-/// Boleh beririsan bertingkat, misal `y[i][0]` (genvar i, lalu bit 0).
-/// `slice` adalah irisan PERTAMA (terluar), `extra_slices` adalah irisan
-/// berikutnya dari luar ke dalam.
+/// `name` adalah nama dasar, `slice` irisan pertama pada nama dasar,
+/// `extra_slices` irisan bertingkat, `members` segmen path setelah titik
+/// (misal `["h2d"]` pada `tl_if.h2d`), `genvar_index` indeks genvar.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Lvalue {
     pub name: String,
@@ -27,6 +28,9 @@ pub struct Lvalue {
     pub slice: Option<Slice>,
     /// Irisan tambahan untuk seleksi bertingkat, misal `[0]` pada `y[i][0]`.
     pub extra_slices: Vec<Slice>,
+    /// Segmen path hierarkis setelah titik, misal `["h2d"]` pada `tl_if.h2d`.
+    /// Kosong bila target adalah sinyal polos.
+    pub members: Vec<String>,
     /// Nama genvar pada `nama[genvar]`, misal `y[i]` di dalam loop generate.
     ///
     /// Nilai genvar baru diketahui saat elaborasi, sehingga irisan disimpan
@@ -42,6 +46,7 @@ impl Lvalue {
             name: name.into(),
             slice: None,
             extra_slices: Vec::new(),
+            members: Vec::new(),
             genvar_index: None,
             span,
         }
@@ -53,6 +58,7 @@ impl Lvalue {
             name: name.into(),
             slice: Some(slice),
             extra_slices: Vec::new(),
+            members: Vec::new(),
             genvar_index: None,
             span,
         }
@@ -64,6 +70,7 @@ impl Lvalue {
             name: name.into(),
             slice: None,
             extra_slices: Vec::new(),
+            members: Vec::new(),
             genvar_index: Some(genvar.into()),
             span,
         }

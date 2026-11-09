@@ -16,153 +16,249 @@ pub fn parse_lvalue(tokens: &[SpannedToken]) -> Result<(Lvalue, usize), String> 
     };
     let span = tokens[0].span;
 
-    // Tanpa kurung siku: seluruh sinyal jadi target.
-    if tokens.get(1).map(|t| &t.token) != Some(&Token::LBracket) {
-        return Ok((Lvalue::simple(name, span), 1));
-    }
+    let mut cursor = 1;
 
-    // Kurung siku kosong / tak tertutup harus ditolak eksplisit. Tanpa cek ini
-    // `parse_slice_index` sampai ke `parse_index` dan membocorkan pesan
-    // "indeks harus literal, ditemukan RBracket".
-    let closing_awal =
-        (2..=tokens.len()).find(|&i| tokens.get(i).map(|t| &t.token) == Some(&Token::RBracket));
-    let Some(closing_val) = closing_awal else {
-        return Err("expected ']' closing LHS select".to_string());
-    };
-    let first_closing = closing_val;
-    if first_closing == 2 {
-        return Err("kurung siku seleksi kosong `[]` belum didukung".to_string());
-    }
-    if tokens[2].token == Token::Colon {
-        return Err("part-select dengan batas bawah kosong `[:lsb]` belum didukung".to_string());
-    }
-    if tokens.get(first_closing - 1).map(|t| &t.token) == Some(&Token::Colon) {
-        return Err("part-select dengan batas atas kosong `[msb:]` belum didukung".to_string());
-    }
-    let mut cursor = closing_val;
-    // Indexed part-select `a[base +: width]` (LRM §7.8).
-    if let Some(pos) = (3..first_closing).find(|&i| tokens[i].token == Token::Colon) {
-        match tokens[pos - 1].token {
-            Token::Plus | Token::Minus => {
-                return Err(pesan::tandai(
-                    tokens,
-                    pos,
-                    "indexed part-select `a[base +: width]` belum didukung".to_string(),
-                ))
-            }
-            _ => {}
-        }
-    }
-
-    // Bentuk `nama[genvar]` menyimpan nama genvar; nilainya baru diketahui
-    // saat elaborasi loop generate. Isi `[...]` harus PERSIS satu token:
-    // kalau tidak, `y[i-1]` klaim "sudah selesai" padahal `- 1` dibuang
-    // diam-diam, dan penulisan terjadi pada bit yang salah (silently wrong).
-    if let Token::Ident(genvar) = &tokens[2].token {
-        if cursor != 3 {
-            // Ada titik dua → itu part-select variabel, bukan indeks genvar;
-            // pesannya harus menyebut part-select supaya tidak menyesatkan.
-            let apa = if tokens[2..cursor].iter().any(|t| t.token == Token::Colon) {
-                "part-select variabel pada LHS belum didukung"
-            } else {
-                "indeks genvar harus satu token"
-            };
-            return Err(format!(
-                "{apa}, ditemukan `{}`",
-                tokens[2..cursor]
-                    .iter()
-                    .map(|t| format!("{:?}", t.token))
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            ));
-        }
-        let genvar = genvar.clone();
-        return Ok((
-            Lvalue {
-                name,
-                slice: None,
-                extra_slices: Vec::new(),
-                genvar_index: Some(genvar),
-                span,
-            },
-            cursor + 1,
-        ));
-    }
-
-    // Seleksi bertingkat pada LHS: `y[3:0][1]` atau `y[i][0]`. Setiap `[...]`
-    // setelah yang pertama ditambahkan ke `extra_slices` dari luar ke dalam.
+    let mut slice: Option<Slice> = None;
     let mut extra_slices: Vec<Slice> = Vec::new();
-    while tokens.get(cursor + 1).map(|t| &t.token) == Some(&Token::LBracket) {
-        let start2 = cursor + 2; // lewati '[' setelah ']'
-        if start2 >= tokens.len() {
-            return Err("expected index in nested select".to_string());
-        }
-        // Cari penutup nested
-        let closing2 = (start2..=tokens.len())
+    let mut genvar_index: Option<String> = None;
+    let mut members: Vec<String> = Vec::new();
+
+    // Parse kurung siku pada nama dasar: `nama[...]` atau `nama[genvar]`.
+    if cursor < tokens.len() && tokens[cursor].token == Token::LBracket {
+        let closing_awal = (cursor + 1..=tokens.len())
             .find(|&i| tokens.get(i).map(|t| &t.token) == Some(&Token::RBracket));
-        let Some(closing2) = closing2 else {
-            return Err("expected ']' first_closing nested select".to_string());
+        let Some(first_closing) = closing_awal else {
+            return Err("expected ']' closing LHS select".to_string());
         };
-        if closing2 == start2 {
+        if first_closing == cursor + 1 {
             return Err("kurung siku seleksi kosong `[]` belum didukung".to_string());
         }
-        // Nested select hanya mendukung konstanta tunggal atau genvar tunggal.
-        if tokens[start2].token == Token::Colon {
-            return Err("nested part-select belum didukung".to_string());
+        if tokens[cursor + 1].token == Token::Colon {
+            return Err(
+                "part-select dengan batas bawah kosong `[:lsb]` belum didukung".to_string(),
+            );
         }
-        if let Token::Ident(nama) = &tokens[start2].token {
-            if closing2 != start2 + 1 {
-                return Err(crate::pesan::tandai(
-                    tokens,
-                    cursor,
-                    "nested genvar index harus satu token".to_string(),
-                ));
+        if tokens.get(first_closing - 1).map(|t| &t.token) == Some(&Token::Colon) {
+            return Err("part-select dengan batas atas kosong `[msb:]` belum didukung".to_string());
+        }
+
+        // Indexed part-select `a[base +: width]` (LRM §7.8).
+        if let Some(pos) = (cursor + 2..first_closing).find(|&i| tokens[i].token == Token::Colon) {
+            match tokens[pos - 1].token {
+                Token::Plus | Token::Minus => {
+                    return Err(pesan::tandai(
+                        tokens,
+                        pos,
+                        "indexed part-select `a[base +: width]` belum didukung".to_string(),
+                    ))
+                }
+                _ => {}
             }
-            extra_slices.push(Slice { msb: 0, lsb: 0 });
-            // Catat genvar nested sebagai catatan; resolusi dilakukan elaborator.
-            // Untuk saat ini, gunakan slice dummy dan catat genvar di luar.
-            // Nilai genvar baru diketahui saat elaborasi loop.
-            // Kita simpan sebagai genvar_index tambahan — tapi Lvalue hanya punya satu.
-            // Untuk nested genvar, kita cukup catat bahwa ada genvar nested.
-            _ = nama;
+        }
+
+        // Bentuk `nama[genvar]` atau `nama[bit]`: isi kurung siku satu token.
+        if first_closing == cursor + 2 {
+            match &tokens[cursor + 1].token {
+                Token::Ident(genvar) => {
+                    genvar_index = Some(genvar.clone());
+                    cursor = first_closing + 1;
+                }
+                Token::Number(n) | Token::BasedNumber { value: n, .. } => {
+                    slice = Some(Slice {
+                        msb: u32::try_from(*n).unwrap_or(0),
+                        lsb: u32::try_from(*n).unwrap_or(0),
+                    });
+                    cursor = first_closing + 1;
+                }
+                other => {
+                    return Err(format!("indeks harus satu token, ditemukan {:?}", other));
+                }
+            }
         } else {
-            let (slice, consumed) = parse_slice_index(&tokens[start2..closing2])?;
-            if consumed != closing2 - start2 {
+            // Jika isi bracket lebih dari satu token, bisa jadi part-select
+            // variabel (`i:0`) atau ekspresi genvar (`i-1`). Bedakan.
+            let bracket_isi = &tokens[cursor + 1..first_closing];
+            if bracket_isi.len() > 1
+                && bracket_isi
+                    .iter()
+                    .any(|t| matches!(t.token, Token::Ident(_)))
+            {
+                let ada_titik_dua = bracket_isi.iter().any(|t| t.token == Token::Colon);
+                let msg = if ada_titik_dua {
+                    "part-select variabel pada LHS belum didukung"
+                } else {
+                    "indeks harus satu token"
+                };
+                return Err(msg.to_string());
+            }
+            // Part-select atau bit-select pada nama dasar.
+            let (slice_val, consumed) = parse_slice_index(&tokens[cursor + 1..first_closing])?;
+            if consumed != first_closing - cursor - 1 {
                 return Err(format!(
-                    "sisa token tak dikenal pada indeks nested: {:?}",
-                    tokens[start2 + consumed..closing2]
+                    "sisa token tak dikenal pada indeks LHS: {:?}",
+                    tokens[cursor + 1 + consumed..first_closing]
                         .iter()
                         .map(|t| format!("{:?}", t.token))
                         .collect::<Vec<_>>()
                         .join(" ")
                 ));
             }
-            extra_slices.push(slice);
+            slice = Some(slice_val);
+            cursor = first_closing + 1;
         }
-        cursor = closing2;
+
+        // Seleksi bertingkat: `y[3:0][1]`. Genvar tidak boleh nested slice.
+        while genvar_index.is_none()
+            && cursor < tokens.len()
+            && tokens[cursor].token == Token::LBracket
+        {
+            let start2 = cursor + 1;
+            if start2 >= tokens.len() {
+                return Err("expected index in nested select".to_string());
+            }
+            let closing2 = (start2..=tokens.len())
+                .find(|&i| tokens.get(i).map(|t| &t.token) == Some(&Token::RBracket));
+            let Some(closing2) = closing2 else {
+                return Err("expected ']' first_closing nested select".to_string());
+            };
+            if closing2 == start2 {
+                return Err("kurung siku seleksi kosong `[]` belum didukung".to_string());
+            }
+            if tokens[start2].token == Token::Colon {
+                return Err("nested part-select belum didukung".to_string());
+            }
+            if let Token::Ident(_nama) = &tokens[start2].token {
+                if closing2 != start2 + 1 {
+                    return Err(crate::pesan::tandai(
+                        tokens,
+                        cursor,
+                        "nested genvar index harus satu token".to_string(),
+                    ));
+                }
+                extra_slices.push(Slice { msb: 0, lsb: 0 });
+            } else {
+                let (slice_val, consumed) = parse_slice_index(&tokens[start2..closing2])?;
+                if consumed != closing2 - start2 {
+                    return Err(format!(
+                        "sisa token tak dikenal pada indeks nested: {:?}",
+                        tokens[start2 + consumed..closing2]
+                            .iter()
+                            .map(|t| format!("{:?}", t.token))
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    ));
+                }
+                extra_slices.push(slice_val);
+            }
+            cursor = closing2 + 1;
+        }
     }
 
-    let (slice, consumed) = parse_slice_index(&tokens[2..first_closing])?;
-    // `parse_slice_index` hanya mengonsumsi 1 atau 3 token. Sisa token berarti
-    // indeks rusak (`y[3 5]`); release build akan membuangnya diam-diam.
-    if 2 + consumed != first_closing {
-        return Err(format!(
-            "sisa token tak dikenal pada indeks LHS: {:?}",
-            tokens[2 + consumed..first_closing]
-                .iter()
-                .map(|t| &t.token)
-                .collect::<Vec<_>>()
-        ));
+    // Consume dot-separated member path dan optional slice setelah setiap member:
+    // `a.b.c`, `a[0].b`, `a.b[0]`, `a.b[3:0]`.
+    while cursor < tokens.len() && tokens[cursor].token == Token::Dot {
+        cursor += 1; // skip '.'
+        if cursor >= tokens.len() {
+            return Err("expected nama setelah '.' pada referensi hierarkis".to_string());
+        }
+        let part = match &tokens[cursor].token {
+            Token::Ident(n) => n.clone(),
+            other => return Err(format!("expected nama setelah '.', dapat {:?}", other)),
+        };
+        cursor += 1;
+        members.push(part);
+
+        // Optional slice setelah member: `a.b[0]` atau `a.b[3:0]`.
+        if cursor < tokens.len() && tokens[cursor].token == Token::LBracket {
+            let closing = (cursor + 1..=tokens.len())
+                .find(|&i| tokens.get(i).map(|t| &t.token) == Some(&Token::RBracket));
+            let Some(closing) = closing else {
+                return Err("expected ']' closing member select".to_string());
+            };
+            if closing == cursor + 1 {
+                return Err("kurung siku seleksi kosong `[]` belum didukung".to_string());
+            }
+            if tokens[cursor + 1].token == Token::Colon {
+                return Err(
+                    "part-select dengan batas bawah kosong `[:lsb]` belum didukung".to_string(),
+                );
+            }
+            if tokens.get(closing - 1).map(|t| &t.token) == Some(&Token::Colon) {
+                return Err(
+                    "part-select dengan batas atas kosong `[msb:]` belum didukung".to_string(),
+                );
+            }
+
+            let mut next_cursor = closing + 1;
+            while next_cursor < tokens.len() && tokens[next_cursor].token == Token::LBracket {
+                let start2 = next_cursor + 1;
+                if start2 >= tokens.len() {
+                    return Err("expected index in nested select".to_string());
+                }
+                let closing2 = (start2..=tokens.len())
+                    .find(|&i| tokens.get(i).map(|t| &t.token) == Some(&Token::RBracket));
+                let Some(closing2) = closing2 else {
+                    return Err("expected ']' nested select".to_string());
+                };
+                if closing2 == start2 {
+                    return Err("kurung siku seleksi kosong `[]` belum didukung".to_string());
+                }
+                if tokens[start2].token == Token::Colon {
+                    return Err("nested part-select belum didukung".to_string());
+                }
+                if let Token::Ident(_nama) = &tokens[start2].token {
+                    if closing2 != start2 + 1 {
+                        return Err(crate::pesan::tandai(
+                            tokens,
+                            next_cursor,
+                            "nested genvar index harus satu token".to_string(),
+                        ));
+                    }
+                    extra_slices.push(Slice { msb: 0, lsb: 0 });
+                } else {
+                    let (slice_val, consumed) = parse_slice_index(&tokens[start2..closing2])?;
+                    if consumed != closing2 - start2 {
+                        return Err(format!(
+                            "sisa token tak dikenal pada indeks nested: {:?}",
+                            tokens[start2 + consumed..closing2]
+                                .iter()
+                                .map(|t| format!("{:?}", t.token))
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        ));
+                    }
+                    extra_slices.push(slice_val);
+                }
+                next_cursor = closing2 + 1;
+            }
+
+            let slice_tokens = &tokens[cursor + 1..closing];
+            let (slice_val, consumed) = parse_slice_index(slice_tokens)?;
+            if consumed != closing - cursor - 1 {
+                return Err(format!(
+                    "sisa token tak dikenal pada indeks member: {:?}",
+                    tokens[cursor + 1 + consumed..closing]
+                        .iter()
+                        .map(|t| format!("{:?}", t.token))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                ));
+            }
+            extra_slices.push(slice_val);
+            cursor = next_cursor;
+        }
     }
+
     Ok((
         Lvalue {
             name,
-            slice: Some(slice),
+            slice,
             extra_slices,
-            genvar_index: None,
+            members,
+            genvar_index,
             span,
         },
-        cursor + 1,
+        cursor,
     ))
 }
 

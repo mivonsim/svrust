@@ -71,9 +71,7 @@ impl SvCache {
 
     /// Ambil hash dependensi untuk suatu modul.
     pub fn ambil_dependensi_hash(&self, nama_modul: &str) -> Option<&str> {
-        self.dependensi_hash
-            .get(nama_modul)
-            .map(|s| s.as_str())
+        self.dependensi_hash.get(nama_modul).map(|s| s.as_str())
     }
 
     /// Cek apakah parsing untuk kunci sudah ada di cache.
@@ -107,27 +105,26 @@ impl SvCache {
     }
 
     pub fn jumlah_parse(&self) -> usize {
-    self.parse_cache.len()
-}
+        self.parse_cache.len()
+    }
 
-/// Hitung jumlah entri cache elaboration.
-pub fn jumlah_elaborate(&self) -> usize {
-    self.elaborate_cache.len()
-}
+    /// Hitung jumlah entri cache elaboration.
+    pub fn jumlah_elaborate(&self) -> usize {
+        self.elaborate_cache.len()
+    }
 
-/// Hitung jumlah entri cache codegen.
-pub fn jumlah_codegen(&self) -> usize {
-    self.codegen_cache.len()
-}
+    /// Hitung jumlah entri cache codegen.
+    pub fn jumlah_codegen(&self) -> usize {
+        self.codegen_cache.len()
+    }
 
-/// Kosongkan seluruh cache.
-pub fn bersihkan(&mut self) {
-    self.parse_cache.clear();
-    self.elaborate_cache.clear();
-    self.codegen_cache.clear();
-    self.dependensi_hash.clear();
-}
-
+    /// Kosongkan seluruh cache.
+    pub fn bersihkan(&mut self) {
+        self.parse_cache.clear();
+        self.elaborate_cache.clear();
+        self.codegen_cache.clear();
+        self.dependensi_hash.clear();
+    }
 }
 
 /// Hash konten berkas (sha256 hex).
@@ -227,27 +224,23 @@ mod tests {
     fn kunci_berbeda_jika_dependensi_berbeda() {
         let k1 = CacheKey::baru("module m; endmodule", "deps:0");
         let k2 = CacheKey::baru("module m; endmodule", "deps:1");
-        assert_ne!(k1, k2, "dependensi berbeda harus menghasilkan kunci berbeda");
+        assert_ne!(
+            k1, k2,
+            "dependensi berbeda harus menghasilkan kunci berbeda"
+        );
     }
 
     #[test]
     fn dependensi_hash_simpan_dan_ambil() {
         let mut cache = SvCache::baru();
         cache.simpan_dependensi_hash("root_a", "hash_abc");
-        assert_eq!(
-            cache.ambil_dependensi_hash("root_a"),
-            Some("hash_abc")
-        );
+        assert_eq!(cache.ambil_dependensi_hash("root_a"), Some("hash_abc"));
         assert_eq!(cache.ambil_dependensi_hash("root_b"), None);
     }
 
     #[test]
     fn diagnistik_default_kosong() {
-        let d: Diagnostic = Diagnostic::new(
-            Severity::Error,
-            "E0001",
-            "pesan contoh",
-        );
+        let d: Diagnostic = Diagnostic::new(Severity::Error, "E0001", "pesan contoh");
         assert_eq!(d.code, "E0001");
         assert_eq!(d.message, "pesan contoh");
     }

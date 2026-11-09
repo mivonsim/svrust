@@ -247,11 +247,16 @@ pub fn collect_modules(
 
         // Tambah diagnostik parse error untuk file ini dengan SourceId yang benar
         if let Some((msg, _)) = &result.parse_error {
-            all_diagnostics.push(sv_diag::Diagnostic::error(
-                "E0002",
-                msg.clone(),
-                sv_diag::Span::empty(source_id, 0),
-            ));
+            let diag = diagnostic_parser(
+                msg,
+                &result.tokens,
+                &result.source_asli,
+                &result.source,
+                Path::new(&result.path.display().to_string()),
+                source_id,
+                &sources,
+            );
+            all_diagnostics.push(diag);
             continue;
         }
 
@@ -592,6 +597,7 @@ pub fn compile_semua_root(
     elaborate_tops(&collection, &tops, &mut cache)
 }
 
+#[allow(clippy::result_large_err)]
 pub(crate) fn elaborate_tops(
     collection: &ModuleCollection,
     tops: &[String],
@@ -612,27 +618,35 @@ pub(crate) fn elaborate_tops(
     }
 
     // Langkah 2 (parallel): elaborate root yang belum di-cache secara independen dengan rayon.
-    let hasil_elaborasi: Vec<Result<(String, sv_ir::Design), sv_diag::Diagnostic>> = kunci_untuk_top
-        .into_par_iter()
-        .map(|(nama, _kunci)| {
-            match sv_elaborator::elaborate_top(
-                &collection.modules,
-                &collection.typedefs_global,
-                &collection.packages,
-                &nama,
-            ) {
-                Ok(mut design) => {
-                    optimalkan(&mut design);
-                    Ok((nama.clone(), design))
-                }
-                Err(error) => {
-                    if let crate::CliError::Reported {
-                        diagnostics: mut berikut,
-                        ..
-                    } = diagnostic_elaborator(error, collection)
-                    {
-                        if let Some(d) = berikut.pop() {
-                            Err(d)
+    let hasil_elaborasi: Vec<Result<(String, sv_ir::Design), sv_diag::Diagnostic>> =
+        kunci_untuk_top
+            .into_par_iter()
+            .map(|(nama, _kunci)| {
+                match sv_elaborator::elaborate_top(
+                    &collection.modules,
+                    &collection.typedefs_global,
+                    &collection.packages,
+                    &nama,
+                ) {
+                    Ok(mut design) => {
+                        optimalkan(&mut design);
+                        Ok((nama.clone(), design))
+                    }
+                    Err(error) => {
+                        if let crate::CliError::Reported {
+                            diagnostics: mut berikut,
+                            ..
+                        } = diagnostic_elaborator(error, collection)
+                        {
+                            if let Some(d) = berikut.pop() {
+                                Err(d)
+                            } else {
+                                Err(sv_diag::Diagnostic::error(
+                                    "E0201",
+                                    format!("elaborasi gagal untuk {}", nama),
+                                    sv_diag::Span::empty(SourceId(0), 0),
+                                ))
+                            }
                         } else {
                             Err(sv_diag::Diagnostic::error(
                                 "E0201",
@@ -640,17 +654,10 @@ pub(crate) fn elaborate_tops(
                                 sv_diag::Span::empty(SourceId(0), 0),
                             ))
                         }
-                    } else {
-                        Err(sv_diag::Diagnostic::error(
-                            "E0201",
-                            format!("elaborasi gagal untuk {}", nama),
-                            sv_diag::Span::empty(SourceId(0), 0),
-                        ))
                     }
                 }
-            }
-        })
-        .collect();
+            })
+            .collect();
 
     // Langkah 3 (sequential): simpan hasil ke cache dan kumpulkan diagnostik.
     let mut designs = cached_designs;
@@ -675,6 +682,18 @@ pub(crate) fn elaborate_tops(
     }
 
     if !diagnostics.is_empty() {
+        // Deduplikasi: error sama dari banyak top module hanya ditampilkan sekali.
+        let mut seen = std::collections::HashSet::new();
+        diagnostics.retain(|d| {
+            let kunci = (
+                d.code.clone(),
+                d.message.clone(),
+                d.primary
+                    .as_ref()
+                    .map(|p| (p.span.source.0, p.span.start, p.span.end)),
+            );
+            seen.insert(kunci.clone())
+        });
         return Err(crate::CliError::reported(
             diagnostics,
             collection.sources.clone(),

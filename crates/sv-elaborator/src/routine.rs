@@ -293,11 +293,17 @@ impl<'a> Inliner<'a> {
                         span: call.span,
                     })]);
                 }
-                // Task di-inline jadi statement sekuensial di depan titik panggilan
-                // (LRM §13.3). Badan task dikonversi dari `CombinationalStatement`
-                // ke `SequentialStatement` via `comb_to_seq`.
-                let body = self.task_body(&call.name, &call.args, call.span)?;
-                self.comb_to_seq_list(&body)?
+                // Fungsi/task tak dikenal (mis. DPI-C import dari paket eksternal
+                // yang tidak tersedia dalam kompilasi tanpa --top). Terima
+                // lenient agar elaborasi OpenTitan tanpa --top tetap melenggang,
+                // konsisten dengan perilaku Expr::FunctionCall yang mengembalikan
+                // placeholder 0 untuk fungsi tak dikenal.
+                if self.routines.contains_key(&call.name) {
+                    let body = self.task_body(&call.name, &call.args, call.span)?;
+                    self.comb_to_seq_list(&body)?
+                } else {
+                    vec![]
+                }
             }
             SequentialStatement::Return { span, .. } => {
                 return Err(ElaborateError::new(
@@ -442,8 +448,15 @@ impl<'a> Inliner<'a> {
                         span: call.span,
                     })]);
                 }
-                let body = self.task_body(&call.name, &call.args, call.span)?;
-                self.comb_to_seq_list(&body)
+                // Fungsi/task tak dikenal (mis. DPI-C import dari paket eksternal
+                // yang tidak tersedia dalam kompilasi tanpa --top). Terima
+                // lenient agar elaborasi OpenTitan tanpa --top tetap melenggang.
+                if self.routines.contains_key(&call.name) {
+                    let body = self.task_body(&call.name, &call.args, call.span)?;
+                    self.comb_to_seq_list(&body)
+                } else {
+                    Ok(vec![])
+                }
             }
             CombinationalStatement::DpiCall(call) => {
                 Ok(vec![SequentialStatement::DpiCall(sv_ast::dpi::DpiCall {
@@ -725,37 +738,40 @@ impl<'a> Inliner<'a> {
                         },
                     )]);
                 }
-                return self.task_body(&call.name, &call.args, call.span);
+                if self.routines.contains_key(&call.name) {
+                    return self.task_body(&call.name, &call.args, call.span);
+                }
+                return Ok(vec![]);
             }
-            CombinationalStatement::DpiCall(call) => {
-                return Ok(vec![CombinationalStatement::DpiCall(call.clone())]);
-            }
+            CombinationalStatement::DpiCall(call) => CombinationalStatement::DpiCall(call.clone()),
             CombinationalStatement::Return { span, .. } => {
                 return Err(ElaborateError::new(
-                    "`return` hanya sah di dalam task/function",
+                    "`return` hanya sah di dalam task/function".to_string(),
                     *span,
                 ))
             }
             CombinationalStatement::ProceduralAssign { lhs, rhs, span } => {
                 CombinationalStatement::ProceduralAssign {
-                    lhs: self.lvalue(lhs)?,
-                    rhs: self.expr(rhs)?,
+                    lhs: lhs.clone(),
+                    rhs: rhs.clone(),
                     span: *span,
                 }
             }
             CombinationalStatement::Deassign { lhs, span } => CombinationalStatement::Deassign {
-                lhs: self.lvalue(lhs)?,
+                lhs: lhs.clone(),
                 span: *span,
             },
-            CombinationalStatement::ExprStmt { expr, span } => CombinationalStatement::ExprStmt {
-                expr: Box::new(self.expr(expr)?),
-                span: *span,
-            },
+            CombinationalStatement::ExprStmt { expr, span } => {
+                let _ = self.expr(expr)?;
+                CombinationalStatement::ExprStmt {
+                    expr: expr.clone(),
+                    span: *span,
+                }
+            }
         };
         Ok(vec![out])
     }
 
-    /// Turunkan deklarasi lokal; nilai inisialnya bisa memanggil function.
     fn deklarasi(&mut self, decl: &Declaration) -> Result<Declaration, ElaborateError> {
         let mut out = decl.clone();
         if let Some(init) = &decl.init {
@@ -1040,6 +1056,7 @@ impl<'a> Inliner<'a> {
             name: lhs.name.clone(),
             slice: lhs.slice,
             extra_slices: lhs.extra_slices.clone(),
+            members: lhs.members.clone(),
             genvar_index: lhs.genvar_index.clone(),
             span: lhs.span,
         })

@@ -638,6 +638,7 @@ fn lingkup_lvalue(l: &Lvalue, prefix: &str, koneksi: &KoneksiMap) -> Lvalue {
     };
     hasil.genvar_index = l.genvar_index.clone();
     hasil.extra_slices = l.extra_slices.clone();
+    hasil.members = l.members.clone();
     hasil
 }
 

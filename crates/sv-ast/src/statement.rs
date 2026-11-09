@@ -5,6 +5,7 @@ use crate::expression::Expr;
 use crate::lvalue::Lvalue;
 use sv_lexer::span::Span;
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
     ContinuousAssign {
