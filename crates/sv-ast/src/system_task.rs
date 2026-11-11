@@ -1,9 +1,10 @@
 // Tanggung jawab: node AST untuk system task testbench.
+use serde::{Deserialize, Serialize};
 use crate::expression::Expr;
 use sv_lexer::span::Span;
 
 /// Argumen system task: string format, ekspresi, atau named association.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SystemArg {
     /// String format seperti `"nilai = %d\n"`.
     Format(String),
@@ -12,7 +13,7 @@ pub enum SystemArg {
 }
 
 /// System task yang didukung (LRM §20).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SystemTaskKind {
     /// `$display(...)` — cetak ke stdout.
     Display,
@@ -68,7 +69,7 @@ impl SystemTaskKind {
 }
 
 /// Panggilan system task beserta argumennya.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SystemTask {
     pub kind: SystemTaskKind,
     pub args: Vec<SystemArg>,

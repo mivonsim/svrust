@@ -2,9 +2,10 @@
 use crate::dpi::DpiCall;
 use crate::expression::Expr;
 use crate::lvalue::Lvalue;
+use serde::{Deserialize, Serialize};
 use sv_lexer::span::Span;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CaseKind {
     /// `case` — perbandingan bit eksak.
     Exact,
@@ -14,7 +15,7 @@ pub enum CaseKind {
     Casex,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CompoundOp {
     Add,
     Sub,
@@ -37,7 +38,7 @@ pub enum CompoundOp {
 /// setiap akses, sedangkan AST adalah nilai milik sendiri yang segera
 /// dibuang setelah dielaborasi, jadi dibiarkan apa adanya.
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CombinationalStatement {
     /// Deklarasi variabel lokal di dalam blok prosedural (LRM §12.8).
     ///
@@ -184,7 +185,7 @@ pub enum CombinationalStatement {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CaseArm {
     pub labels: Vec<Expr>,
     pub is_default: bool,
@@ -193,7 +194,7 @@ pub struct CaseArm {
 }
 
 /// Satu langkah loop `for`: assignment ke variabel loop (LRM §12.7.1).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ForStep {
     pub lhs: Lvalue,
     pub rhs: Expr,

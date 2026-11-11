@@ -1,4 +1,5 @@
 // Tanggung jawab: node AST untuk region generate (LRM §27).
+use serde::{Deserialize, Serialize};
 use crate::declaration::Declaration;
 use crate::expression::Expr;
 use crate::instance::Instance;
@@ -7,7 +8,7 @@ use crate::statement::Statement;
 use sv_lexer::span::Span;
 
 /// Region `generate ... endgenerate` beserta variabel genvar yang dipakai.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GenerateRegion {
     pub genvars: Vec<String>,
     pub items: Vec<GenerateItem>,
@@ -15,7 +16,7 @@ pub struct GenerateRegion {
 }
 
 /// Satu item di dalam region generate.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum GenerateItem {
     /// `for (genvar = A; genvar < B; genvar = genvar + C) begin : label ... end`
     For(Box<ForGenerate>),
@@ -38,7 +39,7 @@ pub enum GenerateItem {
 /// Kondisi harus konstanta pada waktu elaborasi; cabang yang tidak diambil
 /// tidak pernah dielaborasi sehingga sinyalnya tidak muncul di design.
 /// Label opsional untuk nama hierarki (LRM §27.3 menganjurkan label).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IfGenerate {
     pub condition: Expr,
     pub then_branch: Vec<GenerateItem>,
@@ -50,7 +51,7 @@ pub struct IfGenerate {
 }
 
 /// Satu lengan `case` di dalam generate (LRM §27.1).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GenerateCaseArm {
     /// Label konstanta; boleh kosong bila `is_default`.
     pub labels: Vec<Expr>,
@@ -62,7 +63,7 @@ pub struct GenerateCaseArm {
 }
 
 /// Generate `case` (LRM §27.1).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CaseGenerate {
     pub selector: Expr,
     pub arms: Vec<GenerateCaseArm>,
@@ -70,7 +71,7 @@ pub struct CaseGenerate {
 }
 
 /// Loop generate dengan penghitung `genvar` (LRM §27.3).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ForGenerate {
     pub var: String,
     /// Nilai awal genvar; wajib konstanta.
@@ -88,7 +89,7 @@ pub struct ForGenerate {
 }
 
 /// Operator perbandingan batas loop generate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CompareOp {
     Lt,
     Le,

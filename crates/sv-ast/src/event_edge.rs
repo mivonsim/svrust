@@ -1,8 +1,9 @@
 // Tanggung jawab: enum sisi edge pada event control testbench.
+use serde::{Deserialize, Serialize};
 use sv_lexer::token::Token;
 
 /// Sisi perubahan sinyal yang memicu event control (LRM §9.7).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EventEdge {
     /// `posedge` — naik dari 0 ke 1.
     Posedge,

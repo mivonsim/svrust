@@ -1,4 +1,5 @@
 // Tanggung jawab: deklarasi paket SystemVerilog dan parameter paketnya.
+use serde::{Deserialize, Serialize};
 use crate::typedef::TypeDefDecl;
 use crate::width::LocalParamDecl;
 use sv_lexer::span::Span;
@@ -10,7 +11,7 @@ use sv_lexer::span::Span;
 /// ekspresi generate. `typedef` paket (misal `prim_alert_pkg::alert_tx_t`,
 /// sebuah `struct packed`) perlu di-resolve jadi lebar sinyal konkret saat
 /// sebuah deklarasi memakai tipe berkualifikasi paket.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PackageDecl {
     pub name: String,
     pub span: Span,

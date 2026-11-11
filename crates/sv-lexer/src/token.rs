@@ -6,6 +6,8 @@
 /// `is_net_type` di `module.rs`, lalu `routine.rs`, `typedef.rs`,
 /// `generate.rs`, `always_ff.rs`, dan `always_comb.rs` semuanya butuh jawaban
 /// yang sama. Salin-tempel di enam tempat pasti berbeda satu kali.
+use serde::{Deserialize, Serialize};
+
 pub mod tipe {
     use super::Token;
 
@@ -55,7 +57,7 @@ pub mod tipe {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Token {
     Module,
     Endmodule,
@@ -258,7 +260,7 @@ pub enum Token {
 }
 
 /// Operasi dasar pada compound assignment (LRM §11.3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CompoundOp {
     Add,
     Sub,

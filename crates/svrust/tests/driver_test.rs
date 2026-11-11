@@ -281,7 +281,7 @@ fn compile_semua_root_hasil_satu_design_per_root_dengan_nama_unik() {
     )
     .expect("tulis c");
 
-    let designs = compile_semua_root(&[a.clone(), b.clone(), c.clone()], None, &[])
+    let (designs, _sumber_hash) = compile_semua_root(&[a.clone(), b.clone(), c.clone()], None, &[])
         .expect("tiga root harus dielaborasi");
     assert_eq!(designs.len(), 3, "harus ada 3 design untuk 3 root");
 

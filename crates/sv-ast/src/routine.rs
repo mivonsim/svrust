@@ -1,4 +1,5 @@
 // Tanggung jawab: node AST untuk deklarasi task/function SystemVerilog.
+use serde::{Deserialize, Serialize};
 use crate::combinational::CombinationalStatement;
 use crate::declaration::UnpackedDims;
 use crate::expression::Expr;
@@ -6,7 +7,7 @@ use crate::width::WidthExpr;
 use sv_lexer::span::Span;
 
 /// Arah argumen task/function (LRM §13.3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ArgDirection {
     Input,
     Output,
@@ -14,7 +15,7 @@ pub enum ArgDirection {
 }
 
 /// Satu argumen pada daftar port task/function (LRM §13.3).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoutineArg {
     pub name: String,
     pub direction: ArgDirection,
@@ -27,7 +28,7 @@ pub struct RoutineArg {
 }
 
 /// Bentuk subroutine yang dideklarasikan di dalam module (LRM §13.3/§13.4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RoutineKind {
     /// `task ... endtask` — tidak mengembalikan nilai.
     Task,
@@ -37,7 +38,7 @@ pub enum RoutineKind {
 }
 
 /// Deklarasi task atau function di body modul.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoutineDecl {
     pub kind: RoutineKind,
     pub name: String,
@@ -53,7 +54,7 @@ pub struct RoutineDecl {
 }
 
 /// Panggilan task pada posisi statement (LRM §13.3).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TaskCall {
     pub name: String,
     pub args: Vec<Expr>,

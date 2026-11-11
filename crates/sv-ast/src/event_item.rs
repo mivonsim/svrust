@@ -1,4 +1,5 @@
 // Tanggung jawab: satu item event control (sisi edge + sinyal) pada `@(...)`.
+use serde::{Deserialize, Serialize};
 use super::event_edge::EventEdge;
 use sv_lexer::span::Span;
 
@@ -10,7 +11,7 @@ use sv_lexer::span::Span;
 ///
 /// `span` menunjuk token nama sinyal, bukan token `posedge`, supaya pesan
 /// `undefined signal` menunjuk nama yang salah, bukan `@`-nya (AGENTS.md aturan 3).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventItem {
     pub edge: EventEdge,
     pub signal: String,

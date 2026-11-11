@@ -3,10 +3,11 @@ use crate::combinational::CombinationalStatement;
 use crate::dpi::DpiCall;
 use crate::expression::Expr;
 use crate::lvalue::Lvalue;
+use serde::{Deserialize, Serialize};
 use sv_lexer::span::Span;
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Statement {
     ContinuousAssign {
         lhs: Lvalue,
@@ -63,7 +64,7 @@ pub enum Statement {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SequentialStatement {
     NonBlockingAssign {
         lhs: Lvalue,

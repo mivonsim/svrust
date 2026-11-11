@@ -1,4 +1,5 @@
 // Tanggung jawab: node AST untuk instansiasi module.
+use serde::{Deserialize, Serialize};
 use crate::expression::Expr;
 use sv_lexer::span::Span;
 
@@ -9,7 +10,7 @@ use sv_lexer::span::Span;
 /// dengan tabel parameter modul induk (LRM §23.10). Parser hanya mengisi
 /// `Expr::Number` untuk literal; ekspresi yang merujuk parameter induk tetap
 /// berupa `Expr::Ident` dan baru bernilai setelah evaluasi konstanta.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParamOverride {
     pub name: String,
     pub value: Expr,
@@ -20,7 +21,7 @@ pub struct ParamOverride {
 ///
 /// `Genvar` menyimpan nama genvar yang nilainya baru diketahui saat
 /// elaborasi; bentuk ini muncul pada pola kanonik generate `.y(q[i])`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PortIndex {
     /// Bit-select, misal `q[3]`.
     Bit(u32),
@@ -44,7 +45,7 @@ impl PortIndex {
 
 /// Sinyal yang tersambung ke port: bisa nama sinyal polos atau ekspresi
 /// (misal concatenation `{a, b}`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PortSignal {
     Signal(String),
     Expr(Expr),
@@ -70,7 +71,7 @@ impl std::fmt::Display for PortSignal {
 }
 
 /// Koneksi port bernama, misal `.a(sig_a)` atau `.y(q[i])` atau `.a({b, c})`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PortConn {
     pub port: String,
     pub signal: PortSignal,
@@ -80,7 +81,7 @@ pub struct PortConn {
 }
 
 /// Instansiasi satu submodule, misal `adder #(.WIDTH(16)) u0 (.a(x));`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Instance {
     pub module_name: String,
     pub inst_name: String,

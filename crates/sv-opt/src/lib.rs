@@ -29,6 +29,7 @@ mod tests {
         Assignment {
             target,
             slice: None,
+            part_dinamis: None,
             extra_slices: Vec::new(),
             value,
             style: AssignStyle::Blocking,

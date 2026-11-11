@@ -1,15 +1,16 @@
 // Tanggung jawab: node AST untuk port module.
+use serde::{Deserialize, Serialize};
 use crate::width::WidthExpr;
 use sv_lexer::span::Span;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PortDirection {
     Input,
     Output,
     Inout,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Port {
     pub direction: PortDirection,
     pub name: String,

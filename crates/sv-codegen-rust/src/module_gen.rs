@@ -2212,6 +2212,7 @@ mod tests {
                 assignment: sv_ir::process::Assignment {
                     target: 1,
                     slice: None,
+                    part_dinamis: None,
                     extra_slices: Vec::new(),
                     value: kom(5, 8),
                     style: sv_ir::process::AssignStyle::Blocking,

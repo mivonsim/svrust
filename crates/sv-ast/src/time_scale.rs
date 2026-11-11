@@ -1,11 +1,12 @@
 // Tanggung jawab: `timescale` unit/precision (LRM §21.8).
+use serde::{Deserialize, Serialize};
 use crate::time_unit::TimeUnit;
 
 /// Skala waktu modul: satuan `#delay` tanpa satuan dan satuan pembulatan.
 ///
 /// `timescale 1us/1ns` berarti `#1` = 1 microsecond, sedangkan presisi 1ns
 /// menentukan satuan yang dipakai `$time` dan `%t` menampilkan waktu.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TimeScale {
     /// Satuan `timeunit`: dipakai `#n` yang ditulis tanpa satuan.
     pub unit: TimeUnit,

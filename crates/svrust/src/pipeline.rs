@@ -132,69 +132,200 @@ struct ParsedFileResult {
     parse_error: Option<(String, String)>, // (message, path_display)
 }
 
+/// Hitung kunci cache untuk satu berkas: hash dari konten asli + path.
+fn cache_key_file(path: &Path, source_asli: &str) -> sv_cache::CacheKey {
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(path.to_string_lossy().as_bytes());
+    hasher.update(b"|");
+    hasher.update(source_asli.as_bytes());
+    sv_cache::CacheKey(format!("{:x}", hasher.finalize()))
+}
+
+/// Hasil pemrosesan satu file beserta data yang ingin disimpan ke cache.
+struct FileProcessResult {
+    result: ParsedFileResult,
+    /// Data untuk disimpan ke parse cache (None jika sudah ada di cache atau error).
+    cache_data: Option<(sv_cache::CacheKey, sv_cache::CachedParse)>,
+}
+
 /// Proses satu berkas SV: preprocess → lex → parse.
 /// Dapat dijalankan secara paralel karena setiap berkas independen.
-fn proses_satu_file(path: &Path, incdir: &[PathBuf]) -> ParsedFileResult {
+/// Jika `cache` ada dan berkas belum berubah, gunakan hasil cache untuk
+/// skip preprocessing, lexing, dan parsing.
+/// Penulisan ke cache dikembalikan sebagai `cache_data` untuk dilakukan
+/// secara sekuensial setelah parallel loop (karena `simpan_parse` butuh
+/// `&mut SvCache`).
+/// Parse source preprocessed yang di-cache (lex + parse saja, tanpa
+/// preprocessing). Digunakan saat cache hit untuk mendapatkan Module struct.
+fn parse_cached_source(
+    _path: &Path,
+    source_preprocessed: &str,
+) -> Result<sv_parser::ParseResult, String> {
+    let tokens = sv_lexer::lex(source_preprocessed)
+        .map_err(|e| format!("lexical error: {}", e.message))?;
+    sv_parser::parse_file(&tokens).map_err(|e| e.to_string())
+}
+
+fn proses_satu_file(
+    path: &Path,
+    incdir: &[PathBuf],
+    cache: Option<&sv_cache::SvCache>,
+) -> FileProcessResult {
+    let source_asli = match read_source(path) {
+        Ok(s) => s,
+        Err(e) => {
+            return FileProcessResult {
+                result: ParsedFileResult {
+                    path: path.to_path_buf(),
+                    source_asli: String::new(),
+                    source: String::new(),
+                    tokens: vec![],
+                    modules: vec![],
+                    typedefs_global: vec![],
+                    packages: vec![],
+                    parse_error: Some((format!("gagal baca {}: {}", path.display(), e), path.display().to_string())),
+                },
+                cache_data: None,
+            };
+        }
+    };
+
+    // Cek cache sebelum preprocess/lex/parse.
+    if let Some(c) = cache {
+        let kunci = cache_key_file(path, &source_asli);
+        if let Some(cached) = c.cek_parse(&kunci) {
+            if cached.sukses {
+                // Cache hit: re-parse source preprocessed (lex+parse cepat).
+                match parse_cached_source(path, &cached.source_preprocessed) {
+                    Ok(parsed) => {
+                        return FileProcessResult {
+                            result: ParsedFileResult {
+                                path: path.to_path_buf(),
+                                source_asli: cached.source_preprocessed.clone(),
+                                source: cached.source_preprocessed.clone(),
+                                tokens: vec![],
+                                modules: parsed.modules,
+                                typedefs_global: parsed.typedefs_global,
+                                packages: parsed.packages,
+                                parse_error: None,
+                            },
+                            cache_data: None, // Sudah ada di cache
+                        };
+                    }
+                    Err(_) => {
+                        // Re-parse gagal (source berubah?); fallthrough ke
+                        // preprocess ulang.
+                    }
+                }
+            } else {
+                // Parse error yang di-cache — kembalikan sebagai error.
+                return FileProcessResult {
+                    result: ParsedFileResult {
+                        path: path.to_path_buf(),
+                        source_asli: cached.source_preprocessed.clone(),
+                        source: cached.source_preprocessed.clone(),
+                        tokens: vec![],
+                        modules: vec![],
+                        typedefs_global: vec![],
+                        packages: vec![],
+                        parse_error: Some((
+                            format!("parse error (cached) for {}", path.display()),
+                            path.display().to_string(),
+                        )),
+                    },
+                    cache_data: None,
+                };
+            }
+        } else {}
+    }
+
     let (source_asli, source) = match read_preprocessed_with_original(path, incdir) {
         Ok((s, p)) => (s, p),
         Err(e) => {
-            return ParsedFileResult {
-                path: path.to_path_buf(),
-                source_asli: String::new(),
-                source: String::new(),
-                tokens: vec![],
-                modules: vec![],
-                typedefs_global: vec![],
-                packages: vec![],
-                parse_error: Some((
-                    format!("preprocessor error: {}", e),
-                    path.display().to_string(),
-                )),
+            return FileProcessResult {
+                result: ParsedFileResult {
+                    path: path.to_path_buf(),
+                    source_asli: source_asli.clone(),
+                    source: String::new(),
+                    tokens: vec![],
+                    modules: vec![],
+                    typedefs_global: vec![],
+                    packages: vec![],
+                    parse_error: Some((
+                        format!("preprocessor error: {}", e),
+                        path.display().to_string(),
+                    )),
+                },
+                cache_data: None,
             };
         }
     };
     let tokens = match sv_lexer::lex(&source) {
         Ok(tokens) => tokens,
         Err(error) => {
-            return ParsedFileResult {
-                path: path.to_path_buf(),
-                source_asli,
-                source,
-                tokens: vec![],
-                modules: vec![],
-                typedefs_global: vec![],
-                packages: vec![],
-                parse_error: Some((
-                    format!("lexical error: {}", error.message),
-                    path.display().to_string(),
-                )),
+            return FileProcessResult {
+                result: ParsedFileResult {
+                    path: path.to_path_buf(),
+                    source_asli,
+                    source,
+                    tokens: vec![],
+                    modules: vec![],
+                    typedefs_global: vec![],
+                    packages: vec![],
+                    parse_error: Some((
+                        format!("lexical error: {}", error.message),
+                        path.display().to_string(),
+                    )),
+                },
+                cache_data: None,
             };
         }
     };
     let parsed = match sv_parser::parse_file(&tokens) {
         Ok(parsed) => parsed,
         Err(error) => {
-            return ParsedFileResult {
-                path: path.to_path_buf(),
-                source_asli,
-                source,
-                tokens,
-                modules: vec![],
-                typedefs_global: vec![],
-                packages: vec![],
-                parse_error: Some((error, path.display().to_string())),
+            return FileProcessResult {
+                result: ParsedFileResult {
+                    path: path.to_path_buf(),
+                    source_asli,
+                    source,
+                    tokens,
+                    modules: vec![],
+                    typedefs_global: vec![],
+                    packages: vec![],
+                    parse_error: Some((error, path.display().to_string())),
+                },
+                cache_data: None,
             };
         }
     };
-    ParsedFileResult {
-        path: path.to_path_buf(),
-        source_asli,
-        source,
-        tokens,
-        modules: parsed.modules,
-        typedefs_global: parsed.typedefs_global,
-        packages: parsed.packages,
-        parse_error: None,
+
+    // Kumpulkan nama module untuk cache.
+    let module_names: Vec<String> = parsed.modules.iter().map(|m| m.name.clone()).collect();
+
+    let kunci = cache_key_file(path, &source_asli);
+    let cache_data = Some((
+        kunci,
+        sv_cache::CachedParse {
+            diagnistik: vec![],
+            sukses: true,
+            source_preprocessed: source.clone(),
+            module_names,
+        },
+    ));
+
+    FileProcessResult {
+        result: ParsedFileResult {
+            path: path.to_path_buf(),
+            source_asli,
+            source,
+            tokens,
+            modules: parsed.modules,
+            typedefs_global: parsed.typedefs_global,
+            packages: parsed.packages,
+            parse_error: None,
+        },
+        cache_data,
     }
 }
 
@@ -211,20 +342,31 @@ pub fn collect_modules(
     paths: &[PathBuf],
     incdir: &[PathBuf],
     _top: Option<&str>,
+    mut cache: Option<&mut sv_cache::SvCache>,
 ) -> Result<ModuleCollection, crate::CliError> {
     let paths = expand_rtl_inputs(paths)?;
 
-    // PARALEL: proses setiap berkas secara independen
-    let hasil_per_file: Vec<ParsedFileResult> = paths
+    // PARALEL: proses setiap berkas secara independen (baca cache hanya).
+    let cache_ref = cache.as_deref();
+    let hasil_per_file: Vec<FileProcessResult> = paths
         .par_iter()
-        .map(|path| proses_satu_file(path, incdir))
+        .map(|path| proses_satu_file(path, incdir, cache_ref))
         .collect();
+
+    // SEKUENSIAL: simpan data baru ke cache (butuh &mut SvCache).
+    if let Some(c) = cache.as_deref_mut() {
+        for hasil in &hasil_per_file {
+            if let Some((kunci, data)) = &hasil.cache_data {
+                c.simpan_parse(kunci.clone(), data.clone());
+            }
+        }
+    }
 
     // Pisahkan hasil sukses dan error parsing
     let mut all_diagnostics = Vec::new();
     let mut file_results = Vec::new();
     for hasil in hasil_per_file {
-        file_results.push(hasil);
+        file_results.push(hasil.result);
     }
     let mut modules = Vec::new();
     let mut typedefs_global = Vec::new();
@@ -281,7 +423,7 @@ pub fn collect_modules(
 
     // Dengan `--top`, hanya pertahankan modul yang tercapai dari top.
     let modules_kept = if let Some(nama_top) = _top {
-        let total_modules = modules.len();
+        let _total_modules = modules.len();
         let mut reachable = HashSet::new();
         let mut stack = vec![nama_top.to_string()];
         let module_by_name: HashMap<&str, &Module> =
@@ -537,7 +679,11 @@ pub fn compile_paths(
     top: Option<&str>,
     incdir: &[PathBuf],
 ) -> Result<Design, String> {
-    let collection = collect_modules(paths, incdir, top).map_err(|error| error.to_string())?;
+    let workspace = Workspace::detect()?;
+    let cache_root = workspace.target_sv.join("cache");
+    let mut cache = SvCache::baru_dengan_root(cache_root).map_err(|e| e.to_string())?;
+    let collection =
+        collect_modules(paths, incdir, top, Some(&mut cache)).map_err(|error| error.to_string())?;
     let nama_top = pilih_top(&collection.modules, top)?;
     let mut design = sv_elaborator::elaborate_top(
         &collection.modules,
@@ -580,8 +726,12 @@ pub fn compile_semua_root(
     paths: &[PathBuf],
     top: Option<&str>,
     incdir: &[PathBuf],
-) -> Result<Vec<sv_ir::Design>, crate::CliError> {
-    let collection = collect_modules(paths, incdir, top)?;
+) -> Result<(Vec<sv_ir::Design>, String), crate::CliError> {
+    let workspace = Workspace::detect()?;
+    let cache_root = workspace.target_sv.join("cache");
+    let mut cache = SvCache::baru_dengan_root(cache_root)?;
+    let collection =
+        collect_modules(paths, incdir, top, Some(&mut cache))?;
     let tops = tops_dipakai(&collection.modules, top)
         .map_err(|error| diagnostic_top_error(error, &collection))?;
 
@@ -589,10 +739,8 @@ pub fn compile_semua_root(
     // merubah hash → seluruh cache elaborate invalid (aman, meski konsentrat).
     let sumber_hash = hash_sumber(&collection);
 
-    let workspace = Workspace::detect()?;
-    let cache_root = workspace.target_sv.join("cache");
-    let mut cache = SvCache::baru_dengan_root(cache_root)?;
-    elaborate_tops(&collection, &tops, &sumber_hash, &mut cache)
+    let designs = elaborate_tops(&collection, &tops, &sumber_hash, &mut cache)?;
+    Ok((designs, sumber_hash))
 }
 
 /// Hitung hash SHA256 atas seluruh sumber RTL (preprocessed + asli) untuk

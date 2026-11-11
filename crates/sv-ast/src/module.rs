@@ -1,4 +1,5 @@
 // Tanggung jawab: node AST untuk module SystemVerilog.
+use serde::{Deserialize, Serialize};
 use crate::declaration::Declaration;
 use crate::generate::GenerateRegion;
 use crate::instance::Instance;
@@ -7,7 +8,7 @@ use crate::statement::Statement;
 use crate::width::ParamDecl;
 use sv_lexer::span::Span;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Module {
     pub name: String,
     pub span: Span,

@@ -1,7 +1,8 @@
 // Tanggung jawab: node AST untuk expression.
+use serde::{Deserialize, Serialize};
 use sv_lexer::span::Span;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Expr {
     /// Identifier; `span` dipakai agar error elaborasi bisa menunjuk ke token
     /// aslinya, bukan ke posisi dummy (AGENTS.md aturan 3).
@@ -188,7 +189,7 @@ pub enum Expr {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BinaryOp {
     And,
     Or,
@@ -219,7 +220,7 @@ pub enum BinaryOp {
     LogOr,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UnaryOp {
     /// `~` — negasi bitwise.
     BitNot,

@@ -1,9 +1,10 @@
 // Tanggung jawab: node AST untuk target assignment (sinyal atau irisannya).
+use serde::{Deserialize, Serialize};
 use crate::expression::Expr;
 use sv_lexer::span::Span;
 
 /// Irisan bit target: `[i]` untuk bit-select, `[msb:lsb]` untuk part-select.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Slice {
     pub msb: u32,
     pub lsb: u32,
@@ -12,7 +13,7 @@ pub struct Slice {
 /// Indexed part-select `[base +: width]` atau `[base -: width]` (LRM §7.8)
 /// pada sisi kiri assignment. `base` adalah indeks awal, `width` lebar,
 /// `arah` menentukan `+` atau `-`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PartDinamis {
     pub base: Expr,
     pub width: Expr,
@@ -20,7 +21,7 @@ pub struct PartDinamis {
 }
 
 /// Arah indexed part-select.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Arah {
     Plus,  // `[base +: width]`
     Minus, // `[base -: width]`
@@ -39,7 +40,7 @@ impl Slice {
 /// `name` adalah nama dasar, `slice` irisan pertama pada nama dasar,
 /// `extra_slices` irisan bertingkat, `members` segmen path setelah titik
 /// (misal `["h2d"]` pada `tl_if.h2d`), `genvar_index` indeks genvar.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Lvalue {
     pub name: String,
     /// `None` berarti seluruh sinyal, atau indeks genvar yang belum selesai.

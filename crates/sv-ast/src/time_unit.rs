@@ -1,6 +1,8 @@
 // Tanggung jawab: satuan waktu penulisan pada AST delay SystemVerilog.
+use serde::{Deserialize, Serialize};
+
 /// Satuan waktu pada `#n` (LRM §3.3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TimeUnit {
     /// `#n` ditulis tanpa satuan: satuan ditentukan `timescale` modul
     /// (LRM §21.8). Eligator yang menyelesaikannya, karena parser tidak

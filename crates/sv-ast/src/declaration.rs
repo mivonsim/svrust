@@ -1,9 +1,10 @@
 // Tanggung jawab: node AST untuk deklarasi signal.
 use crate::expression::Expr;
 use crate::width::WidthExpr;
+use serde::{Deserialize, Serialize};
 use sv_lexer::span::Span;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Declaration {
     pub name: String,
     pub width: WidthExpr,
@@ -32,7 +33,7 @@ pub struct Declaration {
 }
 
 /// Dimensi unpacked satu tingkat (LRM §7.8).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnpackedDim {
     /// Jumlah elemen.
     pub size: u64,
@@ -51,7 +52,7 @@ pub struct UnpackedDim {
 ///
 /// Indeks `mem[i][j]` menghasilkan offset bit:
 ///   `((i × size_2 + j) × lebar_elemen) .. (((i × size_2 + j + 1) × lebar_elemen) - 1)`
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnpackedDims {
     /// Dimensi dari luar ke dalam, misal untuk `[0:3][0:15]` ini
     /// `[UnpackedDim { size: 4, .. }, UnpackedDim { size: 16, .. }]`.
@@ -102,7 +103,7 @@ impl UnpackedDims {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StructField {
     pub name: String,
     pub width: WidthExpr,

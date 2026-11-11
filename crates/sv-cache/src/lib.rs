@@ -28,12 +28,19 @@ impl CacheKey {
     }
 }
 
-/// Hasil parsing yang di-cache. Tidak menyimpan `Module` (terlalu banyak tipe
-/// nested untuk diserialisasi); cukup simpan diagnostik + apakah parsing sukses.
+/// Hasil parsing yang di-cache. Menyimpan source preprocessed dan daftar
+/// nama module agar preprocessing dapat di-skip pada run berikutnya.
+/// Parsing (lex+parse) masih dijalankan ulang saat cache hit karena AST
+/// terlalu besar untuk diserialisasi aman (rekursi serde_json).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachedParse {
     pub diagnistik: Vec<Diagnostic>,
     pub sukses: bool,
+    /// Source setelah preprocessing (untuk mapping diagnostik ke baris asli
+    /// dan untuk di-parse ulang saat cache hit).
+    pub source_preprocessed: String,
+    /// Nama module yang ditemukan dalam berkas ini.
+    pub module_names: Vec<String>,
 }
 
 /// Hasil elaboration yang di-cache. Tidak menyimpan `Design`; cukup simpan
@@ -259,6 +266,8 @@ mod tests {
             CachedParse {
                 diagnistik: diagnistik_contoh(),
                 sukses: true,
+                source_preprocessed: String::new(),
+                module_names: Vec::new(),
             },
         );
         assert!(

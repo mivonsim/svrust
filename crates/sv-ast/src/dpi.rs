@@ -1,8 +1,9 @@
 // Tanggung jawab: node AST untuk deklarasi DPI-C (import/export) SystemVerilog (LRM §35).
+use serde::{Deserialize, Serialize};
 use sv_lexer::span::Span;
 
 /// Jenis deklarasi DPI-C (LRM §35.2).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DpiKind {
     /// `import "DPI-C" function ...;` — pemanggilan fungsi C dari SystemVerilog.
     Import,
@@ -11,7 +12,7 @@ pub enum DpiKind {
 }
 
 /// Satu deklarasi DPI-C di body modul (LRM §35).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DpiDecl {
     pub kind: DpiKind,
     /// Nama fungsi liaran: nama fungsi C yang dipanggil (import) atau nama
@@ -30,7 +31,7 @@ pub struct DpiDecl {
 ///
 /// Dihasilkan oleh elaborator saat statement memanggil fungsi yang
 /// dideklarasi dengan `import "DPI-C" function ...;`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DpiCall {
     /// Nama fungsi SV yang diimpor, cocok dengan `DpiDecl::name`.
     pub name: String,

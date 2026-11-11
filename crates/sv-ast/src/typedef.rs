@@ -1,4 +1,5 @@
 // Tanggung jawab: node AST untuk deklarasi `typedef` dan `typedef enum`.
+use serde::{Deserialize, Serialize};
 use crate::expression::Expr;
 use crate::width::WidthExpr;
 use sv_lexer::span::Span;
@@ -8,7 +9,7 @@ use sv_lexer::span::Span;
 /// Lebar field dihitung dari `width` (dan `type_name` bila field memakai tipe
 /// hasil typedef). SVRust meratakan `struct packed` menjadi sinyal bit-vector
 /// selebar jumlah lebar semua field, sehingga yang penting adalah lebar total.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StructFieldDef {
     pub name: String,
     pub width: WidthExpr,
@@ -23,7 +24,7 @@ pub struct StructFieldDef {
 /// LRM §8.20 `typedef` menyalin tipe yang sudah ada; LRM §6.7 menambah
 /// enumerasi; LRM §6.7/`struct packed` ditambahkan untuk dukungan paket
 /// OpenTitan (mis. `prim_alert_pkg::alert_tx_t`).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TypeDefBody {
     /// `typedef logic [7:0] byte_t;` — alias tipe biasa.
     Scalar { width: WidthExpr, signed: bool },
@@ -42,7 +43,7 @@ pub enum TypeDefBody {
 /// Satu anggota enumerasi (LRM §6.7).
 ///
 /// Nilai kosong berarti mengikuti anggota sebelumnya, mulai dari 0.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EnumMember {
     pub name: String,
     pub value: Option<Expr>,
@@ -50,7 +51,7 @@ pub struct EnumMember {
 }
 
 /// Satu deklarasi `typedef` di body modul.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TypeDefDecl {
     /// Nama tipe baru yang dihasilkan.
     pub name: String,
