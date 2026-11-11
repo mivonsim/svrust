@@ -80,6 +80,7 @@ fn lower_comb_statement(
                     target,
                     slice,
                     extra_slices: Vec::new(),
+                    part_dinamis: None,
                     value,
                     style: AssignStyle::Blocking,
                 },
@@ -95,6 +96,7 @@ fn lower_comb_statement(
                     target,
                     slice,
                     extra_slices: Vec::new(),
+                    part_dinamis: None,
                     value,
                     style: AssignStyle::NonBlocking,
                 },
@@ -110,6 +112,7 @@ fn lower_comb_statement(
                 target,
                 slice,
                 extra_slices: Vec::new(),
+                    part_dinamis: None,
                 value,
                 span: to_ir_span(*span),
             })
@@ -201,6 +204,7 @@ fn lower_comb_statement(
                     target,
                     slice,
                     extra_slices: Vec::new(),
+                    part_dinamis: None,
                     value: crate::lower_expr::sesuaikan_lebar(
                         nilai,
                         lebar,
@@ -464,6 +468,7 @@ pub fn lower_module_statement(
                         target,
                         slice,
                         extra_slices: Vec::new(),
+                    part_dinamis: None,
                         value,
                         style: AssignStyle::Blocking,
                     },
@@ -617,6 +622,7 @@ fn lower_seq_statement(
                     target,
                     slice,
                     extra_slices: Vec::new(),
+                    part_dinamis: None,
                     value,
                     style: AssignStyle::NonBlocking,
                 },
@@ -631,6 +637,7 @@ fn lower_seq_statement(
                     target,
                     slice,
                     extra_slices: Vec::new(),
+                    part_dinamis: None,
                     value,
                     style: AssignStyle::Blocking,
                 },
@@ -645,6 +652,7 @@ fn lower_seq_statement(
                 target,
                 slice,
                 extra_slices: Vec::new(),
+                    part_dinamis: None,
                 value,
                 span: to_ir_span(*span),
             })
@@ -941,6 +949,11 @@ fn lookup_lvalue(
         unpacked: None,
         span: lhs.span,
     });
+    // Indexed part-select pada LHS (`a[base +: width]`) — tulis ke seluruh
+    // sinyal; codegen dan runtime menangani penggeseran bit.
+    if lhs.part_dinamis.is_some() {
+        return Ok((symbol.signal_id, None));
+    }
     // Indeks variabel pada LHS (misal `y[i]` atau `mem[k]`) — Parser menyimpan
     // identifier tunggal sebagai `genvar_index` (String), bukan Expr, jadi
     // tidak dapat dievaluasi sebagai konstanta di sini. Diabaikan agar
@@ -1141,6 +1154,7 @@ fn lower_for_step(
         target,
         slice,
         extra_slices: Vec::new(),
+                    part_dinamis: None,
         value,
         style: AssignStyle::Blocking,
     })

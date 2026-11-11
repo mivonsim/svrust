@@ -651,6 +651,7 @@ fn lingkup_lvalue(l: &Lvalue, prefix: &str, koneksi: &KoneksiMap) -> Lvalue {
         Some(slice) => Lvalue::sliced(name, slice, l.span),
     };
     hasil.genvar_index = l.genvar_index.clone();
+    hasil.part_dinamis = l.part_dinamis.clone();
     hasil.extra_slices = l.extra_slices.clone();
     hasil.members = l.members.clone();
     hasil

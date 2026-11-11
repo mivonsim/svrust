@@ -1080,6 +1080,7 @@ impl<'a> Inliner<'a> {
             extra_slices: lhs.extra_slices.clone(),
             members: lhs.members.clone(),
             genvar_index: lhs.genvar_index.clone(),
+            part_dinamis: lhs.part_dinamis.clone(),
             span: lhs.span,
         })
     }

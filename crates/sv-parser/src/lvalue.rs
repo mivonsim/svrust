@@ -1,6 +1,6 @@
 // Tanggung jawab: parse sisi kiri assignment berupa sinyal dengan irisan opsional.
 use crate::pesan;
-use sv_ast::lvalue::{Lvalue, Slice};
+use sv_ast::lvalue::{Arah, Lvalue, PartDinamis, Slice};
 use sv_lexer::spanned::SpannedToken;
 use sv_lexer::token::Token;
 
@@ -42,17 +42,35 @@ pub fn parse_lvalue(tokens: &[SpannedToken]) -> Result<(Lvalue, usize), String> 
             return Err("part-select dengan batas atas kosong `[msb:]` belum didukung".to_string());
         }
 
-        // Indexed part-select `a[base +: width]` (LRM §7.8).
+        // Indexed part-select `a[base +: width]` / `[base -: width]` (LRM §7.8)
+        // pada LHS. Base dan width diekspresikan sebagai ekspresi yang
+        // diselesaikan saat elaborasi.
         if let Some(pos) = (cursor + 2..first_closing).find(|&i| tokens[i].token == Token::Colon) {
-            match tokens[pos - 1].token {
-                Token::Plus | Token::Minus => {
-                    return Err(pesan::tandai(
-                        tokens,
-                        pos,
-                        "indexed part-select `a[base +: width]` belum didukung".to_string(),
-                    ))
-                }
-                _ => {}
+            let arah = match tokens[pos - 1].token {
+                Token::Plus => Some(Arah::Plus),
+                Token::Minus => Some(Arah::Minus),
+                _ => None,
+            };
+            if let Some(arah) = arah {
+                let base_tokens = &tokens[cursor + 2..pos - 1];
+                let width_tokens = &tokens[pos + 1..first_closing];
+                let (base_expr, _) = super::expression::parse_expression(base_tokens)?;
+                let (width_expr, _) = super::expression::parse_expression(width_tokens)?;
+                let span = tokens[cursor].span;
+                let lvalue = Lvalue {
+                    name,
+                    slice: None,
+                    extra_slices: Vec::new(),
+                    members: Vec::new(),
+                    genvar_index: None,
+                    part_dinamis: Some(PartDinamis {
+                        base: base_expr,
+                        width: width_expr,
+                        arah,
+                    }),
+                    span,
+                };
+                return Ok((lvalue, first_closing + 1));
             }
         }
 
@@ -340,6 +358,7 @@ pub fn parse_lvalue(tokens: &[SpannedToken]) -> Result<(Lvalue, usize), String> 
             extra_slices,
             members,
             genvar_index,
+            part_dinamis: None,
             span,
         },
         cursor,

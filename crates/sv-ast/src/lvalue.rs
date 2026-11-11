@@ -1,4 +1,5 @@
 // Tanggung jawab: node AST untuk target assignment (sinyal atau irisannya).
+use crate::expression::Expr;
 use sv_lexer::span::Span;
 
 /// Irisan bit target: `[i]` untuk bit-select, `[msb:lsb]` untuk part-select.
@@ -6,6 +7,23 @@ use sv_lexer::span::Span;
 pub struct Slice {
     pub msb: u32,
     pub lsb: u32,
+}
+
+/// Indexed part-select `[base +: width]` atau `[base -: width]` (LRM §7.8)
+/// pada sisi kiri assignment. `base` adalah indeks awal, `width` lebar,
+/// `arah` menentukan `+` atau `-`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PartDinamis {
+    pub base: Expr,
+    pub width: Expr,
+    pub arah: Arah,
+}
+
+/// Arah indexed part-select.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Arah {
+    Plus,  // `[base +: width]`
+    Minus, // `[base -: width]`
 }
 
 impl Slice {
@@ -36,6 +54,9 @@ pub struct Lvalue {
     /// Nilai genvar baru diketahui saat elaborasi, sehingga irisan disimpan
     /// terpisah dan diselesaikan menjadi `slice` pada saat itu.
     pub genvar_index: Option<String>,
+    /// Indexed part-select `[base +: width]` / `[base -: width]` pada LHS.
+    /// Diisi bila target assignment pakai indexed part-select.
+    pub part_dinamis: Option<PartDinamis>,
     pub span: Span,
 }
 
@@ -48,6 +69,7 @@ impl Lvalue {
             extra_slices: Vec::new(),
             members: Vec::new(),
             genvar_index: None,
+            part_dinamis: None,
             span,
         }
     }
@@ -60,6 +82,7 @@ impl Lvalue {
             extra_slices: Vec::new(),
             members: Vec::new(),
             genvar_index: None,
+            part_dinamis: None,
             span,
         }
     }
@@ -72,12 +95,13 @@ impl Lvalue {
             extra_slices: Vec::new(),
             members: Vec::new(),
             genvar_index: Some(genvar.into()),
+            part_dinamis: None,
             span,
         }
     }
 
     pub fn is_sliced(&self) -> bool {
-        self.slice.is_some()
+        self.slice.is_some() || self.part_dinamis.is_some()
     }
 
     /// Ganti indeks genvar menjadi irisan konkret.

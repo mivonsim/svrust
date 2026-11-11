@@ -84,11 +84,25 @@ impl Slice {
     }
 }
 
+/// Indexed part-select `[base +: width]` / `[base -: width]` pada LHS
+/// assignment (LRM §7.8). `base` dan `width` adalah ekspresi IR yang
+/// dievaluasi saat runtime untuk menentukan rentang bit target.
+/// `arah_plus` true untuk `[base +: width]`, false untuk `[base -: width]`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PartDinamis {
+    pub base: Expr,
+    pub width: Expr,
+    pub arah_plus: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Assignment {
     pub target: crate::expr::SignalId,
     /// `None` berarti seluruh sinyal; `Some` berarti hanya irisan bit.
     pub slice: Option<Slice>,
+    /// Indexed part-select pada LHS assignment. Jika `Some`, menimpa `slice`
+    /// untuk menentukan rentang bit yang ditulis secara dinamis.
+    pub part_dinamis: Option<PartDinamis>,
     /// Irisan bertingkat untuk target seperti `y[3:0][1]`. Setiap slice
     /// diterapkan berturut-turut: offset absolut = lsb slice pertama +
     /// jumlah lsb semua extra, width = width extra terakhir.
@@ -199,6 +213,8 @@ pub enum Statement {
         target: crate::expr::SignalId,
         /// `None` berarti seluruh sinyal; `Some` berarti hanya irisan bit.
         slice: Option<Slice>,
+        /// Indexed part-select pada LHS (`a[base +: width]`).
+        part_dinamis: Option<PartDinamis>,
         /// Irisan bertingkat untuk target seperti `y[3:0][1]`.
         extra_slices: Vec<Slice>,
         value: Expr,
