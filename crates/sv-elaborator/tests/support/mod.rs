@@ -212,6 +212,11 @@ pub fn evaluasi(expr: &Expr, signals: &mut Vec<u64>) -> u64 {
                 // LRM §11.4.10: `>>>` mengisi bit sign tipe hasil. Lebar
                 // mengikuti operand kiri seperti geser lain.
                 Sar => geser_kanan_aritmetik(a, b, lhs.data_type().width, expr.data_type().signed),
+                // LRM §11.4.7: perpangkatan.
+                Pow => a.wrapping_pow(b as u32) & lebar_mask(lebar),
+                // `inside` tidak dapat dievaluasi pada level u64 karena RHS
+                // adalah concatenation.
+                Inside => 0,
                 // LRM §11.4.5: perbandingan bertanda hanya bila kedua operand
                 // signed, dan lebarnya lebar operand (bukan lebar hasil 1 bit).
                 // Tanpa ini `-1 < 0` membandingkan 0xFFFFFFFF dengan 0 sebagai

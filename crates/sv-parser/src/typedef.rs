@@ -423,6 +423,23 @@ pub fn parse_typed_declaration(
         width = width_packed;
     }
 
+    // Instansiasi interface/modul: `clk_rst_if main_clk (.clk(clk), ...)`.
+    // Lewati daftar koneksi port hingga ')' penutup.
+    if tokens.get(idx).map(|t| &t.token) == Some(&Token::LParen) {
+        let mut depth = 1u32;
+        idx += 1;
+        while idx < tokens.len() && depth > 0 {
+            match &tokens[idx].token {
+                Token::LParen | Token::LBracket | Token::LBrace => depth += 1,
+                Token::RParen | Token::RBracket | Token::RBrace => {
+                    depth = depth.saturating_sub(1);
+                }
+                _ => {}
+            }
+            idx += 1;
+        }
+    }
+
     let init = if tokens.get(idx).map(|t| &t.token) == Some(&Token::Eq) {
         idx += 1;
         let (expr, consumed) = super::expression::parse_expression(&tokens[idx..])?;

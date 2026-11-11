@@ -657,6 +657,15 @@ fn subst_expr(expr: &AstExpr, env: &GenvarEnv, scope: &ScopeBlok) -> AstExpr {
             operand: Box::new(subst_expr(operand, env, scope)),
             span: *span,
         },
+        AstExpr::SizeCastExpr {
+            width_expr,
+            operand,
+            span,
+        } => AstExpr::SizeCastExpr {
+            width_expr: Box::new(subst_expr(width_expr, env, scope)),
+            operand: Box::new(subst_expr(operand, env, scope)),
+            span: *span,
+        },
         AstExpr::Cast {
             type_name,
             operand,

@@ -27,6 +27,21 @@ pub fn parse_combinational_statement(
     }
 
     match &tokens[0].token {
+        // Port deklarasi di body modul (terkadang muncul dalam konteks
+        // combinational pada file verifikasi). Lewati hingga ';'.
+        Token::Input | Token::Output | Token::Inout => {
+            let mut i = 1;
+            while i < tokens.len() && tokens[i].token != Token::Semi {
+                i += 1;
+            }
+            if i < tokens.len() {
+                i += 1;
+            }
+            return Ok((
+                CombinationalStatement::PortDeclSkip,
+                i,
+            ));
+        }
         Token::Case => parse_case(tokens, CaseKind::Exact),
         Token::Casez => parse_case(tokens, CaseKind::Casez),
         Token::Casex => parse_case(tokens, CaseKind::Casex),
@@ -51,8 +66,8 @@ pub fn parse_combinational_statement(
         Token::Assign => {
             let span = tokens[0].span;
             let mut idx = 1; // skip 'assign'
-            // LRM §11.8.1: concatenation pada LHS, misal `{a, b} = {c, d}`,
-            // setara dengan `a = c; b = d;`. Parse setiap elemen LHS terpisah.
+                             // LRM §11.8.1: concatenation pada LHS, misal `{a, b} = {c, d}`,
+                             // setara dengan `a = c; b = d;`. Parse setiap elemen LHS terpisah.
             let lhss = if tokens.get(idx).map(|t| &t.token) == Some(&Token::LBrace) {
                 let (lhs_vec, consumed) = parse_concat_lvalue(&tokens[idx..])?;
                 idx += consumed;

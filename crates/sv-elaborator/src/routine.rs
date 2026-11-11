@@ -516,6 +516,7 @@ impl<'a> Inliner<'a> {
                 let _ = self.expr(expr)?;
                 Ok(Vec::new())
             }
+            CombinationalStatement::PortDeclSkip => Ok(Vec::new()),
         }
     }
 
@@ -768,6 +769,7 @@ impl<'a> Inliner<'a> {
                     span: *span,
                 }
             }
+            CombinationalStatement::PortDeclSkip => CombinationalStatement::PortDeclSkip,
         };
         Ok(vec![out])
     }
@@ -1028,6 +1030,15 @@ impl<'a> Inliner<'a> {
                 span,
             } => Expr::SizeCast {
                 width: *width,
+                operand: Box::new(self.expr(operand)?),
+                span: *span,
+            },
+            Expr::SizeCastExpr {
+                width_expr,
+                operand,
+                span,
+            } => Expr::SizeCastExpr {
+                width_expr: Box::new(self.expr(width_expr)?),
                 operand: Box::new(self.expr(operand)?),
                 span: *span,
             },
@@ -1350,9 +1361,9 @@ fn eksekusi_stmt_function(
         | CombinationalStatement::EventControl { .. }
         | CombinationalStatement::CompoundAssign { .. }
         | CombinationalStatement::ProceduralAssign { .. }
-        | CombinationalStatement::Deassign { .. } => {
-            // Konstruksi lain belum didukung dalam evaluasi simbolis function.
-        }
+        | CombinationalStatement::Deassign { .. }
+        | CombinationalStatement::ExprStmt { .. }
+        | CombinationalStatement::PortDeclSkip => {}
     }
     Ok(())
 }
@@ -1483,6 +1494,15 @@ fn evaluasi_expr_function(
             operand: Box::new(evaluasi_expr_function(operand, env)?),
             span: *span,
         },
+        Expr::SizeCastExpr {
+            width_expr,
+            operand,
+            span,
+        } => Expr::SizeCastExpr {
+            width_expr: Box::new(evaluasi_expr_function(width_expr, env)?),
+            operand: Box::new(evaluasi_expr_function(operand, env)?),
+            span: *span,
+        },
         Expr::FunctionCall { name, args, span } => {
             // Panggilan function bersarang: evaluasi argumen, lalu inline.
             // Untuk saat ini, biarkan sebagai FunctionCall (akan di-resolve
@@ -1530,6 +1550,10 @@ fn eval_bin_const(op: BinaryOp, a: u64, b: u64, width: u32) -> u64 {
                 a.wrapping_shr(b as u32)
             }
         }
+        BinaryOp::Pow => a.wrapping_pow(b as u32) & mask,
+        // `inside` dengan konstanta tidak dapat dievaluasi pada level u64
+        // karena RHS adalah concatenation yang perlu dibongkar per elemen.
+        BinaryOp::Inside => 0,
         BinaryOp::Sar => {
             if b >= 64 {
                 if a & (1u64 << (width - 1)) != 0 {

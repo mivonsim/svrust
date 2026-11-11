@@ -322,6 +322,7 @@ fn comb(
             expr: Box::new(table.ganti_literal(expr)),
             span: *span,
         },
+        CombinationalStatement::PortDeclSkip => CombinationalStatement::PortDeclSkip,
     })
 }
 

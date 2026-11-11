@@ -55,6 +55,14 @@ pub fn konst(
         // operandnya konstanta sah.
         Expr::SignCast { operand, .. } => konst(operand, env, params, packages, span),
         Expr::SizeCast { operand, .. } => konst(operand, env, params, packages, span),
+        Expr::SizeCastExpr {
+            width_expr,
+            operand,
+            ..
+        } => {
+            let _width = konst(width_expr, env, params, packages, span)?;
+            konst(operand, env, params, packages, span)
+        }
         Expr::Cast { operand, .. } => konst(operand, env, params, packages, span),
         Expr::BuiltinCast { operand, .. } => konst(operand, env, params, packages, span),
         // LRM §20: `$bits(tipe atau ekspresi)` mengembalikan lebar bit.
@@ -225,6 +233,7 @@ fn lebar_statik(expr: &Expr) -> u32 {
             _ => lebar_statik(value),
         },
         Expr::SignCast { operand, .. } | Expr::SizeCast { operand, .. } => lebar_statik(operand),
+        Expr::SizeCastExpr { width_expr, .. } => lebar_statik(width_expr),
         Expr::Cast { operand, .. } | Expr::BuiltinCast { operand, .. } => lebar_statik(operand),
         _ => 1,
     }
@@ -266,7 +275,10 @@ pub fn konst_checked(
 ) -> Result<u64, ElaborateError> {
     match expr {
         Expr::Binary { op, lhs, rhs, .. }
-            if matches!(op, BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul) =>
+            if matches!(
+                op,
+                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Pow
+            ) =>
         {
             let a = konst(lhs, env, params, packages, span)?;
             let b = konst(rhs, env, params, packages, span)?;
@@ -274,6 +286,7 @@ pub fn konst_checked(
                 BinaryOp::Add => a.checked_add(b),
                 BinaryOp::Sub => a.checked_sub(b),
                 BinaryOp::Mul => a.checked_mul(b),
+                BinaryOp::Pow => Some(a.wrapping_pow(b as u32)),
                 _ => unreachable!("dicek di atas"),
             };
             // LRM §7.3: batas non-negatif.
@@ -346,6 +359,13 @@ fn semua_ident_dikenal(expr: &Expr, params: &ParamTable) -> bool {
         | Expr::SizeCast { operand, .. }
         | Expr::SignCast { operand, .. }
         | Expr::Bits { operand, .. } => semua_ident_dikenal(operand, params),
+        Expr::SizeCastExpr {
+            width_expr,
+            operand,
+            ..
+        } => {
+            semua_ident_dikenal(width_expr, params) && semua_ident_dikenal(operand, params)
+        }
     }
 }
 
@@ -364,6 +384,10 @@ fn binary(op: BinaryOp, a: u64, b: u64) -> Result<u64, ElaborateError> {
         BinaryOp::Mod => a.checked_rem(b).unwrap_or(0),
         BinaryOp::Shl => a.wrapping_shl(b as u32),
         BinaryOp::Shr => a.wrapping_shr(b as u32),
+        BinaryOp::Pow => a.wrapping_pow(b as u32),
+        // `inside` tidak dapat dievaluasi pada level u64 karena RHS adalah
+        // concatenation.
+        BinaryOp::Inside => 0,
         // LRM §11.4.10: `>>>` mengisi bit sign. Lebar dan signedness tidak
         // dibawa ke evaluator konstanta generate, jadi nilai ditafsirkan pada
         // 64 bit dua's complement — sama seperti `BitNeg` di `unary`.
@@ -426,6 +450,14 @@ pub(crate) fn resolusi_paket_ekspresi(expr: &mut Expr, packages: &PackageTable) 
         | Expr::SizeCast { operand, .. }
         | Expr::Cast { operand, .. }
         | Expr::BuiltinCast { operand, .. } => {
+            resolusi_paket_ekspresi(operand, packages);
+        }
+        Expr::SizeCastExpr {
+            width_expr,
+            operand,
+            ..
+        } => {
+            resolusi_paket_ekspresi(width_expr, packages);
             resolusi_paket_ekspresi(operand, packages);
         }
         Expr::IndexDynamic { base, index, .. } => {

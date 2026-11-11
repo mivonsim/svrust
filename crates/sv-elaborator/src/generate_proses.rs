@@ -72,7 +72,8 @@ fn kumpulan_comb(body: &[CombinationalStatement], out: &mut Vec<Declaration>) {
             | CombinationalStatement::Return { .. }
             | CombinationalStatement::ProceduralAssign { .. }
             | CombinationalStatement::Deassign { .. }
-            | CombinationalStatement::ExprStmt { .. } => {}
+            | CombinationalStatement::ExprStmt { .. }
+            | CombinationalStatement::PortDeclSkip => {}
             // Variabel loop `for` tidak dikumpulkan sebagai deklarasi, sama seperti
             // `local_decl` pada modul biasa.
             CombinationalStatement::For { body, .. } => kumpulan_comb(body, out),
@@ -356,6 +357,15 @@ pub(crate) fn subst_expr(expr: &AstExpr, env: &GenvarEnv, scope: &ScopeBlok) -> 
             operand: Box::new(subst_expr(operand, env, scope)),
             span: *span,
         },
+        AstExpr::SizeCastExpr {
+            width_expr,
+            operand,
+            span,
+        } => AstExpr::SizeCastExpr {
+            width_expr: Box::new(subst_expr(width_expr, env, scope)),
+            operand: Box::new(subst_expr(operand, env, scope)),
+            span: *span,
+        },
         AstExpr::Cast {
             type_name,
             operand,
@@ -572,6 +582,7 @@ pub(crate) fn subst_comb(
                 span: *span,
             },
             CombinationalStatement::ExprStmt { .. } => stmt.clone(),
+            CombinationalStatement::PortDeclSkip => stmt.clone(),
         })
         .collect()
 }

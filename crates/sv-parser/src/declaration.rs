@@ -127,12 +127,13 @@ pub fn parse_declaration(tokens: &[SpannedToken]) -> Result<(Vec<Declaration>, u
     let span = tokens[0].span;
     let mut idx = 1; // skip type keyword (atau ident pertama dari nama tipe hierarkis)
     // Lewati sisa nama tipe hierarkis: `pkg::subpkg::nama_tipe` — setiap `::`
-    // diikuti oleh ident adalah bagian dari nama tipe.
-    while idx + 1 < tokens.len()
+    // (dua token Colon) diikuti oleh ident adalah bagian dari nama tipe.
+    while idx + 2 < tokens.len()
         && matches!(tokens[idx].token, Token::Colon)
-        && matches!(tokens[idx + 1].token, Token::Ident(_))
+        && matches!(tokens[idx + 1].token, Token::Colon)
+        && matches!(tokens[idx + 2].token, Token::Ident(_))
     {
-        idx += 2; // lewati `::` dan ident
+        idx += 3; // lewati `:`, `:`, dan nama bagian
     }
 
     // `struct` / `union` packed (LRM §6.7, §8): body berisi daftar field
@@ -175,6 +176,26 @@ pub fn parse_declaration(tokens: &[SpannedToken]) -> Result<(Vec<Declaration>, u
     // Optional packed dimension: [N] atau [MSB:LSB]
     let (lebar_tertulis, consumed) = super::dimension::parse_dimension(tokens, idx)?;
     idx += consumed;
+
+    // Lewati nama tipe bertipe paket setelah tipe net: `wire pkg::type nama;`
+    // atau `logic pkg::type nama;`. Bentuk: Ident `::` Ident (:: = dua Colon).
+    while idx + 2 < tokens.len()
+        && matches!(tokens[idx].token, Token::Ident(_))
+        && matches!(tokens[idx + 1].token, Token::Colon)
+        && matches!(tokens[idx + 2].token, Token::Colon)
+        && tokens.get(idx + 3).is_some_and(|t| matches!(&t.token, Token::Ident(_)))
+    {
+        idx += 4; // lewati pkg :: type
+        // Bisa ada `::` lagi untuk nested package: `pkg::sub::type`
+        while idx + 2 < tokens.len()
+            && matches!(tokens[idx].token, Token::Colon)
+            && matches!(tokens[idx + 1].token, Token::Colon)
+            && matches!(tokens[idx + 2].token, Token::Ident(_))
+        {
+            idx += 3;
+        }
+    }
+
     // Additional packed dimensions for multi-dimensional declarations,
     // misal `logic [N_CLASSES-1:0][NAlerts-1:0] class_masks;`. SVRust tidak
     // mendukung multi-dimensional penuh, jadi dimensi tambahan hanya
@@ -244,6 +265,23 @@ pub fn parse_declaration(tokens: &[SpannedToken]) -> Result<(Vec<Declaration>, u
         } else {
             None
         };
+
+        // Instansiasi interface/modul: `clk_rst_if main_clk (.clk(clk), ...)`.
+        // Lewati daftar koneksi port hingga ')' penutup.
+        if tokens.get(idx).map(|t| &t.token) == Some(&Token::LParen) {
+            let mut depth = 1u32;
+            idx += 1;
+            while idx < tokens.len() && depth > 0 {
+                match &tokens[idx].token {
+                    Token::LParen | Token::LBracket | Token::LBrace => depth += 1,
+                    Token::RParen | Token::RBracket | Token::RBrace => {
+                        depth = depth.saturating_sub(1);
+                    }
+                    _ => {}
+                }
+                idx += 1;
+            }
+        }
 
         declarations.push(Declaration {
             name,

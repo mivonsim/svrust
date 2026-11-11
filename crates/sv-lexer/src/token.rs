@@ -187,6 +187,8 @@ pub enum Token {
     End,
     At,
     Star,
+    /// `**` — operator perpangkatan (LRM §11.4.7).
+    Pow,
     Slash,
     Percent,
     LParen,
@@ -227,6 +229,8 @@ pub enum Token {
     Incr,
     /// `--` — decrement (LRM §12.5).
     Decr,
+    /// `inside` — operator keanggotaan (LRM §11.4.3).
+    Inside,
     Question,
     Ident(String),
     Number(u64),

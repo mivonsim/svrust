@@ -65,41 +65,45 @@ fn sebagai_konst_nukil(e: &Expr) -> Option<(u64, u64, u64)> {
 /// `-1 < 0` terlipat jadi false karena 0xFFFFFFFF dibandingkan sebagai
 /// unsigned — persis perilaku runtime setelah perbandingan signed diperbaiki.
 fn nilai_bin(op: BinOp, a: u64, b: u64, lebar: u32, signed: bool) -> Option<u64> {
-    Some(match op {
-        BinOp::BitAnd => a & b,
-        BinOp::BitOr => a | b,
-        BinOp::BitXor => a ^ b,
-        BinOp::Add => a.wrapping_add(b),
-        BinOp::Sub => a.wrapping_sub(b),
-        BinOp::Mul => a.wrapping_mul(b),
+    match op {
+        BinOp::BitAnd => Some(a & b),
+        BinOp::BitOr => Some(a | b),
+        BinOp::BitXor => Some(a ^ b),
+        BinOp::Add => Some(a.wrapping_add(b)),
+        BinOp::Sub => Some(a.wrapping_sub(b)),
+        BinOp::Mul => Some(a.wrapping_mul(b)),
         // LRM §11.4.5: pembagi nol menghasilkan 0 pada engine 2-state.
-        BinOp::Div => (a & mask(lebar)).checked_div(b & mask(lebar)).unwrap_or(0),
-        BinOp::Mod => (a & mask(lebar)).checked_rem(b & mask(lebar)).unwrap_or(0),
+        BinOp::Div => Some((a & mask(lebar)).checked_div(b & mask(lebar)).unwrap_or(0)),
+        BinOp::Mod => Some((a & mask(lebar)).checked_rem(b & mask(lebar)).unwrap_or(0)),
         // Geser lewat helper runtime yang sudah menjaga jumlah geser melebihi
         // lebar logis (hasilnya nol, atau seluruh sign bit untuk `>>>`), jadi
         // penjaga `b >= 64` yang tadinya ada tidak diperlukan lagi.
-        BinOp::Shl => geser_logis(a, b, lebar, true),
-        BinOp::Shr => geser_logis(a, b, lebar, false),
+        BinOp::Shl => Some(geser_logis(a, b, lebar, true)),
+        BinOp::Shr => Some(geser_logis(a, b, lebar, false)),
+        BinOp::Pow => Some(a.wrapping_pow(b as u32)),
+        // `inside` tidak dapat dilipat pada level u64 karena RHS adalah
+        // concatenation yang perlu dibongkar per elemen.
+        BinOp::Inside => None,
         // LRM §11.4.10: `>>>` mengisi bit sign bila tipe hasil signed.
-        BinOp::Sar => geser_logis(a, b, lebar, false) | sign_fill(a, b, lebar, signed),
+        BinOp::Sar => Some(geser_logis(a, b, lebar, false) | sign_fill(a, b, lebar, signed)),
         // Perbandingan bertanda membaca nilai sepanjang lebar operand, bukan
         // sebagai u64 mentah. Helper-nya sama dengan yang dipanggil codegen.
-        BinOp::Eq if signed => u64::from(bertanda(a, lebar) == bertanda(b, lebar)),
-        BinOp::NotEq if signed => u64::from(bertanda(a, lebar) != bertanda(b, lebar)),
-        BinOp::Lt if signed => u64::from(bertanda(a, lebar) < bertanda(b, lebar)),
-        BinOp::Gt if signed => u64::from(bertanda(a, lebar) > bertanda(b, lebar)),
-        BinOp::Le if signed => u64::from(bertanda(a, lebar) <= bertanda(b, lebar)),
-        BinOp::Ge if signed => u64::from(bertanda(a, lebar) >= bertanda(b, lebar)),
-        BinOp::Eq => u64::from(a == b),
-        BinOp::NotEq => u64::from(a != b),
-        BinOp::Lt => u64::from(a < b),
-        BinOp::Gt => u64::from(a > b),
-        BinOp::Le => u64::from(a <= b),
-        BinOp::Ge => u64::from(a >= b),
+        BinOp::Eq if signed => Some(u64::from(bertanda(a, lebar) == bertanda(b, lebar))),
+        BinOp::NotEq if signed => Some(u64::from(bertanda(a, lebar) != bertanda(b, lebar))),
+        BinOp::Lt if signed => Some(u64::from(bertanda(a, lebar) < bertanda(b, lebar))),
+        BinOp::Gt if signed => Some(u64::from(bertanda(a, lebar) > bertanda(b, lebar))),
+        BinOp::Le if signed => Some(u64::from(bertanda(a, lebar) <= bertanda(b, lebar))),
+        BinOp::Ge if signed => Some(u64::from(bertanda(a, lebar) >= bertanda(b, lebar))),
+        BinOp::Eq => Some(u64::from(a == b)),
+        BinOp::NotEq => Some(u64::from(a != b)),
+        BinOp::Lt => Some(u64::from(a < b)),
+        BinOp::Gt => Some(u64::from(a > b)),
+        BinOp::Le => Some(u64::from(a <= b)),
+        BinOp::Ge => Some(u64::from(a >= b)),
         // `truthy` pada konstanta selalu `nilai != 0`.
-        BinOp::LogAnd => u64::from(a != 0 && b != 0),
-        BinOp::LogOr => u64::from(a != 0 || b != 0),
-    })
+        BinOp::LogAnd => Some(u64::from(a != 0 && b != 0)),
+        BinOp::LogOr => Some(u64::from(a != 0 || b != 0)),
+    }
 }
 
 /// Geser logis sepanjang lebar logis `lebar`, dengan pengisi nol.

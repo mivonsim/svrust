@@ -6,6 +6,7 @@ use sv_lexer::token::Token;
 
 /// Parse `modname [#(.P(v))] instname ([.port(sig)]);`.
 pub fn parse_instance(tokens: &[SpannedToken]) -> Result<(Instance, usize), String> {
+    eprintln!("DEBUG: parse_instance at tokens[0]={:?}", tokens.get(0).map(|t| &t.token));
     if tokens.is_empty() {
         return Err("expected module name".to_string());
     }

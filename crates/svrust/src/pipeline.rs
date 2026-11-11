@@ -618,8 +618,10 @@ pub(crate) fn elaborate_tops(
     let mut kunci_untuk_top: Vec<(String, sv_cache::CacheKey)> = Vec::new();
     let mut cached_designs: Vec<sv_ir::Design> = Vec::new();
     for nama in tops {
-        let kunci =
-            sv_cache::CacheKey::baru(nama, cache.ambil_dependensi_hash(nama).unwrap_or(dependensi_hash));
+        let kunci = sv_cache::CacheKey::baru(
+            nama,
+            cache.ambil_dependensi_hash(nama).unwrap_or(dependensi_hash),
+        );
         if let Some(cached) = cache.cek_elaborate(&kunci) {
             if cached.sukses {
                 cached_designs.push(sv_ir::Design::new(&cached.nama_modul));
@@ -677,8 +679,12 @@ pub(crate) fn elaborate_tops(
     for hasil in hasil_elaborasi {
         match hasil {
             Ok((nama, design)) => {
-                let kunci =
-                    sv_cache::CacheKey::baru(&nama, cache.ambil_dependensi_hash(&nama).unwrap_or(dependensi_hash));
+                let kunci = sv_cache::CacheKey::baru(
+                    &nama,
+                    cache
+                        .ambil_dependensi_hash(&nama)
+                        .unwrap_or(dependensi_hash),
+                );
                 cache.simpan_elaborate(
                     kunci,
                     sv_cache::CachedElaborate {
@@ -1163,8 +1169,13 @@ mod tests {
         };
 
         let mut cache = SvCache::baru();
-        let error = elaborate_tops(&collection, &["a".to_string(), "b".to_string()], "", &mut cache)
-            .expect_err("kedua root mengandung sinyal target yang tidak dikenal");
+        let error = elaborate_tops(
+            &collection,
+            &["a".to_string(), "b".to_string()],
+            "",
+            &mut cache,
+        )
+        .expect_err("kedua root mengandung sinyal target yang tidak dikenal");
         let report = error
             .report()
             .expect("error harus dirender sebagai satu report");
@@ -1371,7 +1382,8 @@ mod tests {
             module_origins: HashMap::new(),
         };
         let mut cache = sv_cache::SvCache::baru();
-        let designs = elaborate_tops(&collection, &tops, "", &mut cache).expect("elaborate semua root");
+        let designs =
+            elaborate_tops(&collection, &tops, "", &mut cache).expect("elaborate semua root");
         assert_eq!(designs.len(), 2, "harus ada 2 design untuk 2 root");
         let nama: Vec<_> = designs.iter().map(|d| d.name.clone()).collect();
         assert!(

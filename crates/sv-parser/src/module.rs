@@ -859,6 +859,7 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                 }
             }
             Token::Ident(_) => {
+                eprintln!("DEBUG: Token::Ident at idx={}, token={:?}, next1={:?}, next2={:?}", idx, tokens.get(idx).map(|t| &t.token), tokens.get(idx+1).map(|t| &t.token), tokens.get(idx+2).map(|t| &t.token));
                 // Label assertion `nama: assert property (...)` dari ekspansi
                 // makro `` `ASSERT_* `` OpenTitan: lewati label agar cabang
                 // `assert` di bawah yang menangani sisa pernyataan.
@@ -866,6 +867,31 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                     && tokens.get(idx + 2).map(|t| &t.token) == Some(&Token::Assert)
                 {
                     idx += 2;
+                    continue;
+                }
+                // Instansi modul/interface: `clk_rst_if main_clk (...)` atau
+                // `child u0 (.a(a), .y(y))`. Bentuk: Ident Ident ( ... );
+                // SVRust tidak memproses instansiasi secara semantik, hanya
+                // melewati seluruh statement hingga ';'.
+                if tokens.get(idx + 1).is_some_and(|t| matches!(&t.token, Token::Ident(_)))
+                    && tokens.get(idx + 2).map(|t| &t.token) == Some(&Token::LParen)
+                {
+                    let mut depth = 1u32;
+                    let mut i = idx + 3; // skip type, nama instance, '('
+                    while i < tokens.len() && depth > 0 {
+                        match &tokens[i].token {
+                            Token::LParen | Token::LBracket | Token::LBrace => depth += 1,
+                            Token::RParen | Token::RBracket | Token::RBrace => {
+                                depth = depth.saturating_sub(1);
+                            }
+                            _ => {}
+                        }
+                        i += 1;
+                    }
+                    if i < tokens.len() && tokens[i].token == Token::Semi {
+                        i += 1;
+                    }
+                    idx = i;
                     continue;
                 }
                 // `nama_tipe var;` adalah deklarasi bertipe hasil typedef,
@@ -895,6 +921,43 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                         ));
                     }
                     idx += akhir + 1;
+                    continue;
+                }
+                // Instansi modul/interface: `clk_rst_if main_clk (...)` atau
+                // `child u0 (.a(a), .y(y))`. Bentuk: Ident Ident ( ... );
+                // SVRust tidak memproses instansiasi secara semantik, hanya
+                // melewati seluruh statement hingga ';'.
+                // Instansi modul/interface: `clk_rst_if main_clk (...)` atau
+                // `child u0 (.a(a), .y(y))`. Bentuk: Ident Ident ( ... );
+                // SVRust tidak memproses instansiasi secara semantik, hanya
+                // melewati seluruh statement hingga ';'.
+                eprintln!("DEBUG: about to check INST at idx={}, type={:?}, next1={:?}, next2={:?}", idx, tokens.get(idx).map(|t| &t.token), tokens.get(idx+1).map(|t| &t.token), tokens.get(idx+2).map(|t| &t.token));
+                // Instansi modul/interface: `clk_rst_if main_clk (...)` atau
+                // `child u0 (.a(a), .y(y))`. Bentuk: Ident Ident ( ... );
+                // SVRust tidak memproses instansiasi secara semantik, hanya
+                // melewati seluruh statement hingga ';'.
+                eprintln!("DEBUG: about to check INST at idx={}, token={:?}, next1={:?}, next2={:?}", idx, tokens.get(idx).map(|t| &t.token), tokens.get(idx+1).map(|t| &t.token), tokens.get(idx+2).map(|t| &t.token));
+                if tokens.get(idx + 1).is_some_and(|t| matches!(&t.token, Token::Ident(_)))
+                    && tokens.get(idx + 2).map(|t| &t.token) == Some(&Token::LParen)
+                {
+                    eprintln!("DEBUG: CONDITION TRUE at idx={}", idx);
+                    let mut depth = 1u32;
+                    let mut i = idx + 3; // skip type, nama instance, '('
+                    while i < tokens.len() && depth > 0 {
+                        match &tokens[i].token {
+                            Token::LParen | Token::LBracket | Token::LBrace => depth += 1,
+                            Token::RParen | Token::RBracket | Token::RBrace => {
+                                depth = depth.saturating_sub(1);
+                            }
+                            _ => {}
+                        }
+                        i += 1;
+                    }
+                    eprintln!("DEBUG: INST finished, idx={}, i={}, token_at_i={:?}", idx, i, tokens.get(i).map(|t| &t.token));
+                    if i < tokens.len() && tokens[i].token == Token::Semi {
+                        i += 1;
+                    }
+                    idx = i;
                     continue;
                 }
                 // Kualifikasi tipe dengan paket: `pkg::type nama;` atau
@@ -1366,6 +1429,10 @@ fn parse_dpi(
 /// punya `(` atau `#(` sebelum nama signal, jadi tidak tertangkap di sini.
 fn typed_declaration(tokens: &[SpannedToken]) -> bool {
     if !matches!(tokens.first().map(|t| &t.token), Some(Token::Ident(_))) {
+        return false;
+    }
+    // `Ident (` is an instance instantiation, not a type declaration
+    if tokens.get(2).map(|t| &t.token) == Some(&Token::LParen) {
         return false;
     }
     let mut idx = 1;

@@ -45,24 +45,34 @@ fn parse_literal_dimension(
     let Some(msb) = bound(tokens, &mut cursor)? else {
         return Ok(None);
     };
-    let width = if tokens.get(cursor).map(|t| &t.token) == Some(&Token::Colon) {
-        cursor += 1;
-        let Some(lsb) = bound(tokens, &mut cursor)? else {
-            return Ok(None);
-        };
-        if msb < lsb {
-            return Err(format!("invalid range [{}:{}]", msb, lsb));
+    // Jika setelah batas msb bukan `]` atau `:`, bentuk ini bukan literal
+    // dimensi sederhana (mis. `4*W-1:0`). Biarkan jalur ekspresi umum
+    // di bawah menangani.
+    match tokens.get(cursor).map(|t| &t.token) {
+        Some(Token::RBracket) => {
+            cursor += 1;
+            let width = usize::try_from(msb).map_err(|_| format!("dimension too large: {msb}"))?;
+            return Ok(Some((WidthExpr::Literal(width), cursor - start)));
         }
-        msb - lsb + 1
-    } else {
-        msb
-    };
-    if tokens.get(cursor).map(|t| &t.token) != Some(&Token::RBracket) {
-        return Err(pesan::harap(tokens, cursor, "expected ']'"));
+        Some(Token::Colon) => {
+            cursor += 1;
+            let Some(lsb) = bound(tokens, &mut cursor)? else {
+                return Ok(None);
+            };
+            if tokens.get(cursor).map(|t| &t.token) != Some(&Token::RBracket) {
+                return Ok(None);
+            }
+            cursor += 1;
+            if msb < lsb {
+                return Err(format!("invalid range [{}:{}]", msb, lsb));
+            }
+            let width = msb - lsb + 1;
+            let width =
+                usize::try_from(width).map_err(|_| format!("dimension too large: {width}"))?;
+            return Ok(Some((WidthExpr::Literal(width), cursor - start)));
+        }
+        _ => return Ok(None),
     }
-    cursor += 1;
-    let width = usize::try_from(width).map_err(|_| format!("dimension too large: {width}"))?;
-    Ok(Some((WidthExpr::Literal(width), cursor - start)))
 }
 
 /// Membaca dimensi packed starting pada `start`.

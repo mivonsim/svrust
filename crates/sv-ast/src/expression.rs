@@ -139,6 +139,14 @@ pub enum Expr {
         operand: Box<Expr>,
         span: Span,
     },
+    /// Size cast dengan lebar ekspresi, misal `(2*Width)'(x)` (LRM §6.14).
+    ///
+    /// Lebar dievaluasi saat elaborasi karena mungkin merujuk parameter.
+    SizeCastExpr {
+        width_expr: Box<Expr>,
+        operand: Box<Expr>,
+        span: Span,
+    },
     /// Sign cast `signed'(ekspresi)` atau `unsigned'(ekspresi)` (LRM §6.14).
     ///
     /// Lebar ekspresi tidak berubah; hanya interpretasi_signedness-nya yang
@@ -194,6 +202,8 @@ pub enum BinaryOp {
     Mod,
     Shl,
     Shr,
+    /// `**` — perpangkatan (LRM §11.4.7).
+    Pow,
     /// `>>>` — geser kanan aritmetik; isi dengan bit sign bila tipe hasil
     /// signed (LRM §11.4.10).
     Sar,
@@ -203,6 +213,8 @@ pub enum BinaryOp {
     Gt,
     Le,
     Ge,
+    /// `inside` — keanggotaan dalam daftar (LRM §11.4.3).
+    Inside,
     LogAnd,
     LogOr,
 }

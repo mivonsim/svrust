@@ -92,9 +92,12 @@ pub fn parse_param_list(
             && tokens
                 .get(idx + 1)
                 .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
-            && tokens.get(idx + 2).is_some_and(|t| t.token == Token::Eq)
+            && tokens.get(idx + 2).is_some_and(|t| {
+                t.token == Token::Eq || t.token == Token::LBracket
+            })
         {
-            // `parameter string Name = ...` - `string` adalah tipe, `Name` adalah nama.
+            // `parameter string Name = ...` atau `parameter string Name[dim] = ...`
+            // `string` adalah tipe, `Name` adalah nama.
             let tn = match &tokens[idx].token {
                 Token::Ident(n) => Some(n.clone()),
                 _ => None,

@@ -250,6 +250,7 @@ fn statement_kombinasional(statement: &mut CombinationalStatement, scale: TimeSc
             }
         }
         CombinationalStatement::ExprStmt { .. } => {}
+        CombinationalStatement::PortDeclSkip => {}
     }
 }
 
@@ -402,8 +403,12 @@ fn ekspresi(expr: &mut Expr, scale: TimeScale) {
         Expr::Cast { operand, .. }
         | Expr::BuiltinCast { operand, .. }
         | Expr::SizeCast { operand, .. }
-        | Expr::SignCast { operand, .. }
-        | Expr::Bits { operand, .. } => ekspresi(operand, scale),
+        | Expr::SignCast { operand, .. } => ekspresi(operand, scale),
+        Expr::SizeCastExpr { operand, width_expr, .. } => {
+            ekspresi(operand, scale);
+            ekspresi(width_expr, scale);
+        }
+        Expr::Bits { operand, .. } => ekspresi(operand, scale),
     }
 }
 

@@ -88,8 +88,8 @@ fn write_bits_expr(expr: &Expr, out: &mut String, indent: &Indent) {
                 }
                 // Geser lewat helper runtime: operator Rust `<<`/`>>` bekerja
                 // pada vektor penuh `MAX_WIDTH`, sedangkan LRM §11.4.10
-                // menentukan lebar dari operand kiri dan meminta jumlah
-                // geser `x`/`z` menghasilkan unknown.
+                // menentukan lebar dari operand kiri dan meminta jumlah geser
+                // `x`/`z` menghasilkan unknown.
                 BinOp::Shl => write_shift(
                     "geser_kiri",
                     lhs.data_type().width,
@@ -114,6 +114,19 @@ fn write_bits_expr(expr: &Expr, out: &mut String, indent: &Indent) {
                     lhs,
                     rhs,
                     Some(data_type.signed),
+                    out,
+                    indent,
+                ),
+                // Perpangkatan lewat helper runtime: Rust tidak punya operator
+                // `**`.
+                BinOp::Pow => write_helper_binary("pow", expr_width(expr), lhs, rhs, out, indent),
+                // `inside` — periksa apakah lhs sama dengan salah satu elemen
+                // dalam concatenation rhs, chunk per chunk dengan lebar lhs.
+                BinOp::Inside => write_helper_binary(
+                    "bit_inside",
+                    lhs.data_type().width,
+                    lhs,
+                    rhs,
                     out,
                     indent,
                 ),
@@ -535,6 +548,10 @@ fn bin_op_token(op: BinOp) -> &'static str {
         BinOp::Ge => ">=",
         BinOp::LogAnd => "&&",
         BinOp::LogOr => "||",
+        // `**` — perpangkatan, dipanggil lewat helper runtime.
+        BinOp::Pow => "pow",
+        // `inside` — pemeriksaan keanggotaan lewat helper runtime.
+        BinOp::Inside => "bit_inside",
     }
 }
 

@@ -35,6 +35,10 @@ pub enum SystemTaskKind {
     /// `$value$plusargs("nama=%d", var)` — baca nilai plusarg `+nama=...`
     /// dari baris perintah lalu masukkan ke `var` (LRM §20.9).
     ValuePlusArgs,
+    /// `$readmemh("file", mem)` — baca memori dari berkas VMEM (LRM §21.5).
+    ReadMemH,
+    /// `$readmemb("file", mem)` — baca memori dari berkas biner (LRM §21.5).
+    ReadMemB,
 }
 
 impl SystemTaskKind {
@@ -50,6 +54,8 @@ impl SystemTaskKind {
             "dumpfile" => Some(SystemTaskKind::DumpFile),
             "dumpvars" => Some(SystemTaskKind::DumpVars),
             "value$plusargs" => Some(SystemTaskKind::ValuePlusArgs),
+            "readmemh" => Some(SystemTaskKind::ReadMemH),
+            "readmemb" => Some(SystemTaskKind::ReadMemB),
             _ => None,
         }
     }

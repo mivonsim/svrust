@@ -73,6 +73,7 @@ pub fn keyword_or_ident(s: &str) -> Token {
         "if" => Token::If,
         "else" => Token::Else,
         "for" => Token::For,
+        "inside" => Token::Inside,
         "case" => Token::Case,
         "casez" => Token::Casez,
         "casex" => Token::Casex,

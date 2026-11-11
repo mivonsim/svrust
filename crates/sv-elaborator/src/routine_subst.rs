@@ -116,6 +116,15 @@ impl Substitution {
                 operand: Box::new(self.ganti(operand)),
                 span: *span,
             },
+            Expr::SizeCastExpr {
+                width_expr,
+                operand,
+                span,
+            } => Expr::SizeCastExpr {
+                width_expr: Box::new(self.ganti(width_expr)),
+                operand: Box::new(self.ganti(operand)),
+                span: *span,
+            },
             // BUG-3: node cast/`$bits` dulu tertangkap wildcard di bawah, jadi
             // argumen formal yang muncul di dalam operand tidak pernah
             // disubstitusi dan bocor ke IR sebagai "undefined signal".
@@ -314,6 +323,7 @@ impl Substitution {
             // formal dan nama lokal bisa bentrok setelah di-inline. Parser
             // dan elaborator menolaknya lebih awal.
             CombinationalStatement::Decl(decl) => CombinationalStatement::Decl(decl.clone()),
+            CombinationalStatement::PortDeclSkip => CombinationalStatement::PortDeclSkip,
         }
     }
 
@@ -602,6 +612,7 @@ fn rename_statement(
             expr: Box::new(rename_expr(expr, peta)),
             span: *span,
         },
+        CombinationalStatement::PortDeclSkip => CombinationalStatement::PortDeclSkip,
     }
 }
 
@@ -770,6 +781,15 @@ fn rename_expr(expr: &Expr, peta: &HashMap<String, String>) -> Expr {
             operand: Box::new(rename_expr(operand, peta)),
             span: *span,
         },
+        Expr::SizeCastExpr {
+            width_expr,
+            operand,
+            span,
+        } => Expr::SizeCastExpr {
+            width_expr: Box::new(rename_expr(width_expr, peta)),
+            operand: Box::new(rename_expr(operand, peta)),
+            span: *span,
+        },
         // LRM §6.14: nama tipe bukan sinyal, jadi tidak ikut di-rename; hanya
         // operandnya yang mengikuti substitusi argumen.
         Expr::Cast {
@@ -849,7 +869,8 @@ fn kumpulkan_lokal_dalam(body: &[CombinationalStatement], out: &mut Vec<String>)
             | CombinationalStatement::Return { .. }
             | CombinationalStatement::ProceduralAssign { .. }
             | CombinationalStatement::Deassign { .. }
-            | CombinationalStatement::ExprStmt { .. } => {}
+            | CombinationalStatement::ExprStmt { .. }
+            | CombinationalStatement::PortDeclSkip => {}
         }
     }
 }

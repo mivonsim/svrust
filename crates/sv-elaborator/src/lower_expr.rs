@@ -720,6 +720,29 @@ pub fn lower_expression_dengan_konteks(
                 data_type: DataType::logic(*width).with_signed(signed),
             })
         }
+        // Size cast dengan lebar ekspresi, misal `(2*Width)'(x)`.
+        // Lebar dievaluasi sebagai konstanta saat elaborasi.
+        AstExpr::SizeCastExpr {
+            width_expr,
+            operand,
+            span,
+        } => {
+            // Evaluasi width_expr sebagai konstanta (parameter sudah diketahui)
+            let width_val = crate::konst::konst(
+                width_expr,
+                &crate::generate::GenvarEnv::kosong(),
+                &crate::param::ParamTable::baru(&[])?,
+                &PackageTable::new(),
+                *span,
+            )? as u32;
+            let lowered = lower_expression(operand, symbols)?;
+            let signed = lowered.data_type().signed;
+            Ok(Expr::Cast {
+                operand_signed: signed,
+                operand: Box::new(lowered),
+                data_type: DataType::logic(width_val).with_signed(signed),
+            })
+        }
         // LRM §20: `$bits(x)` adalah konstanta waktu kompilasi, bukan nilai
         // runtime. Nilainya bertipe `integer` LRM, jadi 32 bit.
         AstExpr::Bits { operand, span } => {
@@ -800,6 +823,7 @@ pub fn span_expr(expr: &AstExpr) -> sv_lexer::span::Span {
         | AstExpr::Cast { span, .. }
         | AstExpr::BuiltinCast { span, .. }
         | AstExpr::SizeCast { span, .. }
+        | AstExpr::SizeCastExpr { span, .. }
         | AstExpr::SignCast { span, .. }
         | AstExpr::Bits { span, .. }
         | AstExpr::HierarchicalRef { span, .. }
@@ -911,6 +935,8 @@ fn map_binary_op(op: BinaryOp) -> BinOp {
         BinaryOp::Shl => BinOp::Shl,
         BinaryOp::Shr => BinOp::Shr,
         BinaryOp::Sar => BinOp::Sar,
+        BinaryOp::Pow => BinOp::Pow,
+        BinaryOp::Inside => BinOp::Inside,
         BinaryOp::Eq => BinOp::Eq,
         BinaryOp::NotEq => BinOp::NotEq,
         BinaryOp::Lt => BinOp::Lt,

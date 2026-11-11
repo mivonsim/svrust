@@ -186,6 +186,21 @@ fn parse_arg(tokens: &[SpannedToken]) -> Result<(RoutineArg, usize), String> {
         None => super::dimension::parse_dimension(tokens, idx)?,
     };
     idx += consumed;
+    // Dimensi packed tambahan untuk deklarasi multi-dimensi,
+    // misal `logic [3:0][3:0][7:0] nama`. SVRust tidak mendukung
+    // multi-dimensional penuh, jadi dimensi tambahan hanya dikonsumsi.
+    while idx < tokens.len() && tokens[idx].token == Token::LBracket {
+        let mut depth = 1u32;
+        idx += 1;
+        while idx < tokens.len() && depth > 0 {
+            match &tokens[idx].token {
+                Token::LBracket => depth += 1,
+                Token::RBracket => depth -= 1,
+                _ => {}
+            }
+            idx += 1;
+        }
+    }
 
     let name = match tokens.get(idx).map(|t| &t.token) {
         Some(Token::Ident(n)) => n.clone(),

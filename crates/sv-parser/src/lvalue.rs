@@ -62,6 +62,41 @@ pub fn parse_lvalue(tokens: &[SpannedToken]) -> Result<(Lvalue, usize), String> 
                 Token::Ident(genvar) => {
                     genvar_index = Some(genvar.clone());
                     cursor = first_closing + 1;
+                    // Dimensi tambahan setelah genvar: data[genvar][0]
+                    while cursor < tokens.len() && tokens[cursor].token == Token::LBracket {
+                        let second_closing = (cursor + 1..=tokens.len())
+                            .find(|&i| tokens.get(i).map(|t| &t.token) == Some(&Token::RBracket));
+                        let Some(second_closing) = second_closing else {
+                            return Err("expected ']' closing LHS select".to_string());
+                        };
+                        if second_closing == cursor + 1 {
+                            return Err("kurung siku seleksi kosong `[]` belum didukung".to_string());
+                        }
+                        if tokens[cursor + 1].token == Token::Colon {
+                            return Err(
+                                "part-select dengan batas bawah kosong `[:lsb]` belum didukung".to_string(),
+                            );
+                        }
+                        if tokens.get(second_closing - 1).map(|t| &t.token) == Some(&Token::Colon) {
+                            return Err(
+                                "part-select dengan batas atas kosong `[msb:]` belum didukung".to_string(),
+                            );
+                        }
+                        if let Token::Number(n) | Token::BasedNumber { value: n, .. } =
+                            &tokens[cursor + 1].token
+                        {
+                            extra_slices.push(Slice {
+                                msb: u32::try_from(*n).unwrap_or(0),
+                                lsb: u32::try_from(*n).unwrap_or(0),
+                            });
+                            cursor = second_closing + 1;
+                        } else {
+                            return Err(format!(
+                                "indeks harus satu token, ditemukan {:?}",
+                                tokens[cursor + 1].token
+                            ));
+                        }
+                    }
                 }
                 Token::Number(n) | Token::BasedNumber { value: n, .. } => {
                     slice = Some(Slice {
@@ -107,9 +142,58 @@ pub fn parse_lvalue(tokens: &[SpannedToken]) -> Result<(Lvalue, usize), String> 
             cursor = first_closing + 1;
         }
 
-        // Seleksi bertingkat: `y[3:0][1]`. Genvar tidak boleh nested slice.
+        // Dimensi tambahan setelah indeks konstan: `data[0][0]`, `data[3:0][1]`.
+        // Setelah genvar (`data[i][0]`), berhenti — genvar tidak boleh nested slice.
         while genvar_index.is_none()
             && cursor < tokens.len()
+            && tokens[cursor].token == Token::LBracket
+        {
+            let start2 = cursor + 1;
+            if start2 >= tokens.len() {
+                return Err("expected index in nested select".to_string());
+            }
+            let closing2 = (start2..=tokens.len())
+                .find(|&i| tokens.get(i).map(|t| &t.token) == Some(&Token::RBracket));
+            let Some(closing2) = closing2 else {
+                return Err("expected ']' closing nested select".to_string());
+            };
+            if closing2 == start2 {
+                return Err("kurung siku seleksi kosong `[]` belum didukung".to_string());
+            }
+            if tokens[start2].token == Token::Colon {
+                return Err("nested part-select belum didukung".to_string());
+            }
+            if let Token::Ident(_nama) = &tokens[start2].token {
+                if closing2 != start2 + 1 {
+                    return Err(crate::pesan::tandai(
+                        tokens,
+                        cursor,
+                        "nested genvar index harus satu token".to_string(),
+                    ));
+                }
+                extra_slices.push(Slice { msb: 0, lsb: 0 });
+            } else {
+                let (slice_val, consumed) = parse_slice_index(&tokens[start2..closing2])?;
+                if consumed != closing2 - start2 {
+                    return Err(format!(
+                        "sisa token tak dikenal pada indeks nested: {:?}",
+                        tokens[start2 + consumed..closing2]
+                            .iter()
+                            .map(|t| format!("{:?}", t.token))
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    ));
+                }
+                extra_slices.push(slice_val);
+            }
+            cursor = closing2 + 1;
+        }
+
+        // Seleksi bertingkat: `y[3:0][1]`, `data[genvar][0]`.
+        // Genvar tidak boleh nested slice dalam dimensi yang sama, tetapi
+        // dimensi tambahan setelah genvar diizinkan (diparse sebagai indeks
+        // konstanta).
+        while cursor < tokens.len()
             && tokens[cursor].token == Token::LBracket
         {
             let start2 = cursor + 1;
@@ -518,13 +602,11 @@ mod tests {
 
     #[test]
     fn indeks_genvar_bertingkat_ditolak() {
-        // Genvar + nested slice (`y[i][0]`) belum didukung di parser:
-        // genvar cabang return sebelum loop nested, jadi `[0]` tersisa dan
-        // statement parser akan gagal dengan "expected '=' atau '<='".
+        // Genvar + nested slice (`y[i][0]`) sekarang didukung.
         let tokens = lex("y[i][0]").unwrap();
-        let (_, consumed) = parse_lvalue(&tokens).expect("y[i] harus diterima");
-        // Hanya `y[i]` (4 token) yang dikonsumsi, `[0]` tersisa.
-        assert_eq!(consumed, 4, "genvar nested harus berhenti setelah y[i]");
+        let (_, consumed) = parse_lvalue(&tokens).expect("y[i][0] harus diterima");
+        // Seluruh `y[i][0]` (7 token) harus dikonsumsi.
+        assert_eq!(consumed, 7, "genvar nested harus dikonsumsi sepenuhnya");
     }
 
     #[test]

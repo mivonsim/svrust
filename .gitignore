@@ -42,3 +42,9 @@ fix_final*.py
 libdpi.so
 call_dpi
 debug_driver*.py
+fix_*.py
+fix_final*.py
+libdpi.so
+call_dpi
+debug_driver*.py
+obj_dir/

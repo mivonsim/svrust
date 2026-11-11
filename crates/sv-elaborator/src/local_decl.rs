@@ -95,7 +95,8 @@ fn kumpulkan_comb(body: &[CombinationalStatement]) -> Vec<&Declaration> {
             | CombinationalStatement::Return { .. }
             | CombinationalStatement::ProceduralAssign { .. }
             | CombinationalStatement::Deassign { .. }
-            | CombinationalStatement::ExprStmt { .. } => {}
+            | CombinationalStatement::ExprStmt { .. }
+            | CombinationalStatement::PortDeclSkip => {}
         }
     }
     out

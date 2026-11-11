@@ -160,6 +160,7 @@ fn statement_memuat_delay(stmt: &CombinationalStatement) -> bool {
         | CombinationalStatement::Return { .. }
         | CombinationalStatement::ProceduralAssign { .. }
         | CombinationalStatement::Deassign { .. }
-        | CombinationalStatement::ExprStmt { .. } => false,
+        | CombinationalStatement::ExprStmt { .. }
+        | CombinationalStatement::PortDeclSkip => false,
     }
 }

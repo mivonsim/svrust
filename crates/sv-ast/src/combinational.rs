@@ -44,6 +44,10 @@ pub enum CombinationalStatement {
     /// Eligator mendaftarkannya sebagai variable design lalu mengabaikan
     /// statement ini, jadi tidak ada efek runtime.
     Decl(crate::declaration::Declaration),
+    /// Deklarasi port `input`/`output`/`inout` yang sengaja dilewati karena
+    /// muncul di konteks procedural (bukan daftar port modul). Eligator
+    /// mengabaikannya.
+    PortDeclSkip,
     BlockingAssign {
         lhs: Lvalue,
         rhs: Expr,

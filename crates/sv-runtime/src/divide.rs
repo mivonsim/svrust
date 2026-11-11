@@ -44,6 +44,46 @@ pub fn bit_mod<const N: usize, const M: usize>(lhs: Bits<M>, rhs: Bits<M>) -> Bi
     Bits::from_u64(a.checked_rem(b).unwrap_or(0))
 }
 
+/// `a ** b` — perpangkatan integer unsigned pada lebar logis N (LRM §11.4.7).
+///
+/// Hasilnya adalah `a` pangkat `b`, dipotong ke lebar logis N.
+/// Jika operand bernilai X/Z, hasilnya X.
+#[inline]
+pub fn bit_pow<const N: usize, const M: usize>(lhs: Bits<M>, rhs: Bits<M>) -> Bits<M> {
+    if !lhs.is_fully_known() || !rhs.is_fully_known() {
+        return Bits::<M>::all(Logic::X);
+    }
+    let a = lhs.to_u64() & mask(N);
+    let b = rhs.to_u64() & mask(N);
+    // `u64::pow` mengambil eksponen `u32`; hasil dibungkus ke u64 lalu dipotong ke N bit.
+    let result = a.wrapping_pow(b as u32);
+    Bits::from_u64(result & mask(N))
+}
+
+/// `a inside {b, c, d}` — hasil 1 jika `a` sama dengan salah satu elemen
+/// dalam concatenation `rhs`, chunk per chunk dengan lebar N (LRM §11.4.3).
+#[inline]
+pub fn bit_inside<const N: usize, const M: usize>(lhs: Bits<M>, rhs: Bits<M>) -> Bits<M> {
+    if !lhs.is_fully_known() || !rhs.is_fully_known() {
+        return Bits::<M>::all(Logic::X);
+    }
+    let a = lhs.to_u64() & mask(N);
+    let b = rhs.to_u64();
+    // Periksa setiap chunk N bit dalam rhs.
+    let chunks = M.checked_div(N).unwrap_or(0);
+    for i in 0..chunks {
+        let shift = i * N;
+        if shift >= 64 {
+            break;
+        }
+        let elem = (b >> shift) & mask(N);
+        if elem == a {
+            return Bits::from_u64(1);
+        }
+    }
+    Bits::from_u64(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,6 +164,49 @@ mod tests {
         let a = Bits::<8>::from_u64(100);
         let b = Bits::<8>::from_logic(Logic::Z);
         let r = bit_mod::<8, 8>(a, b);
+        assert!(!r.is_fully_known());
+        assert_eq!(r.get(0), Logic::X);
+    }
+
+    #[test]
+    fn pangkat_normal() {
+        assert_eq!(
+            bit_pow::<8, 8>(Bits::from_u64(2), Bits::from_u64(3)).to_u64(),
+            8
+        );
+    }
+
+    #[test]
+    fn pangkat_dengan_x_hasil_x() {
+        let a = Bits::<8>::from_u64(2);
+        let b = Bits::<8>::from_logic(Logic::X);
+        let r = bit_pow::<8, 8>(a, b);
+        assert!(!r.is_fully_known());
+        assert_eq!(r.get(0), Logic::X);
+    }
+
+    #[test]
+    fn inside_ketemu() {
+        // 64-bit storage: rhs = {8'd3, 8'd5, 8'd7} = 0x070503
+        let a = Bits::<64>::from_u64(5);
+        let b = Bits::<64>::from_u64(0x070503);
+        let r = bit_inside::<8, 64>(a, b);
+        assert_eq!(r.to_u64(), 1);
+    }
+
+    #[test]
+    fn inside_tidak_ketemu() {
+        let a = Bits::<64>::from_u64(4);
+        let b = Bits::<64>::from_u64(0x070503);
+        let r = bit_inside::<8, 64>(a, b);
+        assert_eq!(r.to_u64(), 0);
+    }
+
+    #[test]
+    fn inside_dengan_x_hasil_x() {
+        let a = Bits::<64>::from_u64(5);
+        let b = Bits::<64>::from_logic(Logic::X);
+        let r = bit_inside::<8, 64>(a, b);
         assert!(!r.is_fully_known());
         assert_eq!(r.get(0), Logic::X);
     }

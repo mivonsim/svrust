@@ -95,6 +95,9 @@ pub fn write_system_task(
         // LRM §20.9: $value$plusargs("nama=%d", var) baca nilai plusarg
         // +nama=<nilai> dari baris perintah lalu masukkan ke var.
         SystemTaskKind::ValuePlusArgs => write_value_plusargs(design, args, out, indent),
+        // `$readmemh` / `$readmemb` — load memori dari berkas. Pada tahap
+        // codegen ini dianggap no-op.
+        SystemTaskKind::ReadMemH | SystemTaskKind::ReadMemB => {}
     }
 }
 

@@ -20,6 +20,9 @@ pub fn infer_binary(op: BinOp, lhs: DataType, rhs: DataType) -> DataType {
         // penting karena LRM §11.4.10 menentukan bit pengisi dari signedness
         // tipe HASIL, bukan dari penulisan operatornya.
         BinOp::Shl | BinOp::Shr | BinOp::Sar => lhs,
+        BinOp::Pow => lhs,
+        // `inside`: hasil selalu 1 bit (boolean).
+        BinOp::Inside => DataType::bit(),
         // Perbandingan: hasil 1 bit, selalu unsigned.
         BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => DataType::bit(),
         // Logika: hasil 1 bit.

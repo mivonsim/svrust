@@ -215,6 +215,7 @@ fn jalan_comb(stmt: &mut CombinationalStatement, ctx: &mut Ctx) {
             nama_lvalue(lhs, ctx);
         }
         CombinationalStatement::ExprStmt { expr, .. } => nama_expr(expr, ctx),
+        CombinationalStatement::PortDeclSkip => {}
     }
 }
 
@@ -359,6 +360,14 @@ fn nama_expr(expr: &mut Expr, ctx: &Ctx) {
         | Expr::Bits { operand, .. }
         | Expr::BuiltinCast { operand, .. }
         | Expr::SizeCast { operand, .. } => nama_expr(operand, ctx),
+        Expr::SizeCastExpr {
+            width_expr,
+            operand,
+            ..
+        } => {
+            nama_expr(width_expr, ctx);
+            nama_expr(operand, ctx);
+        }
         // Indeks dinamis juga bisa merujuk variabel lokal.
         Expr::IndexDynamic { base, index, .. } => {
             nama_expr(base, ctx);

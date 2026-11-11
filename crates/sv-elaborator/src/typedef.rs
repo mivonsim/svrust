@@ -278,6 +278,15 @@ impl TypeTable {
                 operand: Box::new(self.ganti_literal(operand)),
                 span: *span,
             },
+            Expr::SizeCastExpr {
+                width_expr,
+                operand,
+                span,
+            } => Expr::SizeCastExpr {
+                width_expr: Box::new(self.ganti_literal(width_expr)),
+                operand: Box::new(self.ganti_literal(operand)),
+                span: *span,
+            },
             Expr::IndexDynamic { base, index, span } => Expr::IndexDynamic {
                 base: Box::new(self.ganti_literal(base)),
                 index: Box::new(self.ganti_literal(index)),
@@ -417,6 +426,11 @@ fn nilai_konstan(
                 BinaryOp::Shr => a.checked_shr(b as u32).unwrap_or(0),
                 // LRM §11.4.10: `>>>` mengisi bit sign.
                 BinaryOp::Sar => ((a as i64) >> (b as u32)) as u64,
+                // LRM §11.4.7: perpangkatan.
+                BinaryOp::Pow => a.wrapping_pow(b as u32),
+                // `inside` tidak dapat dievaluasi pada level u64 karena RHS
+                // adalah concatenation.
+                BinaryOp::Inside => 0,
                 BinaryOp::And => a & b,
                 BinaryOp::Or => a | b,
                 BinaryOp::Xor => a ^ b,

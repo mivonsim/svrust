@@ -819,6 +819,15 @@ fn lingkup_expr(e: &AstExpr, prefix: &str, koneksi: &KoneksiMap, _asal: Span) ->
             operand: Box::new(lingkup_expr(operand, prefix, koneksi, *span)),
             span: *span,
         },
+        AstExpr::SizeCastExpr {
+            width_expr,
+            operand,
+            span,
+        } => AstExpr::SizeCastExpr {
+            width_expr: Box::new(lingkup_expr(width_expr, prefix, koneksi, *span)),
+            operand: Box::new(lingkup_expr(operand, prefix, koneksi, *span)),
+            span: *span,
+        },
         AstExpr::Cast {
             type_name,
             operand,
@@ -1077,6 +1086,7 @@ fn lingkup_comb(
                 span: *span,
             },
             CombinationalStatement::ExprStmt { .. } => s.clone(),
+            CombinationalStatement::PortDeclSkip => s.clone(),
         })
         .collect()
 }

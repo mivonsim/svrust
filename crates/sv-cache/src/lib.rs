@@ -89,18 +89,12 @@ impl SvCache {
             Some(r) => r.clone(),
             None => return Ok(()),
         };
-        SvCache::muat_cache(
-            &mut self.parse_cache,
-            &root.join("cache").join("parse"),
-        )?;
+        SvCache::muat_cache(&mut self.parse_cache, &root.join("cache").join("parse"))?;
         SvCache::muat_cache(
             &mut self.elaborate_cache,
             &root.join("cache").join("elaborate"),
         )?;
-        SvCache::muat_cache(
-            &mut self.codegen_cache,
-            &root.join("cache").join("codegen"),
-        )?;
+        SvCache::muat_cache(&mut self.codegen_cache, &root.join("cache").join("codegen"))?;
         Ok(())
     }
 
@@ -247,7 +241,11 @@ mod tests {
     }
 
     fn diagnistik_contoh() -> Vec<Diagnostic> {
-        vec![Diagnostic::error("E0001", "pesan contoh", sv_diag::Span::empty(sv_diag::SourceId(0), 0))]
+        vec![Diagnostic::error(
+            "E0001",
+            "pesan contoh",
+            sv_diag::Span::empty(sv_diag::SourceId(0), 0),
+        )]
     }
 
     #[test]

@@ -135,7 +135,14 @@ pub fn scan_operator(
                 Ok(Token::Minus)
             }
         }
-        '*' => Ok(Token::Star),
+        '*' => {
+            if chars.peek() == Some(&'*') {
+                makan(chars, byte_offset, col);
+                Ok(Token::Pow)
+            } else {
+                Ok(Token::Star)
+            }
+        }
         '/' => Ok(Token::Slash),
         '%' => Ok(Token::Percent),
         '@' => Ok(Token::At),

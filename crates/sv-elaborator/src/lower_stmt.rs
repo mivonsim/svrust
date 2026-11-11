@@ -23,9 +23,12 @@ pub fn lower_comb_block(
 ) -> Result<Vec<Statement>, ElaborateError> {
     let mut out = Vec::new();
     for item in body {
-        // Deklarasi lokal sudah didaftarkan sebagai variable design,
-        // jadi tidak menghasilkan statement runtime.
-        if matches!(item, CombinationalStatement::Decl(_)) {
+        // Deklarasi lokal dan port yang sengaja dilewati tidak menghasilkan
+        // statement runtime.
+        if matches!(
+            item,
+            CombinationalStatement::Decl(_) | CombinationalStatement::PortDeclSkip
+        ) {
             continue;
         }
         if let CombinationalStatement::ExprStmt { expr, span } = item {
@@ -62,6 +65,9 @@ fn lower_comb_statement(
             "deklarasi lokal tidak boleh dilower sebagai statement",
             decl.span,
         )),
+        CombinationalStatement::PortDeclSkip => unreachable!(
+            "PortDeclSkip harus difilter oleh lower_comb_block sebelum sampai ke sini"
+        ),
         CombinationalStatement::ExprStmt { span, .. } => Err(ElaborateError::new(
             "ekspresi tanpa efek samping tidak menghasilkan statement IR",
             *span,
@@ -1075,6 +1081,8 @@ fn map_system_task_kind(kind: sv_ast::system_task::SystemTaskKind) -> SystemTask
         Ast::DumpVars => SystemTaskKind::DumpVars,
         Ast::Assert => SystemTaskKind::Assert,
         Ast::ValuePlusArgs => SystemTaskKind::ValuePlusArgs,
+        Ast::ReadMemH => SystemTaskKind::ReadMemH,
+        Ast::ReadMemB => SystemTaskKind::ReadMemB,
     }
 }
 

@@ -21,12 +21,16 @@ pub enum BinOp {
     /// `>>>` — geser kanan aritmetik; isi dengan bit sign bila tipe hasil
     /// signed (LRM §11.4.10).
     Sar,
+    /// `**` — perpangkatan (LRM §11.4.7).
+    Pow,
     Eq,
     NotEq,
     Lt,
     Gt,
     Le,
     Ge,
+    /// `inside` — keanggotaan dalam daftar (LRM §11.4.3).
+    Inside,
     LogAnd,
     LogOr,
 }

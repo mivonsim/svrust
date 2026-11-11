@@ -42,7 +42,7 @@ pub fn parse_expression(tokens: &[SpannedToken]) -> Result<(Expr, usize), String
 
 /// Level rendah = kalah kuat. 1: `||` ... 9: `+ -`.
 fn parse_level(tokens: &[SpannedToken], level: u8) -> Result<(Expr, usize), String> {
-    if level > 9 {
+    if level > 10 {
         return parse_unary(tokens);
     }
     let (mut lhs, mut idx) = parse_level(tokens, level + 1)?;
@@ -74,6 +74,8 @@ fn op_pada_level(token: &Token, level: u8) -> Option<BinaryOp> {
         (Token::AndAnd, 2) => Some(BinaryOp::LogAnd),
         (Token::EqEq, 3) => Some(BinaryOp::Eq),
         (Token::BangEq, 3) => Some(BinaryOp::NotEq),
+        // LRM §11.4.3: `inside` sama level dengan equality operator.
+        (Token::Inside, 3) => Some(BinaryOp::Inside),
         (Token::Lt, 4) => Some(BinaryOp::Lt),
         (Token::Gt, 4) => Some(BinaryOp::Gt),
         // `<=` di konteks ekspresi = less-equal (LRM §11.4).
@@ -92,6 +94,8 @@ fn op_pada_level(token: &Token, level: u8) -> Option<BinaryOp> {
         // LRM §11.4: `*`, `/`, `%` punya presedence yang sama.
         (Token::Slash, 9) => Some(BinaryOp::Div),
         (Token::Percent, 9) => Some(BinaryOp::Mod),
+        // LRM §11.4.7: `**` punya presedence lebih tinggi dari `*`.
+        (Token::Pow, 10) => Some(BinaryOp::Pow),
         _ => None,
     }
 }
@@ -169,6 +173,40 @@ fn reduction_ganda(first: &Token, next: Option<&Token>) -> Option<UnaryOp> {
 /// `mem[3].field`. Keduanya diurai dalam satu loop agar urutan bebas.
 fn parse_postfix(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
     let (mut base, mut idx) = parse_primary(tokens)?;
+
+    // LRM §6.14: `pkg::type'(expr)` atau `type'(expr)` — type cast dengan
+    // nama tipe hierarkis. `parse_primary` sudah menangani `Ident` tunggal
+    // diikuti `'`, tapi `pkg::Type` dikembalikan sebagai `Expr::Ident` tanpa
+    // memeriksa `'` di belakangnya.
+    // `(2*Width)'(expr)` — size cast dengan lebar ekspresi.
+    if idx < tokens.len() && tokens[idx].token == Token::Cast {
+        let span = tokens[idx].span;
+        idx += 1; // lewati '\''
+        if idx >= tokens.len() || tokens[idx].token != Token::LParen {
+            return Err("expected '(' setelah tanda cast".to_string());
+        }
+        idx += 1;
+        let (operand, consumed) = parse_expression(&tokens[idx..])?;
+        idx += consumed;
+        if idx >= tokens.len() || tokens[idx].token != Token::RParen {
+            return Err("expected ')' menutup cast".to_string());
+        }
+        idx += 1;
+        let cast = match base {
+            Expr::Ident { name, .. } => Expr::Cast {
+                type_name: name,
+                operand: Box::new(operand),
+                span,
+            },
+            // Size cast dengan lebar ekspresi, misal `(2*Width)'(x)`.
+            other => Expr::SizeCastExpr {
+                width_expr: Box::new(other),
+                operand: Box::new(operand),
+                span,
+            },
+        };
+        base = cast;
+    }
 
     // LRM §13.4: `nama(argumen, ...)` adalah pemanggilan function. Handle
     // keduanya: `f(a)` sederhana dan `pkg::f(a)` hierarkis.
@@ -527,8 +565,7 @@ fn parse_select_index(tokens: &[SpannedToken]) -> Result<(Indeks, usize), String
             // Skip `+` or `-` and `:`
             let after_op = pos + 1;
             // Parse width expression
-            let (width_expr, width_consumed) =
-                parse_expression(&tokens[after_op..closing])?;
+            let (width_expr, width_consumed) = parse_expression(&tokens[after_op..closing])?;
             if after_op + width_consumed != closing {
                 return Err(crate::pesan::tandai(
                     tokens,
@@ -774,6 +811,12 @@ fn parse_primary(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
                 idx,
             ))
         }
+        // LRM §11.8.1: `{a, b, c}` adalah concatenation primary expression,
+        // misal sebagai RHS operator `inside`: `a inside {b, c, d}`.
+        Token::LBrace => {
+            let (expr, consumed) = parse_brace(tokens)?;
+            Ok((expr, consumed))
+        }
         // LRM §6.14: `'{...}` adalah concatenation dengan lebar yang diturunkan
         // dari konteks (unsized concatenation). `'` diabaikan, hanya parse brace.
         Token::Cast if matches!(tokens.get(1).map(|t| &t.token), Some(&Token::LBrace)) => {
@@ -985,16 +1028,30 @@ fn try_parse_replication(
     tokens: &[SpannedToken],
     span: sv_lexer::span::Span,
 ) -> Result<(Expr, usize), String> {
+    // Cek shift replication operator: `{<< n { ... }}` atau `{>> n { ... }}`.
+    let mut repl_idx = 1; // skip '{'
+    let _shift_op = if repl_idx < tokens.len()
+        && matches!(
+            tokens[repl_idx].token,
+            Token::Shl | Token::Shr
+        )
+    {
+        // Shift operator ada; skip dan lanjutkan parse count.
+        repl_idx += 1;
+        Some(())
+    } else {
+        None
+    };
     // Count boleh ekspresi apa pun; setelahnya harus ada `{` yang menandai awal
     // operand. Ini yang membedakan `{n{x}}` dari `{a, b}`.
-    let (_, panjang_count) = parse_expression(&tokens[1..])?;
-    let nilai_mulai = 1 + panjang_count;
+    let (_, panjang_count) = parse_expression(&tokens[repl_idx..])?;
+    let nilai_mulai = repl_idx + panjang_count;
     if tokens.get(nilai_mulai).map(|t| &t.token) != Some(&Token::LBrace) {
         return Err("bukan replication: tidak ada '{' setelah count".to_string());
     }
     // Count diparse sebagai ekspresi penuh supaya identifier parameter diterima;
     // nilainya di-resolve elaborator lewat tabel parameter.
-    let (count, _) = parse_expression(&tokens[1..])?;
+    let (count, _) = parse_expression(&tokens[repl_idx..])?;
     let (value, mut consumed) = parse_expression(&tokens[nilai_mulai + 1..])?;
     // LRM §11.8.2: bentuknya `{ constant_expression { concatenation } }` —
     // isinya concatenation, bukan replication lagi. `{2{2{a}}}` karena itu
@@ -1002,8 +1059,8 @@ fn try_parse_replication(
     if matches!(value, Expr::Replicate { .. }) {
         return Err("replication di dalam replication tidak diizinkan".to_string());
     }
-    // '{', count, '{' lalu operand.
-    consumed += nilai_mulai + 1;
+    // '{', [shift_op], count, '{' lalu operand.
+    consumed = nilai_mulai + 1 + consumed;
     if tokens.get(consumed).map(|t| &t.token) != Some(&Token::RBrace) {
         return Err("expected '}' closing replication".to_string());
     }
@@ -1011,13 +1068,14 @@ fn try_parse_replication(
     if tokens.get(consumed).map(|t| &t.token) != Some(&Token::RBrace) {
         return Err("expected '}' closing replication".to_string());
     }
+    consumed += 1;
     Ok((
         Expr::Replicate {
             count: Box::new(count),
             value: Box::new(value),
             span,
         },
-        consumed + 1,
+        consumed,
     ))
 }
 
@@ -1036,6 +1094,33 @@ fn try_parse_concatenation(
         if tokens[idx].token == Token::RBrace {
             break;
         }
+        // `default: expr` dalam concatenation/pattern assignment —
+        // default menentukan nilai untuk bit yang tidak ditentukan.
+        if tokens[idx].token == Token::Default {
+            idx += 1; // lewati 'default'
+            if idx >= tokens.len() || tokens[idx].token != Token::Colon {
+                return Err("expected ':' setelah 'default' dalam concatenation".to_string());
+            }
+            idx += 1; // lewati ':'
+            let (default_expr, default_consumed) = parse_expression(&tokens[idx..])?;
+            items.push(default_expr);
+            idx += default_consumed;
+            if idx >= tokens.len() {
+                return Err("expected '}' closing concatenation".to_string());
+            }
+            match &tokens[idx].token {
+                Token::RBrace => break,
+                Token::Comma => idx += 1,
+                other => {
+                    return Err(format!(
+                        "expected koma atau penutup kurung kurawal pada concatenation, \
+                         ditemukan {other:?} @ line {} col {}",
+                        tokens[idx].span.line, tokens[idx].span.col
+                    ))
+                }
+            }
+            continue;
+        }
         let (item, consumed) = parse_expression(&tokens[idx..])?;
         items.push(item);
         idx += consumed;
@@ -1044,9 +1129,6 @@ fn try_parse_concatenation(
         }
         match &tokens[idx].token {
             Token::RBrace => break,
-            // Koma wajib di antara item. Tanpa pemeriksaan ini `{2{2{a}}}` —
-            // replication lapsan yang tidak sah — diterima diam-diam sebagai
-            // concatenation dengan dua item dan menghasilkan nilai yang salah.
             Token::Comma => idx += 1,
             other => {
                 return Err(format!(
