@@ -309,6 +309,16 @@ fn parse_package_parameter(
         while idx < tokens.len() && tokens[idx].token == Token::LBracket {
             idx = crate::module::lewati_kurung_siku(tokens, idx);
         }
+    } else if idx < tokens.len()
+        && matches!(tokens[idx].token, Token::Ident(_))
+        && tokens
+            .get(idx + 1)
+            .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
+        && tokens.get(idx + 2).is_some_and(|t| t.token == Token::Eq)
+    {
+        // `parameter type Nama = ...` — tipe tanpa scope paket
+        // (misal `parameter lc_tx_t LC_TX_DEFAULT = ...`).
+        idx += 2; // lewati nama tipe DAN nama parameter
     }
 
     // Nama parameter.

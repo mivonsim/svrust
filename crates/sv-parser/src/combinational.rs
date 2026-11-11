@@ -148,6 +148,21 @@ pub fn parse_combinational_statement(
                 idx,
             ))
         }
+        Token::Automatic => {
+            // `automatic` sebelum `function`/`task` di dalam blok combinational
+            // tidak mempengaruhi semantik; lewati hingga ';'.
+            let mut i = 1;
+            while i < tokens.len() && tokens[i].token != Token::Semi {
+                i += 1;
+            }
+            if i < tokens.len() {
+                i += 1;
+            }
+            Ok((
+                CombinationalStatement::PortDeclSkip,
+                i,
+            ))
+        }
         Token::Incr | Token::Decr => {
             // BUG-29: `++a;` pre-increment sebagai statement utuh.
             let naik = tokens[0].token == Token::Incr;
@@ -209,7 +224,24 @@ pub fn parse_combinational_statement(
                 tokens[0].token
             ))
         }
-        Token::Ident(_) => {
+        Token::Ident(n) => {
+            // LRM §12.6: `unique case`, `priority case`, `unique0 case` —
+            // `unique`/`priority`/`unique0` bukan keyword, jadi muncul sebagai
+            // Ident sebelum `case`/`casez`/`casex`.
+            if (n == "unique" || n == "priority" || n == "unique0")
+                && matches!(
+                    tokens.get(1).map(|t| &t.token),
+                    Some(Token::Case) | Some(Token::Casez) | Some(Token::Casex)
+                )
+            {
+                let kind = match tokens.get(1).map(|t| &t.token) {
+                    Some(Token::Case) => CaseKind::Exact,
+                    Some(Token::Casez) => CaseKind::Casez,
+                    Some(Token::Casex) => CaseKind::Casex,
+                    _ => CaseKind::Exact,
+                };
+                return parse_case(&tokens[1..], kind);
+            }
             let span = tokens[0].span;
             // LRM §13.3: `nama(args);` adalah pemanggilan task, dibedakan dari
             // assignment lewat tanda kurung tepat setelah identifier.
@@ -322,6 +354,15 @@ pub fn parse_combinational_statement(
                 },
                 idx,
             ))
+        }
+        Token::Semi => {
+            // Pernyataan kosong (`;`) di dalam blok combinational — lewati.
+            let stmt = CombinationalStatement::Block {
+                label: None,
+                body: Vec::new(),
+                span: tokens[0].span,
+            };
+            Ok((stmt, 1))
         }
         _ => Err(format!(
             "unexpected token in combinational statement: {:?}",
@@ -768,6 +809,15 @@ pub fn parse_combinational_block(
                     body.push(CombinationalStatement::Decl(decl));
                 }
                 idx += consumed;
+            }
+            // `localparam` di dalam blok combinational — lewati hingga ';'.
+            Token::LocalParam => {
+                while idx < tokens.len() && tokens[idx].token != Token::Semi {
+                    idx += 1;
+                }
+                if idx < tokens.len() {
+                    idx += 1;
+                }
             }
             _ => {
                 let (stmt, consumed) = parse_combinational_statement(&tokens[idx..])?;

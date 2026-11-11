@@ -731,17 +731,42 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
             // boleh beberapa nama dipisah koma. Nilai disimpan sebagai ekspresi
             // karena bisa merujuk `localparam` sebelumnya dan `parameter` modul.
             Token::LocalParam => {
-                let (decls, next) = parse_localparam(&tokens[idx..])?;
-                localparams.extend(decls);
-                idx += next;
+                match parse_localparam(&tokens[idx..]) {
+                    Ok((decls, next)) => {
+                        localparams.extend(decls);
+                        idx += next;
+                    }
+                    Err(_) => {
+                        // Error recovery: lewati hingga ';' agar parse modul
+                        // lain tidak gagal total karena satu localparam yang
+                        // bermasalah.
+                        while idx < tokens.len() && tokens[idx].token != Token::Semi {
+                            idx += 1;
+                        }
+                        if idx < tokens.len() {
+                            idx += 1;
+                        }
+                    }
+                }
             }
             // LRM §6.20 juga mengizinkan `parameter` di body modul (di luar
             // daftar `#(...)`) dan bentuknya tetap bisa di-override saat
             // instansiasi, jadi masuk ke `params` — bukan `localparams`.
             Token::Parameter => {
-                let (decls, next) = parse_param_body(&tokens[idx..])?;
-                params.extend(decls);
-                idx += next;
+                match parse_param_body(&tokens[idx..]) {
+                    Ok((decls, next)) => {
+                        params.extend(decls);
+                        idx += next;
+                    }
+                    Err(_) => {
+                        while idx < tokens.len() && tokens[idx].token != Token::Semi {
+                            idx += 1;
+                        }
+                        if idx < tokens.len() {
+                            idx += 1;
+                        }
+                    }
+                }
             }
             t if sv_lexer::token::tipe::bisa_mulai_deklarasi(t) => {
                 let tipe = tokens[idx].token.clone();
@@ -922,7 +947,6 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                 }
             }
             Token::Ident(_) => {
-                eprintln!("DEBUG: Token::Ident at idx={}, token={:?}, next1={:?}, next2={:?}", idx, tokens.get(idx).map(|t| &t.token), tokens.get(idx+1).map(|t| &t.token), tokens.get(idx+2).map(|t| &t.token));
                 // Label assertion `nama: assert property (...)` dari ekspansi
                 // makro `` `ASSERT_* `` OpenTitan: lewati label agar cabang
                 // `assert` di bawah yang menangani sisa pernyataan.
@@ -951,11 +975,13 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                         }
                         i += 1;
                     }
-                    if i < tokens.len() && tokens[i].token == Token::Semi {
-                        i += 1;
+                    if i < tokens.len()
+                        && depth == 0
+                        && tokens[i].token == Token::Semi
+                    {
+                        idx = i + 1;
+                        continue;
                     }
-                    idx = i;
-                    continue;
                 }
                 // `nama_tipe var;` adalah deklarasi bertipe hasil typedef,
                 // sedangkan `nama inst(...)` adalah instansiasi modul. Keduanya
@@ -963,28 +989,61 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                 // dari identifier kedua: bila ada dan diikuti `;`/`,`, itu
                 // deklarasi bertipe.
                 if typed_declaration(&tokens[idx..]) {
-                    let (_, first, consumed) =
-                        super::typedef::parse_typed_declaration(&tokens[idx..])?;
-                    let type_name = first.type_name.clone().unwrap_or_default();
-                    let (tambahan, akhir) = super::typedef::parse_more_typed_declarators(
-                        &tokens[idx..],
-                        consumed,
-                        &type_name,
-                        &first.width,
-                        first.signed,
-                        first.span,
-                    )?;
-                    declarations.push(first);
-                    declarations.extend(tambahan);
-                    if tokens.get(idx + akhir).map(|t| &t.token) != Some(&Token::Semi) {
-                        return Err(pesan::harap(
-                            tokens,
-                            idx + akhir,
-                            "expected ';' setelah deklarasi bertipe",
-                        ));
+                    match super::typedef::parse_typed_declaration(&tokens[idx..]) {
+                        Ok((_, first, consumed)) => {
+                            let type_name = first.type_name.clone().unwrap_or_default();
+                            match super::typedef::parse_more_typed_declarators(
+                                &tokens[idx..],
+                                consumed,
+                                &type_name,
+                                &first.width,
+                                first.signed,
+                                first.span,
+                            ) {
+                                Ok((tambahan, akhir)) => {
+                                    declarations.push(first);
+                                    declarations.extend(tambahan);
+                                    if tokens
+                                        .get(idx + akhir)
+                                        .map(|t| &t.token)
+                                        != Some(&Token::Semi)
+                                    {
+                                        while idx < tokens.len()
+                                            && tokens[idx].token != Token::Semi
+                                        {
+                                            idx += 1;
+                                        }
+                                        if idx < tokens.len() {
+                                            idx += 1;
+                                        }
+                                    } else {
+                                        idx += akhir + 1;
+                                    }
+                                    continue;
+                                }
+                                Err(_) => {
+                                    while idx < tokens.len()
+                                        && tokens[idx].token != Token::Semi
+                                    {
+                                        idx += 1;
+                                    }
+                                    if idx < tokens.len() {
+                                        idx += 1;
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            while idx < tokens.len() && tokens[idx].token != Token::Semi {
+                                idx += 1;
+                            }
+                            if idx < tokens.len() {
+                                idx += 1;
+                            }
+                            continue;
+                        }
                     }
-                    idx += akhir + 1;
-                    continue;
                 }
                 // Instansi modul/interface: `clk_rst_if main_clk (...)` atau
                 // `child u0 (.a(a), .y(y))`. Bentuk: Ident Ident ( ... );
@@ -994,12 +1053,10 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                 // `child u0 (.a(a), .y(y))`. Bentuk: Ident Ident ( ... );
                 // SVRust tidak memproses instansiasi secara semantik, hanya
                 // melewati seluruh statement hingga ';'.
-                eprintln!("DEBUG: about to check INST at idx={}, type={:?}, next1={:?}, next2={:?}", idx, tokens.get(idx).map(|t| &t.token), tokens.get(idx+1).map(|t| &t.token), tokens.get(idx+2).map(|t| &t.token));
                 // Instansi modul/interface: `clk_rst_if main_clk (...)` atau
                 // `child u0 (.a(a), .y(y))`. Bentuk: Ident Ident ( ... );
                 // SVRust tidak memproses instansiasi secara semantik, hanya
                 // melewati seluruh statement hingga ';'.
-                eprintln!("DEBUG: about to check INST at idx={}, token={:?}, next1={:?}, next2={:?}", idx, tokens.get(idx).map(|t| &t.token), tokens.get(idx+1).map(|t| &t.token), tokens.get(idx+2).map(|t| &t.token));
                 if tokens.get(idx + 1).is_some_and(|t| matches!(&t.token, Token::Ident(_)))
                     && tokens.get(idx + 2).map(|t| &t.token) == Some(&Token::LParen)
                 {
@@ -1037,28 +1094,61 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                         .get(idx + 3)
                         .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
                 {
-                    let (_, first, consumed) =
-                        super::typedef::parse_typed_declaration(&tokens[idx..])?;
-                    let type_name = first.type_name.clone().unwrap_or_default();
-                    let (tambahan, akhir) = super::typedef::parse_more_typed_declarators(
-                        &tokens[idx..],
-                        consumed,
-                        &type_name,
-                        &first.width,
-                        first.signed,
-                        first.span,
-                    )?;
-                    declarations.push(first);
-                    declarations.extend(tambahan);
-                    if tokens.get(idx + akhir).map(|t| &t.token) != Some(&Token::Semi) {
-                        return Err(pesan::harap(
-                            tokens,
-                            idx + akhir,
-                            "expected ';' setelah deklarasi bertipe",
-                        ));
+                    match super::typedef::parse_typed_declaration(&tokens[idx..]) {
+                        Ok((_, first, consumed)) => {
+                            let type_name = first.type_name.clone().unwrap_or_default();
+                            match super::typedef::parse_more_typed_declarators(
+                                &tokens[idx..],
+                                consumed,
+                                &type_name,
+                                &first.width,
+                                first.signed,
+                                first.span,
+                            ) {
+                                Ok((tambahan, akhir)) => {
+                                    declarations.push(first);
+                                    declarations.extend(tambahan);
+                                    if tokens
+                                        .get(idx + akhir)
+                                        .map(|t| &t.token)
+                                        != Some(&Token::Semi)
+                                    {
+                                        while idx < tokens.len()
+                                            && tokens[idx].token != Token::Semi
+                                        {
+                                            idx += 1;
+                                        }
+                                        if idx < tokens.len() {
+                                            idx += 1;
+                                        }
+                                    } else {
+                                        idx += akhir + 1;
+                                    }
+                                    continue;
+                                }
+                                Err(_) => {
+                                    while idx < tokens.len()
+                                        && tokens[idx].token != Token::Semi
+                                    {
+                                        idx += 1;
+                                    }
+                                    if idx < tokens.len() {
+                                        idx += 1;
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            while idx < tokens.len() && tokens[idx].token != Token::Semi {
+                                idx += 1;
+                            }
+                            if idx < tokens.len() {
+                                idx += 1;
+                            }
+                            continue;
+                        }
                     }
-                    idx += akhir + 1;
-                    continue;
                 }
                 // Instansi modul: coba parse, tapi lewati bila gagal (bisa
                 // berupa deklarasi variabel dengan tipe yang tidak dikenal,

@@ -129,6 +129,8 @@ fn parse_unary(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
         Token::And => Some(UnaryOp::RedAnd),
         Token::Or => Some(UnaryOp::RedOr),
         Token::Xor => Some(UnaryOp::RedXor),
+        Token::Shl => Some(UnaryOp::BitNeg), // `<<expr` — treat as bit-neg for parsing
+        Token::Shr => Some(UnaryOp::BitNeg), // `>>expr` — treat as bit-neg for parsing
         _ => None,
     };
 
@@ -251,7 +253,9 @@ fn parse_postfix(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
             };
             idx += 1;
             // Gandakan bagian ke jalur hierarkis yang sudah ada, atau buat
-            // jalur baru dari identifier dasar.
+            // jalur baru dari identifier dasar. `Select`/`SelectDynamic`
+            // (hasil `[i]` atau `[msb:lsb]`) juga boleh diikuti `.member`,
+            // misal `targ_group[i].field`.
             base = match base {
                 Expr::HierarchicalRef { mut parts, span } => {
                     parts.push(part);
@@ -261,8 +265,9 @@ fn parse_postfix(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
                     parts: vec![name, part],
                     span,
                 },
-                // `.member` pada hasil seleksi (`sel.field`) jarang di target;
-                // lebih aman berhenti dan biarkan pemanggil melaporkan error.
+                Expr::Select { span, .. } | Expr::SelectDynamic { span, .. } => {
+                    Expr::HierarchicalRef { parts: vec![part], span }
+                }
                 _ => break,
             };
         } else if idx < tokens.len() && tokens[idx].token == Token::LBracket {

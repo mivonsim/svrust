@@ -404,11 +404,27 @@ fn parse_seq_statement(tokens: &[SpannedToken]) -> Result<(SequentialStatement, 
         return Ok((SequentialStatement::TaskCall(call), consumed));
     }
 
-    if !matches!(tokens[0].token, Token::Ident(_) | Token::If) {
+    if !matches!(tokens[0].token, Token::Ident(_) | Token::If | Token::Colon) {
         return Err(format!(
             "unexpected token in always_ff body: {:?}",
             tokens[0].token
         ));
+    }
+    // `:` sebagai pertama token statement (misal labeled block tanpa begin)
+    // — lewati hingga ';'.
+    if tokens[0].token == Token::Colon {
+        let mut idx = 1;
+        while idx < tokens.len() && tokens[idx].token != Token::Semi {
+            idx += 1;
+        }
+        if idx < tokens.len() {
+            idx += 1;
+        }
+        return Ok((SequentialStatement::Block {
+            label: None,
+            body: Vec::new(),
+            span: tokens[0].span,
+        }, idx));
     }
 
     // LRM §12.4: `if (syarat) ... else ...` di dalam blok sekuensial.

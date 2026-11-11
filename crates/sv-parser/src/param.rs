@@ -107,6 +107,22 @@ pub fn parse_param_list(
         } else if tokens
             .get(idx)
             .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
+            && tokens.get(idx + 1).is_some_and(|t| t.token == Token::LBracket)
+            && tokens.get(idx + 2).is_some_and(|t| matches!(&t.token, Token::Ident(_)))
+        {
+            // `parameter tipe [dim] Nama = ...` — tipe dengan packed dimension
+            // sebelum nama parameter (misal `parameter pad_type_e [N] x = ...`).
+            let tn = match &tokens[idx].token {
+                Token::Ident(n) => Some(n.clone()),
+                _ => None,
+            };
+            idx += 1;
+            // Lewati packed dimension `[N]`.
+            idx = crate::module::lewati_kurung_siku(tokens, idx);
+            tn
+        } else if tokens
+            .get(idx)
+            .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
             && tokens.get(idx + 1).is_some_and(|t| t.token == Token::Colon)
             && tokens.get(idx + 2).is_some_and(|t| t.token == Token::Colon)
             && tokens
@@ -170,40 +186,38 @@ pub fn parse_param_list(
             }
         }
 
-        if idx >= tokens.len() || tokens[idx].token != Token::Eq {
-            return Err(pesan::harap(tokens, idx, "expected '=' pada parameter"));
-        }
-        idx += 1;
-
-        if idx >= tokens.len() {
-            return Err("expected nilai default parameter, tetapi input habis".to_string());
-        }
-        // Nilai `localparam` adalah ekspresi konstanta, bukan hanya literal:
-        // `localparam int Share = (EnMasking) ? 2 : 1`. Ekspresinya disimpan
-        // utuh dan dievaluasi elaborator setelah parameter sebelumnya.
-        if is_local {
-            let (value, eaten) = super::expression::parse_expression(&tokens[idx..])?;
-            idx += eaten;
-            if localparams.iter().any(|p| p.name == nama)
-                || params.iter().any(|p: &ParamDecl| p.name == nama)
-            {
-                return Err(format!("parameter duplikat: {}", nama));
+        // `=` dan nilai default opsional: parameter tanpa default diperbolehkan
+        // (misal `parameter int unsigned NumDATEntries,`).
+        let (default, default_str) = if idx < tokens.len() && tokens[idx].token == Token::Eq {
+            idx += 1;
+            if idx >= tokens.len() {
+                return Err("expected nilai default parameter, tetapi input habis".to_string());
             }
-            localparams.push(sv_ast::width::LocalParamDecl {
-                name: nama,
-                value,
-                span,
-            });
-            if idx < tokens.len() && tokens[idx].token == Token::Comma {
-                idx += 1;
-                continue;
+            // Nilai `localparam` adalah ekspresi konstanta, bukan hanya literal:
+            // `localparam int Share = (EnMasking) ? 2 : 1`. Ekspresinya disimpan
+            // utuh dan dievaluasi elaborator setelah parameter sebelumnya.
+            if is_local {
+                let (value, eaten) = super::expression::parse_expression(&tokens[idx..])?;
+                idx += eaten;
+                if localparams.iter().any(|p| p.name == nama)
+                    || params.iter().any(|p: &ParamDecl| p.name == nama)
+                {
+                    return Err(format!("parameter duplikat: {}", nama));
+                }
+                localparams.push(sv_ast::width::LocalParamDecl {
+                    name: nama,
+                    value,
+                    span,
+                });
+                if idx < tokens.len() && tokens[idx].token == Token::Comma {
+                    idx += 1;
+                    continue;
+                }
+                break;
             }
-            break;
-        }
 
-        // Nilai default boleh angka, string literal, atau identifier
-        // (untuk konstanta paket seperti `spi_device_pkg::SramType1r1w`).
-        let (default, default_str) = {
+            // Nilai default boleh angka, string literal, atau identifier
+            // (untuk konstanta paket seperti `spi_device_pkg::SramType1r1w`).
             // Cek identifier dengan scope paket terlebih dahulu (lebih spesifik).
             let scoped = tokens
                 .get(idx)
@@ -236,6 +250,9 @@ pub fn parse_param_list(
                     _ => (0, None),
                 }
             }
+        } else {
+            // Parameter tanpa default value (hanya nama dan tipe).
+            (0, None)
         };
         // Lewati token-token nilai default hingga koma atau ')' pada kedalaman
         // 0, agar ekspresi default yang melibatkan operator (misal `a + b`) atau

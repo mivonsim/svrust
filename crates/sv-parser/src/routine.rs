@@ -32,23 +32,30 @@ pub fn parse_routine(tokens: &[SpannedToken]) -> Result<(RoutineDecl, usize), St
     }
 
     // Tipe balik hanya untuk function: `logic`, `integer`, `int`, `byte`,
-    // `reg`, `bit`, dan seterusnya (LRM §6.16, Tabel 6-22).
+    // `reg`, `bit`, dan seterusnya (LRM §6.16, Tabel 6-22). Tipe dari typedef
+    // atau package (`msg_bytes_t`, `pkg::type`) juga boleh jadi tipe balik.
     let mut lebar_atom = None;
     if matches!(kind, RoutineKind::Function) {
         // `void` berarti function tanpa nilai balik (LRM §13.4).
         if matches!(tokens.get(idx).map(|t| &t.token), Some(Token::Void)) {
             lebar_atom = Some((0, false));
             idx += 1;
-        } else {
+        } else if tokens
+            .get(idx)
+            .is_some_and(|t| sv_lexer::token::tipe::bisa_mulai_deklarasi(&t.token))
+        {
+            // Tipe built-in (logic, wire, reg, bit, int, integer, byte, ...).
             lebar_atom = tokens
                 .get(idx)
                 .and_then(|t| sv_lexer::token::tipe::atom(&t.token));
-            let bisa_mulai = tokens
-                .get(idx)
-                .is_some_and(|t| sv_lexer::token::tipe::bisa_mulai_deklarasi(&t.token));
-            if bisa_mulai {
-                idx += 1;
-            }
+            idx += 1;
+        } else if matches!(
+            tokens.get(idx).map(|t| &t.token),
+            Some(Token::Ident(_))
+        ) {
+            // Tipe dari typedef atau package, misal `msg_bytes_t` atau
+            // `pkg::nama_tipe`. Simpan nama sebagai tipe balik.
+            idx += 1;
         }
     }
 
@@ -68,6 +75,10 @@ pub fn parse_routine(tokens: &[SpannedToken]) -> Result<(RoutineDecl, usize), St
         None => super::dimension::parse_dimension(tokens, idx)?,
     };
     idx += consumed;
+    // Lewati packed dimension setelah tipe atom, misal `function bit [7:0] f`.
+    while idx < tokens.len() && tokens[idx].token == Token::LBracket {
+        idx = crate::module::lewati_kurung_siku(tokens, idx);
+    }
 
     // Nama subrutin.
     let name = match tokens.get(idx).map(|t| &t.token) {
@@ -199,6 +210,30 @@ fn parse_arg(tokens: &[SpannedToken]) -> Result<(RoutineArg, usize), String> {
                 _ => {}
             }
             idx += 1;
+        }
+    }
+    // Tipe ditulis sebagai Ident (bukan keyword), misal `input lc_tx_t Name`.
+    // Lewati nama tipe dan dimensi packed yang mungkin mengikutinya.
+    if idx < tokens.len() && matches!(tokens[idx].token, Token::Ident(_)) {
+        // Lewati jika berikutnya bukan `,` atau `)` (artinya ini nama argumen,
+        // bukan tipe) dan bukan `::` (artinya ini `pkg::type` scope).
+        let next_is_type = tokens.get(idx + 1).map(|t| &t.token) != Some(&Token::Comma)
+            && tokens.get(idx + 1).map(|t| &t.token) != Some(&Token::RParen);
+        if next_is_type {
+            idx += 1; // lewati nama tipe
+            while idx < tokens.len() && tokens[idx].token == Token::LBracket {
+                idx = crate::module::lewati_kurung_siku(tokens, idx);
+            }
+            // Lewati `::` scope jika ada: `pkg::type`
+            while idx + 1 < tokens.len()
+                && tokens[idx].token == Token::Colon
+                && tokens[idx + 1].token == Token::Colon
+            {
+                idx += 2;
+                if idx < tokens.len() && matches!(tokens[idx].token, Token::Ident(_)) {
+                    idx += 1;
+                }
+            }
         }
     }
 

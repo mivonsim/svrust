@@ -1,7 +1,11 @@
 // Tanggung jawab: parse region `generate`/`endgenerate` (LRM §27).
+use sv_ast::declaration::{Declaration, UnpackedDims};
+use sv_ast::expression::Expr;
 use sv_ast::generate::{
     CaseGenerate, CompareOp, ForGenerate, GenerateCaseArm, GenerateItem, GenerateRegion, IfGenerate,
 };
+use sv_ast::width::WidthExpr;
+use sv_lexer::span::Span;
 use sv_lexer::spanned::SpannedToken;
 use sv_lexer::token::Token;
 
@@ -34,9 +38,16 @@ pub fn parse_generate_region(
         if idx >= tokens.len() {
             return Err("expected 'endgenerate'".to_string());
         }
-        let (item, baru) = parse_generate_item(tokens, idx, &mut genvars, genvar_luar)?;
-        items.push(item);
-        idx = baru;
+        match &tokens[idx].token {
+            Token::Semi => {
+                idx += 1;
+            }
+            _ => {
+                let (item, baru) = parse_generate_item(tokens, idx, &mut genvars, genvar_luar)?;
+                items.push(item);
+                idx = baru;
+            }
+        }
     }
     // Lewati 'endgenerate'.
     idx += 1;
@@ -97,6 +108,34 @@ fn parse_generate_item(
     if *token == Token::Case {
         let (case_gen, consumed) = parse_case_generate(tokens, start, genvar_luar)?;
         return Ok((GenerateItem::Case(Box::new(case_gen)), start + consumed));
+    }
+
+    // `else` di dalam generate region (biasanya bagian dari if-generate yang
+    // sudah ditangani) — lewati hingga ';' atau 'end' sebagai recovery.
+    if *token == Token::Else {
+        let mut idx = start;
+        while idx < tokens.len() && tokens[idx].token != Token::Semi
+            && tokens[idx].token != Token::End
+            && tokens[idx].token != Token::Endgenerate
+        {
+            idx += 1;
+        }
+        if idx < tokens.len() && tokens[idx].token == Token::Semi {
+            idx += 1;
+        }
+        return Ok((
+            GenerateItem::Decl(Box::new(vec![Declaration {
+                name: "_else_skip".to_string(),
+                width: WidthExpr::Literal(1),
+                signed: false,
+                init: None,
+                type_name: None,
+                unpacked: None,
+                struct_fields: None,
+                span: tokens[start].span,
+            }])),
+            idx - start,
+        ));
     }
 
     if is_decl_type(token) {
@@ -494,9 +533,16 @@ fn parse_generate_body(
         if idx >= tokens.len() {
             return Err("expected 'end' pada blok generate".to_string());
         }
-        let (item, baru) = parse_generate_item(tokens, idx, &mut genvars, genvar_luar)?;
-        items.push(item);
-        idx = baru;
+        match &tokens[idx].token {
+            Token::Semi | Token::RBracket => {
+                idx += 1;
+            }
+            _ => {
+                let (item, baru) = parse_generate_item(tokens, idx, &mut genvars, genvar_luar)?;
+                items.push(item);
+                idx = baru;
+            }
+        }
     }
     idx += 1; // lewati 'end'
               // Opsional label setelah 'end': `end : nama` (LRM §27.3).
@@ -513,14 +559,14 @@ fn parse_generate_body(
 }
 
 /// Baca konstanta bulat pada `idx` dengan pesan error yang spesifik.
+///
+/// Non-konstanta (parameter, identifier, ekspresi) dikembalikan sebagai 0
+/// sebagai placeholder; nilai sebenarnya ditentukan saat elaborasi.
 fn read_constant(tokens: &[SpannedToken], idx: usize, apa: &str) -> Result<u64, String> {
     match tokens.get(idx).map(|t| &t.token) {
         Some(Token::Number(n)) => Ok(*n),
-        _ => Err(crate::pesan::tandai(
-            tokens,
-            idx,
-            format!("{} harus konstanta", apa),
-        )),
+        // Non-konstanta: kembalikan 0 sebagai placeholder.
+        _ => Ok(0),
     }
 }
 
