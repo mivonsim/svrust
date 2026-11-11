@@ -39,6 +39,10 @@ pub enum SystemTaskKind {
     ReadMemH,
     /// `$readmemb("file", mem)` — baca memori dari berkas biner (LRM §21.5).
     ReadMemB,
+    /// `$fwrite(fd, format, ...)` — tulis ke berkas (LRM §20.4).
+    Fwrite,
+    /// `$error(...)` — cetak error dan atur flag simsalah (LRM §20.5).
+    Error,
 }
 
 /// Panggilan system task beserta argumennya.

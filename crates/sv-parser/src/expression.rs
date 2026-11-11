@@ -920,6 +920,14 @@ fn parse_primary(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
             },
             1,
         )),
+        // `$realtime` — waktu simulasi sebagai real (LRM §20.4).
+        Token::SystemTask(nama) if nama == "realtime" => Ok((
+            Expr::SystemTime {
+                unit: sv_ast::time_unit::TimeUnit::default_unit(),
+                span: tokens[0].span,
+            },
+            1,
+        )),
         // LRM §20: `$bits(x)` adalah system function yang mengembalikan
         // lebar bit operandnya sebagai konstanta.
         Token::SystemTask(nama) if nama == "bits" => {
@@ -1122,14 +1130,43 @@ fn try_parse_concatenation(
             continue;
         }
         let (item, consumed) = parse_expression(&tokens[idx..])?;
-        items.push(item);
         idx += consumed;
         if idx >= tokens.len() {
             return Err("expected '}' closing concatenation".to_string());
         }
         match &tokens[idx].token {
-            Token::RBrace => break,
-            Token::Comma => idx += 1,
+            Token::RBrace => {
+                items.push(item);
+                break;
+            }
+            Token::Comma => {
+                items.push(item);
+                idx += 1;
+            }
+            Token::Colon => {
+                // `label: expr` — entri default dengan label identifier
+                // (mis. `'{s: expr}` dalam assignment pattern / concatenation,
+                // LRM §11.6). `item` adalah label (biasanya Ident).
+                idx += 1; // lewati ':'
+                let (default_expr, default_consumed) = parse_expression(&tokens[idx..])?;
+                items.push(default_expr);
+                idx += default_consumed;
+                if idx >= tokens.len() {
+                    return Err("expected '}' closing concatenation".to_string());
+                }
+                match &tokens[idx].token {
+                    Token::RBrace => break,
+                    Token::Comma => idx += 1,
+                    other => {
+                        return Err(format!(
+                            "expected koma atau penutup kurung kurawal pada concatenation, \
+                             ditemukan {other:?} @ line {} col {}",
+                            tokens[idx].span.line, tokens[idx].span.col
+                        ))
+                    }
+                }
+                continue;
+            }
             other => {
                 return Err(format!(
                     "expected koma atau penutup kurung kurawal pada concatenation, \

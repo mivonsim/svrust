@@ -98,6 +98,9 @@ pub fn write_system_task(
         // `$readmemh` / `$readmemb` — load memori dari berkas. Pada tahap
         // codegen ini dianggap no-op.
         SystemTaskKind::ReadMemH | SystemTaskKind::ReadMemB => {}
+        // `$fwrite` / `$error` — sistem task cetak; pada tahap codegen
+        // ini dianggap no-op (runtime akan menangani).
+        SystemTaskKind::Fwrite | SystemTaskKind::Error => {}
     }
 }
 

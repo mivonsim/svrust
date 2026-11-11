@@ -1083,6 +1083,8 @@ fn map_system_task_kind(kind: sv_ast::system_task::SystemTaskKind) -> SystemTask
         Ast::ValuePlusArgs => SystemTaskKind::ValuePlusArgs,
         Ast::ReadMemH => SystemTaskKind::ReadMemH,
         Ast::ReadMemB => SystemTaskKind::ReadMemB,
+        Ast::Fwrite => SystemTaskKind::Fwrite,
+        Ast::Error => SystemTaskKind::Error,
     }
 }
 

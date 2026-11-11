@@ -145,6 +145,36 @@ fn parse_param_body(
         .is_some_and(|t| sv_lexer::token::tipe::bisa_mulai_deklarasi(&t.token))
     {
         idx += 1;
+    } else if tokens
+        .get(idx)
+        .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
+        && tokens.get(idx + 1).is_some_and(|t| t.token == Token::Colon)
+        && tokens.get(idx + 2).is_some_and(|t| t.token == Token::Colon)
+        && tokens
+            .get(idx + 3)
+            .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
+        && tokens
+            .get(idx + 4)
+            .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
+        && tokens.get(idx + 5).is_some_and(|t| {
+            t.token == Token::Eq || t.token == Token::LBracket || t.token == Token::Comma
+        })
+    {
+        // `parameter pkg::type Nama = ...` — tipe dengan scope paket (LRM §6.20.1).
+        idx += 4; // lewati pkg :: type
+    } else if tokens
+        .get(idx)
+        .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
+        && tokens
+            .get(idx + 1)
+            .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
+        && tokens
+            .get(idx + 2)
+            .is_some_and(|t| t.token == Token::Eq)
+    {
+        // `parameter type Nama = ...` atau `parameter my_t Nama = ...` di body
+        // modul — identifier pertama adalah tipe (bukan keyword dikenal).
+        idx += 1;
     }
     // Signedness dan dimensi packed setelah tipe: `parameter logic [15:0] E`.
     if tokens.get(idx).is_some_and(|t| is_signedness(&t.token)) {
@@ -164,6 +194,10 @@ fn parse_param_body(
         };
         let name = name.clone();
         idx += 1;
+        // Unpacked dimensi setelah nama parameter: `parameter logic [W-1:0] Name [N] = ...`
+        while tokens.get(idx).is_some_and(|t| t.token == Token::LBracket) {
+            idx = lewati_kurung_siku(tokens, idx);
+        }
         if tokens
             .get(idx)
             .is_some_and(|t| matches!(t.token, Token::Signed | Token::Unsigned))
@@ -188,11 +222,26 @@ fn parse_param_body(
             _ => {
                 let (expr, eaten) = super::expression::parse_expression(&tokens[idx..])?;
                 idx += eaten;
+                // Lewati satuan waktu opsional: `10ns`, `5ps`, `100ns` (LRM §6.16).
+                if tokens.get(idx).is_some_and(|t| {
+                    matches!(
+                        &t.token,
+                        Token::Ident(n)
+                            if n == "ns" || n == "ps" || n == "fs" || n == "ms" || n == "us"
+                                || n == "s"
+                    )
+                }) {
+                    idx += 1;
+                }
                 match expr {
                     sv_ast::expression::Expr::Number(nilai) => (nilai, None),
                     // `parameter logic [15:0] E = 16'h0001;` — based literal
                     // adalah konstanta yang sah, bukan error.
                     sv_ast::expression::Expr::Sized { value, .. } => (value, None),
+                    // Concatenation `{a, b, ...}` sebagai default parameter
+                    // (mis. `StateEncodings [8] = '{IdleSt, ...}`). Nilai
+                    // dievaluasi elaborator, jadi simpan sebagai default_str.
+                    sv_ast::expression::Expr::Concat { .. } => (0, None),
                     _ => {
                         return Err(crate::pesan::tandai(
                             tokens,
@@ -293,6 +342,10 @@ fn parse_localparam(
         };
         let name = name.clone();
         idx += 1;
+        // Unpacked dimensi setelah nama localparam: `localparam int Name [N] = ...`
+        while tokens.get(idx).is_some_and(|t| t.token == Token::LBracket) {
+            idx = lewati_kurung_siku(tokens, idx);
+        }
         if tokens
             .get(idx)
             .is_some_and(|t| matches!(t.token, Token::Signed | Token::Unsigned))
@@ -310,6 +363,16 @@ fn parse_localparam(
         idx += 1;
         let (value, eaten) = super::expression::parse_expression(&tokens[idx..])?;
         idx += eaten;
+        // Lewati satuan waktu opsional: `10ns`, `5ps`, `100ns` (LRM §6.16).
+        if tokens.get(idx).is_some_and(|t| {
+            matches!(
+                &t.token,
+                Token::Ident(n)
+                    if n == "ns" || n == "ps" || n == "fs" || n == "ms" || n == "us" || n == "s"
+            )
+        }) {
+            idx += 1;
+        }
         out.push(sv_ast::width::LocalParamDecl { name, value, span });
         if tokens.get(idx).map(|t| &t.token) == Some(&Token::Comma) {
             let after = tokens.get(idx + 1).map(|t| &t.token);
