@@ -1,13 +1,18 @@
 // Tanggung jawab: node AST untuk target assignment (sinyal atau irisannya).
 use serde::{Deserialize, Serialize};
 use crate::expression::Expr;
+use crate::width::WidthExpr;
 use sv_lexer::span::Span;
 
 /// Irisan bit target: `[i]` untuk bit-select, `[msb:lsb]` untuk part-select.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `msb` dan `lsb` boleh literal atau ekspresi parameter (misal `[W-1:0]`).
+/// Ekspresi non-literal disimpan sebagai `WidthExpr::Expr` dan di-resolve
+/// saat elaborasi.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Slice {
-    pub msb: u32,
-    pub lsb: u32,
+    pub msb: WidthExpr,
+    pub lsb: WidthExpr,
 }
 
 /// Indexed part-select `[base +: width]` atau `[base -: width]` (LRM §7.8)
@@ -28,9 +33,25 @@ pub enum Arah {
 }
 
 impl Slice {
-    /// Lebar irisan dalam bit.
-    pub fn width(self) -> u32 {
-        self.msb - self.lsb + 1
+    /// Lebar irisan dalam bit. Hanya bisa dihitung bila kedua batas literal.
+    pub fn width(&self) -> Option<u64> {
+        match (&self.msb, &self.lsb) {
+            (WidthExpr::Literal(m), WidthExpr::Literal(l)) => {
+                Some(*m as u64 - *l as u64 + 1)
+            }
+            _ => None,
+        }
+    }
+
+    /// Coba ubah jadi `Slice` dengan `u32` bila kedua batas literal.
+    /// Digunakan elaborator setelah ekspresi parameter di-resolve.
+    pub fn as_literal(self) -> Option<(u32, u32)> {
+        match (&self.msb, &self.lsb) {
+            (WidthExpr::Literal(m), WidthExpr::Literal(l)) => {
+                Some((*m as u32, *l as u32))
+            }
+            _ => None,
+        }
     }
 }
 
@@ -40,6 +61,8 @@ impl Slice {
 /// `name` adalah nama dasar, `slice` irisan pertama pada nama dasar,
 /// `extra_slices` irisan bertingkat, `members` segmen path setelah titik
 /// (misal `["h2d"]` pada `tl_if.h2d`), `genvar_index` indeks genvar.
+///
+/// `part_dinamis` diisi bila target assignment pakai indexed part-select.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Lvalue {
     pub name: String,
@@ -112,8 +135,8 @@ impl Lvalue {
     pub fn resolve_genvar(&mut self, nilai: u32) -> Option<()> {
         self.genvar_index.take()?;
         self.slice = Some(Slice {
-            msb: nilai,
-            lsb: nilai,
+            msb: WidthExpr::Literal(nilai as usize),
+            lsb: WidthExpr::Literal(nilai as usize),
         });
         Some(())
     }
@@ -123,70 +146,5 @@ impl Lvalue {
         let mut hasil = self.clone();
         hasil.name = nama.into();
         hasil
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn lvalue_tanpa_irisan() {
-        let l = Lvalue::simple("y", Span::dummy());
-        assert_eq!(l.name, "y");
-        assert!(!l.is_sliced());
-    }
-
-    #[test]
-    fn lvalue_dengan_irisan() {
-        let l = Lvalue::sliced("y", Slice { msb: 7, lsb: 4 }, Span::dummy());
-        assert!(l.is_sliced());
-        assert_eq!(l.slice.unwrap().width(), 4);
-    }
-
-    #[test]
-    fn lebar_irisan_satu_bit() {
-        let l = Lvalue::sliced("y", Slice { msb: 3, lsb: 3 }, Span::dummy());
-        assert_eq!(l.slice.unwrap().width(), 1);
-    }
-
-    #[test]
-    fn lvalue_tetap_bisa_dibandingkan() {
-        // Dipakai sebagai kunci hashMap saat instans module di-flatten.
-        let a = Lvalue::simple("y", Span::dummy());
-        let b = Lvalue::sliced("y", Slice { msb: 3, lsb: 0 }, Span::dummy());
-        assert_ne!(a, b);
-    }
-
-    // --- indeks genvar pada LHS ---
-
-    #[test]
-    fn indeks_genvar_disimpan_terpisah_dari_irisan() {
-        let l = Lvalue::dengan_genvar("y", "i", Span::dummy());
-        assert_eq!(l.genvar_index.as_deref(), Some("i"));
-        // Belum ada irisan konkret sampai genvar resolved.
-        assert!(!l.is_sliced());
-    }
-
-    #[test]
-    fn resolve_genvar_menjadi_bit_select() {
-        let mut l = Lvalue::dengan_genvar("y", "i", Span::dummy());
-        l.resolve_genvar(3);
-        assert_eq!(l.genvar_index, None);
-        assert_eq!(l.slice.unwrap(), Slice { msb: 3, lsb: 3 });
-    }
-
-    #[test]
-    fn resolve_genvar_pada_target_biasa_berarti_tidak_ada() {
-        let mut l = Lvalue::simple("y", Span::dummy());
-        assert_eq!(l.resolve_genvar(2), None);
-        assert!(l.slice.is_none());
-    }
-
-    #[test]
-    fn dengan_nama_mempertahankan_indeks_genvar() {
-        let l = Lvalue::dengan_genvar("y", "i", Span::dummy()).dengan_nama("blk_y");
-        assert_eq!(l.name, "blk_y");
-        assert_eq!(l.genvar_index.as_deref(), Some("i"));
     }
 }

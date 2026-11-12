@@ -95,8 +95,14 @@ fn resolve_index(
         return Ok(None);
     };
     let slice = match index {
-        PortIndex::Bit(bit) => Slice { msb: bit, lsb: bit },
-        PortIndex::Range(msb, lsb) => Slice { msb, lsb },
+        PortIndex::Bit(bit) => Slice {
+            msb: WidthExpr::Literal(bit as usize),
+            lsb: WidthExpr::Literal(bit as usize),
+        },
+        PortIndex::Range(msb, lsb) => Slice {
+            msb: WidthExpr::Literal(msb as usize),
+            lsb: WidthExpr::Literal(lsb as usize),
+        },
         PortIndex::Genvar(name) => {
             let Some(nilai) = env.cari(&name) else {
                 return Err(ElaborateError::new(
@@ -110,7 +116,10 @@ fn resolve_index(
                     conn.span,
                 )
             })?;
-            Slice { msb: bit, lsb: bit }
+            Slice {
+                msb: WidthExpr::Literal(bit as usize),
+                lsb: WidthExpr::Literal(bit as usize),
+            }
         }
     };
     Ok(Some(slice))
@@ -340,8 +349,8 @@ fn lower_instance_body(
         let lebar_anak = params.lebar(&port_decl.width, packages, inst.span)? as u32;
         let slice = resolve_index(c, env)?;
         let lebar_koneksi = match &slice {
-            Some(s) => s.width(),
-            None => induk.data_type.width,
+            Some(s) => s.width().map(|w| w as u32),
+            None => Some(induk.data_type.width),
         };
         // Tipe paket eksternal yang tidak ada dalam kompilasi (mis.
         // `prim_alert_pkg::alert_tx_t` di OpenTitan) di-parse sebagai width
@@ -350,7 +359,8 @@ fn lower_instance_body(
         // `check` tidak hard-fail pada design yang bergantung pada paket
         // eksternal yang tidak tersedia.
         let tipe_paket_tak_dikenal = lebar_anak == 1 && port_decl.width == WidthExpr::Literal(1);
-        if lebar_koneksi != lebar_anak && !tipe_paket_tak_dikenal {
+        let lebar_koneksi_val = lebar_koneksi.unwrap_or(0);
+        if lebar_koneksi_val != lebar_anak && !tipe_paket_tak_dikenal {
             return Err(ElaborateError::new(
                 format!(
                     "lebar koneksi port beda: {}.{} {} bit vs {}{} {} bit",
@@ -359,7 +369,7 @@ fn lower_instance_body(
                     lebar_anak,
                     c.signal,
                     slice_teks(slice.as_ref()),
-                    lebar_koneksi
+                    lebar_koneksi_val
                 ),
                 inst.span,
             ));
@@ -367,16 +377,18 @@ fn lower_instance_body(
         // Part-select di luar rentang sinyal parent adalah error, bukan
         // pemotongan diam-diam.
         if let Some(s) = &slice {
-            if s.msb >= induk.data_type.width {
-                return Err(ElaborateError::invalid_width(
-                    format!(
-                        "indeks {} di luar sinyal {} yang lebarnya {} bit",
-                        slice_teks(Some(s)),
-                        c.signal,
-                        induk.data_type.width
-                    ),
-                    c.span,
-                ));
+            if let sv_ast::width::WidthExpr::Literal(msb_val) = &s.msb {
+                if *msb_val as u32 >= induk.data_type.width {
+                    return Err(ElaborateError::invalid_width(
+                        format!(
+                            "indeks {} di luar sinyal {} yang lebarnya {} bit",
+                            slice_teks(Some(s)),
+                            c.signal,
+                            induk.data_type.width
+                        ),
+                        c.span,
+                    ));
+                }
             }
         }
         koneksi.insert(
@@ -593,8 +605,16 @@ fn lower_instance_body(
 fn slice_teks(slice: Option<&Slice>) -> String {
     match slice {
         None => String::new(),
-        Some(s) if s.msb == s.lsb => format!("[{}]", s.msb),
-        Some(s) => format!("[{}:{}]", s.msb, s.lsb),
+        Some(s) if s.msb == s.lsb => match &s.msb {
+            sv_ast::width::WidthExpr::Literal(n) => format!("[{}]", n),
+            other => format!("[{:?}]", other),
+        },
+        Some(s) => match (&s.msb, &s.lsb) {
+            (sv_ast::width::WidthExpr::Literal(m), sv_ast::width::WidthExpr::Literal(l)) => {
+                format!("[{}:{}]", m, l)
+            }
+            _ => format!("[{:?}:{:?}]", s.msb, s.lsb),
+        },
     }
 }
 
@@ -631,7 +651,7 @@ fn lingkup_lvalue(l: &Lvalue, prefix: &str, koneksi: &KoneksiMap) -> Lvalue {
     match koneksi.get(&l.name) {
         Some(Target::Sinyal { signal, slice }) => {
             return match slice {
-                Some(s) => Lvalue::sliced(signal.clone(), *s, l.span),
+                Some(s) => Lvalue::sliced(signal.clone(), s.clone(), l.span),
                 None => Lvalue::simple(signal.clone(), l.span),
             };
         }
@@ -646,9 +666,9 @@ fn lingkup_lvalue(l: &Lvalue, prefix: &str, koneksi: &KoneksiMap) -> Lvalue {
     // `lower_stmt::lookup_lvalue` menolaknya dengan pesan "hanya boleh dipakai di
     // dalam region generate" — jadi mappingsan di sini akan membatalkan deteksi
     // tersebut tanpa sengaja.
-    let mut hasil = match l.slice {
+    let mut hasil = match &l.slice {
         None => Lvalue::simple(name, l.span),
-        Some(slice) => Lvalue::sliced(name, slice, l.span),
+        Some(slice) => Lvalue::sliced(name, slice.clone(), l.span),
     };
     hasil.genvar_index = l.genvar_index.clone();
     hasil.part_dinamis = l.part_dinamis.clone();
@@ -674,12 +694,22 @@ fn lingkup_expr(e: &AstExpr, prefix: &str, koneksi: &KoneksiMap, _asal: Span) ->
                 // Port anak yang tersambung ke bagian sinyal lain harus dibaca
                 // sebagai bit/part-select, bukan seluruh sinyal.
                 Some(Target::Sinyal { signal, slice }) => match slice {
-                    Some(s) => AstExpr::Select {
-                        base: Box::new(AstExpr::ident(signal.clone(), sp)),
-                        msb: s.msb,
-                        lsb: s.lsb,
-                        span: sp,
-                    },
+                    Some(s) => {
+                        let msb_val = match &s.msb {
+                            sv_ast::width::WidthExpr::Literal(n) => *n as u32,
+                            _ => 0,
+                        };
+                        let lsb_val = match &s.lsb {
+                            sv_ast::width::WidthExpr::Literal(n) => *n as u32,
+                            _ => 0,
+                        };
+                        AstExpr::Select {
+                            base: Box::new(AstExpr::ident(signal.clone(), sp)),
+                            msb: msb_val,
+                            lsb: lsb_val,
+                            span: sp,
+                        }
+                    }
                     None => AstExpr::ident(signal.clone(), sp),
                 },
                 // Parameter di-inline menjadi konstanta nilainya.

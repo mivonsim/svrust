@@ -1,6 +1,7 @@
 // Tanggung jawab: parse continuous assignment (assign lhs = rhs).
 use crate::pesan;
 use sv_ast::statement::Statement;
+use sv_ast::width::WidthExpr;
 use sv_lexer::spanned::SpannedToken;
 use sv_lexer::token::Token;
 
@@ -93,13 +94,25 @@ mod tests {
     fn assign_part_select_lhs() {
         let lhs = lhs_dari(parse("assign y[7:4] = a;"));
         assert_eq!(lhs.name, "y");
-        assert_eq!(lhs.slice, Some(Slice { msb: 7, lsb: 4 }));
+        assert_eq!(
+            lhs.slice,
+            Some(Slice {
+                msb: WidthExpr::Literal(7),
+                lsb: WidthExpr::Literal(4)
+            })
+        );
     }
 
     #[test]
     fn assign_bit_select_lhs() {
         let lhs = lhs_dari(parse("assign y[0] = a;"));
-        assert_eq!(lhs.slice, Some(Slice { msb: 0, lsb: 0 }));
+        assert_eq!(
+            lhs.slice,
+            Some(Slice {
+                msb: WidthExpr::Literal(0),
+                lsb: WidthExpr::Literal(0)
+            })
+        );
     }
 
     #[test]
@@ -107,7 +120,13 @@ mod tests {
         let src = "assign y[3:0] = a[7:4];";
         match parse(src) {
             Statement::ContinuousAssign { lhs, rhs, .. } => {
-                assert_eq!(lhs.slice, Some(Slice { msb: 3, lsb: 0 }));
+                assert_eq!(
+                    lhs.slice,
+                    Some(Slice {
+                        msb: WidthExpr::Literal(3),
+                        lsb: WidthExpr::Literal(0)
+                    })
+                );
                 assert!(matches!(rhs, sv_ast::expression::Expr::Select { .. }));
             }
             other => panic!("expected continuous assign, dapat {other:?}"),

@@ -1076,7 +1076,7 @@ impl<'a> Inliner<'a> {
     fn lvalue(&mut self, lhs: &Lvalue) -> Result<Lvalue, ElaborateError> {
         Ok(Lvalue {
             name: lhs.name.clone(),
-            slice: lhs.slice,
+            slice: lhs.slice.clone(),
             extra_slices: lhs.extra_slices.clone(),
             members: lhs.members.clone(),
             genvar_index: lhs.genvar_index.clone(),

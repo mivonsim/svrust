@@ -6,6 +6,7 @@ use crate::width::infer_binary;
 use sv_ast::combinational::CombinationalStatement;
 use sv_ast::lvalue::Lvalue;
 use sv_ast::statement::{SequentialStatement, Statement as AstStatement};
+use sv_ast::width::WidthExpr;
 use sv_ir::expr::SignalId;
 use sv_ir::{DataType, VarKind};
 
@@ -958,8 +959,16 @@ fn lookup_lvalue(
     // identifier tunggal sebagai `genvar_index` (String), bukan Expr, jadi
     // tidak dapat dievaluasi sebagai konstanta di sini. Diabaikan agar
     // elaborasi tidak gagal total; runtime akan menangani indeks yang benar.
-    let Some(ast_slice) = lhs.slice else {
+    let Some(ref ast_slice) = lhs.slice else {
         return Ok((symbol.signal_id, None));
+    };
+    // Helper: ambil nilai u64 dari WidthExpr. Return None bila non-literal
+    // (ekspresi parameter belum bisa dievaluasi di sini).
+    let we_to_u64 = |we: &WidthExpr| -> Option<u64> {
+        match we {
+            WidthExpr::Literal(n) => Some(*n as u64),
+            _ => None,
+        }
     };
     // LRM §7.8: `mem[k]` pada array unpacked menulis ELEMEN ke-k, yang pada
     // sinyal rata menempati rentang bit `[k*W +: W]`. Tanpa pemetaan ini nilai
@@ -967,9 +976,17 @@ fn lookup_lvalue(
     if symbol.unpacked.is_some() {
         // Kumpulkan semua indeks dari slice + extra_slices (untuk multi-dimensi
         // seperti mem[i][j]).
-        let mut all_indices: Vec<u64> = vec![u64::from(ast_slice.lsb)];
+        let mut all_indices: Vec<u64> = Vec::new();
+        if let Some(lsb) = we_to_u64(&ast_slice.lsb) {
+            all_indices.push(lsb);
+        }
         for extra in &lhs.extra_slices {
-            all_indices.push(u64::from(extra.lsb));
+            if let Some(lsb) = we_to_u64(&extra.lsb) {
+                all_indices.push(lsb);
+            }
+        }
+        if all_indices.is_empty() {
+            return Ok((symbol.signal_id, None));
         }
         let ndims = symbol
             .unpacked
@@ -1012,11 +1029,21 @@ fn lookup_lvalue(
     }
     // Hitung slice absolut untuk nested select `y[a:b][c:d]`:
     // offset = lsb slice pertama + jumlah lsb semua extra, width = extra terakhir.
-    let mut offset = ast_slice.lsb as u64;
-    let mut width = ast_slice.width() as u64;
+    let mut offset = match we_to_u64(&ast_slice.lsb) {
+        Some(v) => v,
+        None => return Ok((symbol.signal_id, None)),
+    };
+    let mut width = match ast_slice.width() {
+        Some(w) => w,
+        None => return Ok((symbol.signal_id, None)),
+    };
     for extra in &lhs.extra_slices {
-        offset += extra.lsb as u64;
-        width = extra.width() as u64;
+        if let Some(lsb) = we_to_u64(&extra.lsb) {
+            offset += lsb;
+        }
+        if let Some(w) = extra.width() {
+            width = w;
+        }
     }
     let lebar_sinyal = symbol.data_type.width as u64;
     // Seleksi di luar lebar sinyal adalah error (LRM §10.10.1), bukan clamping

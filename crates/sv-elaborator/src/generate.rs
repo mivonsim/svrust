@@ -8,6 +8,7 @@ use sv_ast::expression::Expr as AstExpr;
 use sv_ast::generate::{ForGenerate, GenerateItem, GenerateRegion};
 use sv_ast::lvalue::Lvalue;
 use sv_ast::module::Module;
+use sv_ast::width::WidthExpr;
 use sv_ast::statement::Statement as AstStatement;
 use sv_ir::datatype::DataType;
 use sv_ir::scope::ScopePath;
@@ -852,8 +853,8 @@ mod tests {
         let hasil = qualify_lvalue(&lhs, &scope, &env_dalam()).expect("resolve");
         assert_eq!(hasil.genvar_index, None);
         let slice = hasil.slice.expect("irisan harus terisi");
-        assert_eq!(slice.msb, 3);
-        assert_eq!(slice.lsb, 3);
+        assert_eq!(slice.msb, WidthExpr::Literal(3));
+        assert_eq!(slice.lsb, WidthExpr::Literal(3));
     }
 
     #[test]
@@ -870,7 +871,7 @@ mod tests {
         let lhs = Lvalue::dengan_genvar("t", "i", sv_lexer::span::Span::dummy());
         let hasil = qualify_lvalue(&lhs, &scope, &env_dalam()).expect("resolve");
         assert_eq!(hasil.name, "g_t");
-        assert_eq!(hasil.slice.unwrap().msb, 3);
+        assert_eq!(hasil.slice.unwrap().msb, WidthExpr::Literal(3));
     }
 
     #[test]

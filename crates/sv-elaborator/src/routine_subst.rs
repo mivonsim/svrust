@@ -166,7 +166,7 @@ impl Substitution {
             // sudah menolak bentuk lain untuk argumen output/inout.
             Some(Expr::Ident { name, .. }) => Lvalue {
                 name: name.clone(),
-                slice: lhs.slice,
+                slice: lhs.slice.clone(),
                 extra_slices: lhs.extra_slices.clone(),
                 members: lhs.members.clone(),
                 genvar_index: lhs.genvar_index.clone(),
@@ -623,7 +623,7 @@ fn rename_lvalue(lhs: &Lvalue, peta: &HashMap<String, String>) -> Lvalue {
             .get(&lhs.name)
             .cloned()
             .unwrap_or_else(|| lhs.name.clone()),
-        slice: lhs.slice,
+        slice: lhs.slice.clone(),
         extra_slices: lhs.extra_slices.clone(),
         members: lhs.members.clone(),
         genvar_index: lhs.genvar_index.clone(),
