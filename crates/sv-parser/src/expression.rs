@@ -283,6 +283,93 @@ fn parse_postfix(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
                 }
                 _ => break,
             };
+            // Method call: `obj.method(args)` is equivalent to `method(obj, args)`.
+            // Object becomes first argument.
+            if idx < tokens.len() && tokens[idx].token == Token::LParen {
+                idx += 1; // skip '('
+                let mut args = Vec::new();
+                while idx < tokens.len()
+                    && tokens[idx].token != Token::RParen
+                {
+                    let (arg, consumed) = super::expression::parse_expression(
+                        &tokens[idx..],
+                    )?;
+                    args.push(arg);
+                    idx += consumed;
+                    if tokens.get(idx).map(|t| &t.token)
+                        == Some(&Token::Comma)
+                    {
+                        idx += 1;
+                    }
+                }
+                if idx >= tokens.len() {
+                    return Err(pesan::harap(
+                        tokens,
+                        idx,
+                        "expected ')' menutup pemanggilan method",
+                    ));
+                }
+                idx += 1; // skip ')'
+                // Convert obj.method(args) to method(obj, args)
+                let (object, method) = match base {
+                    Expr::HierarchicalRef { mut parts, span } => {
+                        let method = parts.pop().unwrap();
+                        (
+                            Expr::HierarchicalRef { parts, span },
+                            method,
+                        )
+                    }
+                    Expr::Ident { name, span } => {
+                        // Can't have method on bare ident without dot
+                        return Err(format!(
+                            "expected '.' before method name, dapat {:?}",
+                            Token::LParen
+                        ));
+                    }
+                    other => {
+                        return Err(format!(
+                            "expected object before method call, dapat {:?}",
+                            other
+                        ));
+                    }
+                };
+                let mut all_args = vec![object];
+                all_args.extend(args);
+                base = Expr::FunctionCall {
+                    name: method,
+                    args: all_args,
+                    span: tokens[idx - 1].span,
+                };
+            }
+        } else if idx + 1 < tokens.len()
+            && tokens[idx].token == Token::Colon
+            && tokens[idx + 1].token == Token::Colon
+        {
+            // `::` — scope resolution untuk hierarki paket, misal `pkg::func`.
+            idx += 2;
+            if idx >= tokens.len() {
+                return Err(pesan::harap(
+                    tokens,
+                    idx,
+                    "expected nama setelah '::'",
+                ));
+            }
+            let part = match &tokens[idx].token {
+                Token::Ident(n) => n.clone(),
+                other => return Err(format!("expected nama setelah '::', dapat {other:?}")),
+            };
+            idx += 1;
+            base = match base {
+                Expr::HierarchicalRef { mut parts, span } => {
+                    parts.push(part);
+                    Expr::HierarchicalRef { parts, span }
+                }
+                Expr::Ident { name, span } => Expr::HierarchicalRef {
+                    parts: vec![name, part],
+                    span,
+                },
+                _ => break,
+            };
         } else if idx < tokens.len() && tokens[idx].token == Token::LBracket {
             let span = tokens[idx].span;
             let (indeks, consumed) = parse_select_index(&tokens[idx + 1..])?;

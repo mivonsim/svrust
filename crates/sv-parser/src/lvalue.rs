@@ -406,7 +406,7 @@ pub fn parse_lvalue(tokens: &[SpannedToken]) -> Result<(Lvalue, usize), String> 
             extra_slices.push(slice_val);
             cursor = next_cursor;
         }
-    }
+        }
 
     Ok((
         Lvalue {

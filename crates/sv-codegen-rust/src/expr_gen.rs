@@ -542,6 +542,7 @@ fn bin_op_token(op: BinOp) -> &'static str {
         BinOp::Sar => ">>>",
         BinOp::Eq => "==",
         BinOp::NotEq => "!=",
+        BinOp::NotEqEq => "!==",
         BinOp::Lt => "<",
         BinOp::Gt => ">",
         BinOp::Le => "<=",
@@ -561,6 +562,7 @@ fn bin_op_bool(op: BinOp) -> bool {
         op,
         BinOp::Eq
             | BinOp::NotEq
+            | BinOp::NotEqEq
             | BinOp::Lt
             | BinOp::Gt
             | BinOp::Le
