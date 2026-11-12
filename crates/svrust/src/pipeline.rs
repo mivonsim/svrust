@@ -1066,6 +1066,69 @@ fn cari_lokasi_fallback(
     (1, 1)
 }
 
+/// Cari baris di `source_asli` yang paling relevan dengan pesan error.
+///
+/// Dipakai saat token error berasal dari file include (baris preprocessed
+/// melebihi baris source asli), sehingga `baris_sumber_asli` tidak bisa
+/// memetakan kembali. Strategi:
+/// 1. Kalau error menyebut "ditemukan <ident>", cari ident itu di source_asli.
+/// 2. Kalau tidak, cari kata kunci pertama dari pesan di source_asli.
+fn cari_baris_dari_error(error: &str, source_asli: &str) -> Option<usize> {
+    // 1. Coba cari ident yang disebut setelah "ditemukan ".
+    if let Some(target) = error
+        .split_once("ditemukan ")
+        .map(|(_, rest)| rest.trim_end_matches(['.', ' ']).trim_matches('`'))
+    {
+        // Ekstrak nama ident dari format "identifier 'X'".
+        let nama = target
+            .split_whitespace()
+            .last()
+            .and_then(|w| {
+                let s = w.trim_matches(['\'', '"']).to_string();
+                if s.len() > 1 {
+                    Some(s)
+                } else {
+                    None
+                }
+            });
+        if let Some(nama) = nama {
+            if let Some((baris, _)) = source_asli
+                .lines()
+                .enumerate()
+                .find(|(_, line)| line.contains(&nama))
+                .map(|(i, _)| (i + 1, 1))
+            {
+                return Some(baris);
+            }
+        }
+        // Coba target langsung (tanpa splitting whitespace).
+        if let Some((baris, _)) = source_asli
+            .lines()
+            .enumerate()
+            .find(|(_, line)| line.contains(target))
+            .map(|(i, _)| (i + 1, 1))
+        {
+            return Some(baris);
+        }
+    }
+    // 2. Cari kata kunci dari pesan di source_asli.
+    for kata in error.split_whitespace() {
+        let kata = kata.trim_matches(['(', ')', '[', ']', '{', '}', '"', '\'']);
+        if kata.len() < 3 {
+            continue;
+        }
+        if let Some((baris, _)) = source_asli
+            .lines()
+            .enumerate()
+            .find(|(_, line)| line.contains(kata))
+            .map(|(i, _)| (i + 1, 1))
+        {
+            return Some(baris);
+        }
+    }
+    None
+}
+
 fn diagnostic_parser(
     error: &str,
     tokens: &[sv_lexer::SpannedToken],
@@ -1083,6 +1146,12 @@ fn diagnostic_parser(
         .split_once("ditemukan ")
         .map(|(_, rest)| rest.trim_end_matches(['.', ' ']).trim_matches('`'));
     let token_dari_penanda = posisi.and_then(|(baris, kolom)| {
+        // Jika baris dari penanda melebihi baris source asli, berarti token
+        // berasal dari file include. Jangan gunakan posisinya — jatuhkan ke
+        // fallback yang mencari di source_asli.
+        if baris > source_asli.lines().count() {
+            return None;
+        }
         tokens
             .iter()
             .position(|token| token.span.line == baris && token.span.col == kolom)
@@ -1139,8 +1208,11 @@ fn diagnostic_parser(
         return sv_diag::Diagnostic::error("E0002", format!("{}: {}", path.display(), error), span);
     };
     let token = &tokens[token_range.start];
-    let line_asli =
-        baris_sumber_asli(source_asli, source, token.span.line).unwrap_or(token.span.line);
+    let line_asli = baris_sumber_asli(source_asli, source, token.span.line).unwrap_or_else(|| {
+        // Token berasal dari file include (baris > source asli). Cari baris
+        // di source_asli berdasarkan kata kunci dari pesan error.
+        cari_baris_dari_error(error, source_asli).unwrap_or(token.span.line)
+    });
 
     let start = span_fallback(sources, source_id, line_asli, token.span.col)
         .map(|span| span.start)
