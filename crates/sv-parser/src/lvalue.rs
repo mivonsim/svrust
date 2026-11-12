@@ -164,9 +164,10 @@ pub fn parse_lvalue(tokens: &[SpannedToken]) -> Result<(Lvalue, usize), String> 
                     // Part-select variabel: `a[i:j]` atau `a[i +: w]`.
                     // Sudah ditangani di atas (indexed part-select). Kalau sampai
                     // sini berarti bentuk `a[msb:lsb]` dengan ekspresi non-literal.
+                    let colon_pos = cursor + 1 + pos_colon(bracket_isi);
                     let (msb_expr, consumed) =
-                        super::expression::parse_expression(&tokens[cursor + 1..pos_colon(bracket_isi)])?;
-                    let after_colon = &tokens[cursor + 1 + pos_colon(bracket_isi) + 1..first_closing];
+                        super::expression::parse_expression(&tokens[cursor + 1..colon_pos])?;
+                    let after_colon = &tokens[colon_pos + 1..first_closing];
                     let (lsb_expr, _) = super::expression::parse_expression(after_colon)?;
                     slice = Some(Slice {
                         msb: WidthExpr::Expr {
