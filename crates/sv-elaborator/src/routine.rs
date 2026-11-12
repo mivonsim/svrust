@@ -1241,15 +1241,6 @@ fn eksekusi_stmt_function(
             if lhs.name == nama_fungsi {
                 // Assignment ke nama function: simpan sebagai hasil akhir.
                 env.insert(nama_fungsi.to_string(), nilai);
-            } else if let Some(_slice) = &lhs.slice {
-                // Part-select: belum didukung dalam evaluasi simbolis function.
-                return Err(ElaborateError::new(
-                    format!(
-                        "part-select pada variabel lokal '{}' dalam function tidak didukung",
-                        lhs.name
-                    ),
-                    *span,
-                ));
             } else {
                 env.insert(lhs.name.clone(), nilai);
             }
