@@ -2,7 +2,7 @@
 use std::path::Path;
 
 use crate::cli::{Command, Options};
-use crate::pipeline::{generate_rust, compile_semua_root};
+use crate::pipeline::{compile_semua_root, generate_rust};
 use crate::workspace::Workspace;
 use sv_cache::{CacheKey, CachedCodegen};
 use sv_codegen_rust::module_name::module_name;
@@ -29,8 +29,7 @@ pub fn dispatch(opts: Options) -> Result<(), crate::CliError> {
             // hanya satu, modul root lain tidak pernah dilaporkan.
             // Inspect/Elaborate tidak pakai codegen cache karena butuh
             // Design (processes, variables) untuk ditampilkan.
-            let (designs, _) =
-                compile_semua_root(&opts.rtl, opts.top.as_deref(), &opts.incdir)?;
+            let (designs, _) = compile_semua_root(&opts.rtl, opts.top.as_deref(), &opts.incdir)?;
             for design in designs {
                 let stats = sv_elaborator::DesignStats::of(&design);
                 println!("{}", stats);

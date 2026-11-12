@@ -168,9 +168,7 @@ fn parse_param_body(
         && tokens
             .get(idx + 1)
             .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
-        && tokens
-            .get(idx + 2)
-            .is_some_and(|t| t.token == Token::Eq)
+        && tokens.get(idx + 2).is_some_and(|t| t.token == Token::Eq)
     {
         // `parameter type Nama = ...` atau `parameter my_t Nama = ...` di body
         // modul — identifier pertama adalah tipe (bukan keyword dikenal).
@@ -395,18 +393,34 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
 
     // Expect 'module' keyword
     if idx >= tokens.len() || tokens[idx].token != Token::Module {
-        return Err("expected 'module'".to_string());
+        return Err(pesan::harap(tokens, idx, "expected 'module'"));
     }
     let module_span = tokens[idx].span;
     idx += 1;
 
     // Expect module name
     if idx >= tokens.len() {
-        return Err("expected module name".to_string());
+        return Err(pesan::harap(tokens, idx, "expected module name"));
+    }
+    // `endmodule` tidak boleh menjadi nama module. Kalau token berikutnya
+    // adalah `endmodule`, berarti tidak ada nama module sama sekali —
+    // sembunyikan `endmodule` dari diagnostik dan menunjuk ke `module`.
+    if tokens.get(idx).map(|t| &t.token) == Some(&Token::Endmodule) {
+        return Err(pesan::tandai(
+            tokens,
+            idx.saturating_sub(1),
+            "expected module name".to_string(),
+        ));
     }
     let name = match &tokens[idx].token {
         Token::Ident(n) => n.clone(),
-        _ => return Err("expected module name".to_string()),
+        _ => {
+            return Err(pesan::tandai(
+                tokens,
+                idx,
+                "expected module name".to_string(),
+            ))
+        }
     };
     idx += 1;
 
@@ -458,7 +472,13 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                 idx += 1; // skip '.'
                 let port_name = match &tokens[idx].token {
                     Token::Ident(n) => n.clone(),
-                    _ => return Err("expected port name after '.'".to_string()),
+                    _ => {
+                        return Err(pesan::tandai(
+                            tokens,
+                            idx,
+                            "expected port name after '.'".to_string(),
+                        ))
+                    }
                 };
                 let port_span = tokens[idx].span;
                 idx += 1;
@@ -480,9 +500,13 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
             // Tanpa cabang ini parser berjalan sampai ujung modul dan
             // melaporkan error di baris `endmodule` — lokasi yang sesat.
             if matches!(tokens[idx].token, Token::Semi | Token::Endmodule) {
-                return Err(format!(
-                    "expected ')' penutup port list, ditemukan {:?}",
-                    tokens[idx].token
+                return Err(pesan::tandai(
+                    tokens,
+                    idx,
+                    format!(
+                        "expected ')' penutup port list, ditemukan {:?}",
+                        tokens[idx].token
+                    ),
                 ));
             }
 
@@ -627,11 +651,11 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
 
             // Port name
             if idx >= tokens.len() {
-                return Err("expected port name".to_string());
+                return Err(pesan::harap(tokens, idx, "expected port name"));
             }
             let port_name = match &tokens[idx].token {
                 Token::Ident(n) => n.clone(),
-                _ => return Err("expected port name".to_string()),
+                _ => return Err(pesan::tandai(tokens, idx, "expected port name".to_string())),
             };
             let port_span = tokens[idx].span;
             idx += 1;
@@ -669,8 +693,10 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                 .get(idx)
                 .map(|t| format!("{:?}", t.token))
                 .unwrap_or_else(|| "akhir berkas".to_string());
-            return Err(format!(
-                "expected ')' penutup port list, ditemukan {ditemukan}"
+            return Err(pesan::tandai(
+                tokens,
+                idx,
+                format!("expected ')' penutup port list, ditemukan {ditemukan}"),
             ));
         }
         idx += 1; // lewati ')'
@@ -752,22 +778,20 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
             // LRM §6.20 juga mengizinkan `parameter` di body modul (di luar
             // daftar `#(...)`) dan bentuknya tetap bisa di-override saat
             // instansiasi, jadi masuk ke `params` — bukan `localparams`.
-            Token::Parameter => {
-                match parse_param_body(&tokens[idx..]) {
-                    Ok((decls, next)) => {
-                        params.extend(decls);
-                        idx += next;
+            Token::Parameter => match parse_param_body(&tokens[idx..]) {
+                Ok((decls, next)) => {
+                    params.extend(decls);
+                    idx += next;
+                }
+                Err(_) => {
+                    while idx < tokens.len() && tokens[idx].token != Token::Semi {
+                        idx += 1;
                     }
-                    Err(_) => {
-                        while idx < tokens.len() && tokens[idx].token != Token::Semi {
-                            idx += 1;
-                        }
-                        if idx < tokens.len() {
-                            idx += 1;
-                        }
+                    if idx < tokens.len() {
+                        idx += 1;
                     }
                 }
-            }
+            },
             t if sv_lexer::token::tipe::bisa_mulai_deklarasi(t) => {
                 let tipe = tokens[idx].token.clone();
                 let (decls, next) = super::declaration::parse_declaration(&tokens[idx..])?;
@@ -960,7 +984,9 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                 // `child u0 (.a(a), .y(y))`. Bentuk: Ident Ident ( ... );
                 // SVRust tidak memproses instansiasi secara semantik, hanya
                 // melewati seluruh statement hingga ';'.
-                if tokens.get(idx + 1).is_some_and(|t| matches!(&t.token, Token::Ident(_)))
+                if tokens
+                    .get(idx + 1)
+                    .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
                     && tokens.get(idx + 2).map(|t| &t.token) == Some(&Token::LParen)
                 {
                     let mut depth = 1u32;
@@ -975,10 +1001,7 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                         }
                         i += 1;
                     }
-                    if i < tokens.len()
-                        && depth == 0
-                        && tokens[i].token == Token::Semi
-                    {
+                    if i < tokens.len() && depth == 0 && tokens[i].token == Token::Semi {
                         idx = i + 1;
                         continue;
                     }
@@ -1003,13 +1026,10 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                                 Ok((tambahan, akhir)) => {
                                     declarations.push(first);
                                     declarations.extend(tambahan);
-                                    if tokens
-                                        .get(idx + akhir)
-                                        .map(|t| &t.token)
+                                    if tokens.get(idx + akhir).map(|t| &t.token)
                                         != Some(&Token::Semi)
                                     {
-                                        while idx < tokens.len()
-                                            && tokens[idx].token != Token::Semi
+                                        while idx < tokens.len() && tokens[idx].token != Token::Semi
                                         {
                                             idx += 1;
                                         }
@@ -1022,9 +1042,7 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                                     continue;
                                 }
                                 Err(_) => {
-                                    while idx < tokens.len()
-                                        && tokens[idx].token != Token::Semi
-                                    {
+                                    while idx < tokens.len() && tokens[idx].token != Token::Semi {
                                         idx += 1;
                                     }
                                     if idx < tokens.len() {
@@ -1057,10 +1075,11 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                 // `child u0 (.a(a), .y(y))`. Bentuk: Ident Ident ( ... );
                 // SVRust tidak memproses instansiasi secara semantik, hanya
                 // melewati seluruh statement hingga ';'.
-                if tokens.get(idx + 1).is_some_and(|t| matches!(&t.token, Token::Ident(_)))
+                if tokens
+                    .get(idx + 1)
+                    .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
                     && tokens.get(idx + 2).map(|t| &t.token) == Some(&Token::LParen)
                 {
-                    eprintln!("DEBUG: CONDITION TRUE at idx={}", idx);
                     let mut depth = 1u32;
                     let mut i = idx + 3; // skip type, nama instance, '('
                     while i < tokens.len() && depth > 0 {
@@ -1073,7 +1092,6 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                         }
                         i += 1;
                     }
-                    eprintln!("DEBUG: INST finished, idx={}, i={}, token_at_i={:?}", idx, i, tokens.get(i).map(|t| &t.token));
                     if i < tokens.len() && tokens[i].token == Token::Semi {
                         i += 1;
                     }
@@ -1108,13 +1126,10 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                                 Ok((tambahan, akhir)) => {
                                     declarations.push(first);
                                     declarations.extend(tambahan);
-                                    if tokens
-                                        .get(idx + akhir)
-                                        .map(|t| &t.token)
+                                    if tokens.get(idx + akhir).map(|t| &t.token)
                                         != Some(&Token::Semi)
                                     {
-                                        while idx < tokens.len()
-                                            && tokens[idx].token != Token::Semi
+                                        while idx < tokens.len() && tokens[idx].token != Token::Semi
                                         {
                                             idx += 1;
                                         }
@@ -1127,9 +1142,7 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                                     continue;
                                 }
                                 Err(_) => {
-                                    while idx < tokens.len()
-                                        && tokens[idx].token != Token::Semi
-                                    {
+                                    while idx < tokens.len() && tokens[idx].token != Token::Semi {
                                         idx += 1;
                                     }
                                     if idx < tokens.len() {
@@ -1361,7 +1374,7 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
     }
 
     if idx >= tokens.len() {
-        return Err("expected 'endmodule'".to_string());
+        return Err(pesan::harap(tokens, idx, "expected 'endmodule'"));
     }
     // `endmodule : name` bentuk labeled endmodule (LRM §12.9).
     if idx + 1 < tokens.len() && tokens[idx + 1].token == Token::Colon {

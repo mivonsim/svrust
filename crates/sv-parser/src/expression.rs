@@ -1,4 +1,5 @@
 // Tanggung jawab: parse expression dengan presedence operator LRM.
+use crate::pesan;
 use sv_ast::expression::{BinaryOp, Expr, UnaryOp};
 use sv_lexer::spanned::SpannedToken;
 use sv_lexer::token::Token;
@@ -6,16 +7,20 @@ use sv_lexer::token::Token;
 /// Parse ekspresi penuh; rantai kiri-assosiatif per level presedence.
 pub fn parse_expression(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
     if tokens.is_empty() {
-        return Err("empty expression".to_string());
+        return Err(pesan::harap(tokens, 0, "empty expression"));
     }
     // BUG-30: bentuk prefix `++a` punya efek samping dan bisa dievaluasi
     // berulang pada proses combinational, jadi belum didukung. Hanya posisi
     // awal yang diperiksa, karena slice token menyisipkan sisa statement
     // (misal langkah `i++` pada header `for`).
     if matches!(tokens[0].token, Token::Incr | Token::Decr) {
-        return Err("increment/decrement prefix dalam ekspresi belum didukung; \
+        return Err(pesan::tandai(
+            tokens,
+            0,
+            "increment/decrement prefix dalam ekspresi belum didukung; \
              pakai statement terpisah `a++;`"
-            .to_string());
+                .to_string(),
+        ));
     }
     let (mut expr, mut idx) = parse_level(tokens, 1)?;
 
@@ -103,7 +108,7 @@ fn op_pada_level(token: &Token, level: u8) -> Option<BinaryOp> {
 /// Operator unary dan reduction, semuanya paling kuat (LRM §11.4).
 fn parse_unary(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
     if tokens.is_empty() {
-        return Err("expected unary expression".to_string());
+        return Err(pesan::harap(tokens, 0, "expected unary expression"));
     }
     let span = tokens[0].span;
 
@@ -129,8 +134,8 @@ fn parse_unary(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
         Token::And => Some(UnaryOp::RedAnd),
         Token::Or => Some(UnaryOp::RedOr),
         Token::Xor => Some(UnaryOp::RedXor),
-        Token::Shl => Some(UnaryOp::BitNeg), // `<<expr` — treat as bit-neg for parsing
-        Token::Shr => Some(UnaryOp::BitNeg), // `>>expr` — treat as bit-neg for parsing
+        Token::Shl => None, // `<<` adalah operator geser kiri biner, bukan unary
+        Token::Shr => None, // `>>` adalah operator geser kanan biner, bukan unary
         _ => None,
     };
 
@@ -185,13 +190,13 @@ fn parse_postfix(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
         let span = tokens[idx].span;
         idx += 1; // lewati '\''
         if idx >= tokens.len() || tokens[idx].token != Token::LParen {
-            return Err("expected '(' setelah tanda cast".to_string());
+            return Err(pesan::harap(tokens, idx, "expected '(' setelah tanda cast"));
         }
         idx += 1;
         let (operand, consumed) = parse_expression(&tokens[idx..])?;
         idx += consumed;
         if idx >= tokens.len() || tokens[idx].token != Token::RParen {
-            return Err("expected ')' menutup cast".to_string());
+            return Err(pesan::harap(tokens, idx, "expected ')' menutup cast"));
         }
         idx += 1;
         let cast = match base {
@@ -245,7 +250,11 @@ fn parse_postfix(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
         if idx < tokens.len() && tokens[idx].token == Token::Dot {
             idx += 1; // skip '.'
             if idx >= tokens.len() {
-                return Err("expected nama setelah '.' pada referensi hierarkis".to_string());
+                return Err(pesan::harap(
+                    tokens,
+                    idx,
+                    "expected nama setelah '.' pada referensi hierarkis",
+                ));
             }
             let part = match &tokens[idx].token {
                 Token::Ident(n) => n.clone(),
@@ -266,7 +275,10 @@ fn parse_postfix(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
                     span,
                 },
                 Expr::Select { span, .. } | Expr::SelectDynamic { span, .. } => {
-                    Expr::HierarchicalRef { parts: vec![part], span }
+                    Expr::HierarchicalRef {
+                        parts: vec![part],
+                        span,
+                    }
                 }
                 _ => break,
             };
@@ -275,7 +287,7 @@ fn parse_postfix(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
             let (indeks, consumed) = parse_select_index(&tokens[idx + 1..])?;
             idx += 1 + consumed;
             if idx >= tokens.len() || tokens[idx].token != Token::RBracket {
-                return Err("expected ']' closing select".to_string());
+                return Err(pesan::harap(tokens, idx, "expected ']' closing select"));
             }
             idx += 1;
             base = match indeks {
@@ -366,13 +378,13 @@ fn parse_cast_body(
 ) -> Result<(Expr, usize), String> {
     let mut idx = 2; // lewati identifier dan tanda `'`
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::LParen) {
-        return Err("expected '(' setelah tanda cast".to_string());
+        return Err(pesan::harap(tokens, idx, "expected '(' setelah tanda cast"));
     }
     idx += 1;
     let (operand, consumed) = parse_expression(&tokens[idx..])?;
     idx += consumed;
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::RParen) {
-        return Err("expected ')' menutup cast".to_string());
+        return Err(pesan::harap(tokens, idx, "expected ')' menutup cast"));
     }
     idx += 1;
     Ok((make_cast(type_name, Box::new(operand), span), idx))
@@ -447,7 +459,11 @@ fn parse_function_call(tokens: &[SpannedToken]) -> Result<(Expr, usize), String>
     };
     let mut idx = 1; // lewati identifier
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::LParen) {
-        return Err("expected '(' setelah nama function".to_string());
+        return Err(pesan::harap(
+            tokens,
+            idx,
+            "expected '(' setelah nama function",
+        ));
     }
     idx += 1;
 
@@ -461,7 +477,11 @@ fn parse_function_call(tokens: &[SpannedToken]) -> Result<(Expr, usize), String>
         }
     }
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::RParen) {
-        return Err("expected ')' closing argumen function".to_string());
+        return Err(pesan::harap(
+            tokens,
+            idx,
+            "expected ')' closing argumen function",
+        ));
     }
     idx += 1;
 
@@ -485,7 +505,11 @@ fn parse_function_args(tokens: &[SpannedToken]) -> Result<(Vec<Expr>, usize), St
         }
     }
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::RParen) {
-        return Err("expected ')' penutup argumen function".to_string());
+        return Err(pesan::harap(
+            tokens,
+            idx,
+            "expected ')' penutup argumen function",
+        ));
     }
     idx += 1; // lewati ')'
     Ok((args, idx))
@@ -798,13 +822,13 @@ fn parse_primary(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
             let span = tokens[0].span;
             let mut idx = 2; // lewati keyword dan tanda `'`()
             if tokens.get(idx).map(|t| &t.token) != Some(&Token::LParen) {
-                return Err("expected '(' setelah signed'".to_string());
+                return Err(pesan::harap(tokens, idx, "expected '(' setelah signed'"));
             }
             idx += 1;
             let (operand, consumed) = parse_expression(&tokens[idx..])?;
             idx += consumed;
             if tokens.get(idx).map(|t| &t.token) != Some(&Token::RParen) {
-                return Err("expected ')' menutup sign cast".to_string());
+                return Err(pesan::harap(tokens, idx, "expected ')' menutup sign cast"));
             }
             idx += 1;
             Ok((
@@ -904,7 +928,11 @@ fn parse_primary(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
             let (operand, consumed) = parse_expression(&tokens[2..])?;
             let mut idx = 2 + consumed;
             if tokens.get(idx).map(|t| &t.token) != Some(&Token::RParen) {
-                return Err(format!("expected ')' menutup ${nama}"));
+                return Err(pesan::tandai(
+                    tokens,
+                    idx,
+                    format!("expected ')' menutup ${nama}"),
+                ));
             }
             idx += 1;
             Ok((
@@ -939,13 +967,17 @@ fn parse_primary(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
             let span = tokens[0].span;
             let mut idx = 1;
             if tokens.get(idx).map(|t| &t.token) != Some(&Token::LParen) {
-                return Err("expected '(' setelah $bits".to_string());
+                return Err(pesan::harap(tokens, idx, "expected '(' setelah $bits"));
             }
             idx += 1;
             let (operand, consumed) = parse_expression(&tokens[idx..])?;
             idx += consumed;
             if tokens.get(idx).map(|t| &t.token) != Some(&Token::RParen) {
-                return Err("expected ')' menutup argumen $bits".to_string());
+                return Err(pesan::harap(
+                    tokens,
+                    idx,
+                    "expected ')' menutup argumen $bits",
+                ));
             }
             idx += 1;
             Ok((
@@ -984,7 +1016,11 @@ fn parse_primary(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
                 }
             }
             if tokens.get(idx).map(|t| &t.token) != Some(&Token::RParen) {
-                return Err(format!("expected ')' menutup ${nama}"));
+                return Err(pesan::tandai(
+                    tokens,
+                    idx,
+                    format!("expected ')' menutup ${nama}"),
+                ));
             }
             idx += 1;
             Ok((
@@ -1043,18 +1079,14 @@ fn try_parse_replication(
 ) -> Result<(Expr, usize), String> {
     // Cek shift replication operator: `{<< n { ... }}` atau `{>> n { ... }}`.
     let mut repl_idx = 1; // skip '{'
-    let _shift_op = if repl_idx < tokens.len()
-        && matches!(
-            tokens[repl_idx].token,
-            Token::Shl | Token::Shr
-        )
-    {
-        // Shift operator ada; skip dan lanjutkan parse count.
-        repl_idx += 1;
-        Some(())
-    } else {
-        None
-    };
+    let _shift_op =
+        if repl_idx < tokens.len() && matches!(tokens[repl_idx].token, Token::Shl | Token::Shr) {
+            // Shift operator ada; skip dan lanjutkan parse count.
+            repl_idx += 1;
+            Some(())
+        } else {
+            None
+        };
     // Count boleh ekspresi apa pun; setelahnya harus ada `{` yang menandai awal
     // operand. Ini yang membedakan `{n{x}}` dari `{a, b}`.
     let (_, panjang_count) = parse_expression(&tokens[repl_idx..])?;
@@ -1102,7 +1134,11 @@ fn try_parse_concatenation(
     let mut idx = 1;
     loop {
         if idx >= tokens.len() {
-            return Err("expected '}' closing concatenation".to_string());
+            return Err(pesan::harap(
+                tokens,
+                idx,
+                "expected '}' closing concatenation",
+            ));
         }
         if tokens[idx].token == Token::RBrace {
             break;
@@ -1112,14 +1148,22 @@ fn try_parse_concatenation(
         if tokens[idx].token == Token::Default {
             idx += 1; // lewati 'default'
             if idx >= tokens.len() || tokens[idx].token != Token::Colon {
-                return Err("expected ':' setelah 'default' dalam concatenation".to_string());
+                return Err(pesan::harap(
+                    tokens,
+                    idx,
+                    "expected ':' setelah 'default' dalam concatenation",
+                ));
             }
             idx += 1; // lewati ':'
             let (default_expr, default_consumed) = parse_expression(&tokens[idx..])?;
             items.push(default_expr);
             idx += default_consumed;
             if idx >= tokens.len() {
-                return Err("expected '}' closing concatenation".to_string());
+                return Err(pesan::harap(
+                    tokens,
+                    idx,
+                    "expected '}' closing concatenation",
+                ));
             }
             match &tokens[idx].token {
                 Token::RBrace => break,
@@ -1137,7 +1181,11 @@ fn try_parse_concatenation(
         let (item, consumed) = parse_expression(&tokens[idx..])?;
         idx += consumed;
         if idx >= tokens.len() {
-            return Err("expected '}' closing concatenation".to_string());
+            return Err(pesan::harap(
+                tokens,
+                idx,
+                "expected '}' closing concatenation",
+            ));
         }
         match &tokens[idx].token {
             Token::RBrace => {
@@ -1157,7 +1205,11 @@ fn try_parse_concatenation(
                 items.push(default_expr);
                 idx += default_consumed;
                 if idx >= tokens.len() {
-                    return Err("expected '}' closing concatenation".to_string());
+                    return Err(pesan::harap(
+                        tokens,
+                        idx,
+                        "expected '}' closing concatenation",
+                    ));
                 }
                 match &tokens[idx].token {
                     Token::RBrace => break,
@@ -1182,7 +1234,7 @@ fn try_parse_concatenation(
         }
     }
     if items.is_empty() {
-        return Err("concatenation kosong tidak sah".to_string());
+        return Err(pesan::harap(tokens, idx, "concatenation kosong tidak sah"));
     }
     idx += 1; // '}'
     Ok((Expr::Concat { items, span }, idx))

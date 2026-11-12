@@ -114,7 +114,8 @@ fn parse_generate_item(
     // sudah ditangani) — lewati hingga ';' atau 'end' sebagai recovery.
     if *token == Token::Else {
         let mut idx = start;
-        while idx < tokens.len() && tokens[idx].token != Token::Semi
+        while idx < tokens.len()
+            && tokens[idx].token != Token::Semi
             && tokens[idx].token != Token::End
             && tokens[idx].token != Token::Endgenerate
         {

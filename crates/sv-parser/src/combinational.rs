@@ -1,4 +1,5 @@
 // Tanggung jawab: parse statement di dalam always_comb.
+use crate::pesan;
 use sv_ast::combinational::{CaseArm, CaseKind, CombinationalStatement, CompoundOp, ForStep};
 use sv_ast::expression::{BinaryOp, Expr};
 use sv_ast::lvalue::Lvalue;
@@ -37,10 +38,7 @@ pub fn parse_combinational_statement(
             if i < tokens.len() {
                 i += 1;
             }
-            return Ok((
-                CombinationalStatement::PortDeclSkip,
-                i,
-            ));
+            return Ok((CombinationalStatement::PortDeclSkip, i));
         }
         Token::Case => parse_case(tokens, CaseKind::Exact),
         Token::Casez => parse_case(tokens, CaseKind::Casez),
@@ -158,10 +156,7 @@ pub fn parse_combinational_statement(
             if i < tokens.len() {
                 i += 1;
             }
-            Ok((
-                CombinationalStatement::PortDeclSkip,
-                i,
-            ))
+            Ok((CombinationalStatement::PortDeclSkip, i))
         }
         Token::Incr | Token::Decr => {
             // BUG-29: `++a;` pre-increment sebagai statement utuh.
@@ -318,8 +313,12 @@ pub fn parse_combinational_statement(
                 idx += 1;
             } else if idx >= tokens.len() || tokens[idx].token != Token::Eq {
                 return Err(match tokens.get(idx) {
-                    Some(token) => format!("expected '=' atau '<=', ditemukan {:?}", token.token),
-                    None => "expected '=' atau '<=' di akhir input".to_string(),
+                    Some(token) => pesan::tandai(
+                        tokens,
+                        idx,
+                        format!("expected '=' atau '<=', ditemukan {:?}", token.token),
+                    ),
+                    None => pesan::harap(tokens, idx, "expected '=' atau '<=' di akhir input"),
                 });
             } else {
                 idx += 1;
@@ -772,6 +771,14 @@ pub fn parse_combinational_block(
 ) -> Result<(Vec<CombinationalStatement>, usize), String> {
     let mut body = Vec::new();
     let mut idx = 0;
+
+    // LRM §12.9: `begin : label` — label opsional setelah `begin`.
+    if idx < tokens.len() && tokens[idx].token == Token::Colon {
+        idx += 1; // lewati ':'
+        if idx < tokens.len() && matches!(tokens[idx].token, Token::Ident(_)) {
+            idx += 1; // lewati nama label
+        }
+    }
 
     while idx < tokens.len() {
         // Compiler directive (mis. `ASSERT` dari OpenTitan) dilewati —

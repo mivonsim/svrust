@@ -1,4 +1,5 @@
 // Tanggung jawab: parse blok initial dan system task untuk testbench.
+use crate::pesan;
 use sv_ast::statement::Statement;
 use sv_ast::system_task::{SystemArg, SystemTask, SystemTaskKind};
 use sv_lexer::spanned::SpannedToken;
@@ -13,7 +14,7 @@ pub fn parse_initial(tokens: &[SpannedToken]) -> Result<(Statement, usize), Stri
     let mut idx = 1;
 
     if idx >= tokens.len() {
-        return Err("expected initial body".to_string());
+        return Err(pesan::harap(tokens, idx, "expected initial body"));
     }
 
     let body = if tokens[idx].token == Token::Begin {
@@ -21,7 +22,7 @@ pub fn parse_initial(tokens: &[SpannedToken]) -> Result<(Statement, usize), Stri
         let (stmts, consumed) = super::combinational::parse_combinational_block(&tokens[idx..])?;
         idx += consumed;
         if idx >= tokens.len() || tokens[idx].token != Token::End {
-            return Err("expected 'end'".to_string());
+            return Err(pesan::harap(tokens, idx, "expected 'end'"));
         }
         idx += 1;
         stmts
@@ -89,7 +90,11 @@ pub(crate) fn parse_system_task_panggilan(
             idx += 1;
         }
         if idx >= tokens.len() {
-            return Err(format!("expected ')' closing ${}", name));
+            return Err(pesan::tandai(
+                tokens,
+                idx,
+                format!("expected ')' closing ${}", name),
+            ));
         }
         idx += 1; // lewati ')'
     }
@@ -162,7 +167,11 @@ pub(crate) fn parse_system_task_mentah(
     }
 
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::Semi) {
-        return Err(format!("expected ';' after ${:?}", task.kind));
+        return Err(pesan::tandai(
+            tokens,
+            idx,
+            format!("expected ';' after ${:?}", task.kind),
+        ));
     }
     idx += 1;
 
@@ -176,13 +185,21 @@ fn parse_kondisi(
 ) -> Result<(sv_ast::expression::Expr, usize), String> {
     let mut pos = idx + 1;
     if tokens.get(pos).map(|t| &t.token) != Some(&Token::LParen) {
-        return Err("expected '(' after 'if' in system task".to_string());
+        return Err(pesan::harap(
+            tokens,
+            idx,
+            "expected '(' after 'if' in system task",
+        ));
     }
     pos += 1;
     let (expr, consumed) = super::expression::parse_expression(&tokens[pos..])?;
     pos += consumed;
     if tokens.get(pos).map(|t| &t.token) != Some(&Token::RParen) {
-        return Err("expected ')' closing 'if' condition".to_string());
+        return Err(pesan::harap(
+            tokens,
+            idx,
+            "expected ')' closing 'if' condition",
+        ));
     }
     Ok((expr, pos + 1 - idx))
 }

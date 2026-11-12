@@ -8,11 +8,11 @@ use sv_lexer::token::Token;
 /// Mengembalikan `(Lvalue, jumlah token yang dikonsumsi)`.
 pub fn parse_lvalue(tokens: &[SpannedToken]) -> Result<(Lvalue, usize), String> {
     if tokens.is_empty() {
-        return Err("expected LHS signal name".to_string());
+        return Err(pesan::harap(tokens, 0, "expected LHS signal name"));
     }
     let name = match &tokens[0].token {
         Token::Ident(n) => n.clone(),
-        other => return Err(format!("expected LHS signal name, ditemukan {:?}", other)),
+        other => return Err(pesan::tandai(tokens, 0, format!("expected LHS signal name, ditemukan {:?}", other))),
     };
     let span = tokens[0].span;
 
@@ -28,18 +28,16 @@ pub fn parse_lvalue(tokens: &[SpannedToken]) -> Result<(Lvalue, usize), String> 
         let closing_awal = (cursor + 1..=tokens.len())
             .find(|&i| tokens.get(i).map(|t| &t.token) == Some(&Token::RBracket));
         let Some(first_closing) = closing_awal else {
-            return Err("expected ']' closing LHS select".to_string());
+            return Err(pesan::harap(tokens, cursor, "expected ']' closing LHS select"));
         };
         if first_closing == cursor + 1 {
-            return Err("kurung siku seleksi kosong `[]` belum didukung".to_string());
+            return Err(pesan::harap(tokens, cursor, "kurung siku seleksi kosong `[]` belum didukung"));
         }
         if tokens[cursor + 1].token == Token::Colon {
-            return Err(
-                "part-select dengan batas bawah kosong `[:lsb]` belum didukung".to_string(),
-            );
+            return Err(pesan::harap(tokens, cursor + 1, "part-select dengan batas bawah kosong `[:lsb]` belum didukung"));
         }
         if tokens.get(first_closing - 1).map(|t| &t.token) == Some(&Token::Colon) {
-            return Err("part-select dengan batas atas kosong `[msb:]` belum didukung".to_string());
+            return Err(pesan::harap(tokens, first_closing - 1, "part-select dengan batas atas kosong `[msb:]` belum didukung"));
         }
 
         // Indexed part-select `a[base +: width]` / `[base -: width]` (LRM §7.8)
@@ -88,16 +86,20 @@ pub fn parse_lvalue(tokens: &[SpannedToken]) -> Result<(Lvalue, usize), String> 
                             return Err("expected ']' closing LHS select".to_string());
                         };
                         if second_closing == cursor + 1 {
-                            return Err("kurung siku seleksi kosong `[]` belum didukung".to_string());
+                            return Err(
+                                "kurung siku seleksi kosong `[]` belum didukung".to_string()
+                            );
                         }
                         if tokens[cursor + 1].token == Token::Colon {
                             return Err(
-                                "part-select dengan batas bawah kosong `[:lsb]` belum didukung".to_string(),
+                                "part-select dengan batas bawah kosong `[:lsb]` belum didukung"
+                                    .to_string(),
                             );
                         }
                         if tokens.get(second_closing - 1).map(|t| &t.token) == Some(&Token::Colon) {
                             return Err(
-                                "part-select dengan batas atas kosong `[msb:]` belum didukung".to_string(),
+                                "part-select dengan batas atas kosong `[msb:]` belum didukung"
+                                    .to_string(),
                             );
                         }
                         if let Token::Number(n) | Token::BasedNumber { value: n, .. } =
@@ -109,9 +111,10 @@ pub fn parse_lvalue(tokens: &[SpannedToken]) -> Result<(Lvalue, usize), String> 
                             });
                             cursor = second_closing + 1;
                         } else {
-                            return Err(format!(
-                                "indeks harus satu token, ditemukan {:?}",
-                                tokens[cursor + 1].token
+                            return Err(pesan::tandai(
+                                tokens,
+                                cursor + 1,
+                                format!("indeks harus satu token, ditemukan {:?}", tokens[cursor + 1].token),
                             ));
                         }
                     }
@@ -124,7 +127,11 @@ pub fn parse_lvalue(tokens: &[SpannedToken]) -> Result<(Lvalue, usize), String> 
                     cursor = first_closing + 1;
                 }
                 other => {
-                    return Err(format!("indeks harus satu token, ditemukan {:?}", other));
+                    return Err(pesan::tandai(
+                        tokens,
+                        cursor,
+                        format!("indeks harus satu token, ditemukan {:?}", other),
+                    ));
                 }
             }
         } else {
@@ -142,18 +149,22 @@ pub fn parse_lvalue(tokens: &[SpannedToken]) -> Result<(Lvalue, usize), String> 
                 } else {
                     "indeks harus satu token"
                 };
-                return Err(msg.to_string());
+                return Err(pesan::tandai(tokens, cursor, msg.to_string()));
             }
             // Part-select atau bit-select pada nama dasar.
             let (slice_val, consumed) = parse_slice_index(&tokens[cursor + 1..first_closing])?;
             if consumed != first_closing - cursor - 1 {
-                return Err(format!(
-                    "sisa token tak dikenal pada indeks LHS: {:?}",
-                    tokens[cursor + 1 + consumed..first_closing]
-                        .iter()
-                        .map(|t| format!("{:?}", t.token))
-                        .collect::<Vec<_>>()
-                        .join(" ")
+                return Err(pesan::tandai(
+                    tokens,
+                    cursor + 1 + consumed,
+                    format!(
+                        "sisa token tak dikenal pada indeks LHS: {:?}",
+                        tokens[cursor + 1 + consumed..first_closing]
+                            .iter()
+                            .map(|t| format!("{:?}", t.token))
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    ),
                 ));
             }
             slice = Some(slice_val);
@@ -211,9 +222,7 @@ pub fn parse_lvalue(tokens: &[SpannedToken]) -> Result<(Lvalue, usize), String> 
         // Genvar tidak boleh nested slice dalam dimensi yang sama, tetapi
         // dimensi tambahan setelah genvar diizinkan (diparse sebagai indeks
         // konstanta).
-        while cursor < tokens.len()
-            && tokens[cursor].token == Token::LBracket
-        {
+        while cursor < tokens.len() && tokens[cursor].token == Token::LBracket {
             let start2 = cursor + 1;
             if start2 >= tokens.len() {
                 return Err("expected index in nested select".to_string());
@@ -389,13 +398,15 @@ fn parse_index(tokens: &[SpannedToken], at: usize, posisi: &str) -> Result<u32, 
         }
         // Pesannya menyebut posisi supaya batas part-select yang bukan literal
         // bisa dibedakan dari bit-select.
-        Some(Token::Ident(n)) => Err(format!(
-            "indeks {posisi} harus literal, ditemukan identifier '{}'",
-            n
+        Some(Token::Ident(n)) => Err(pesan::tandai(
+            tokens,
+            at,
+            format!("indeks {posisi} harus literal, ditemukan identifier '{n}'"),
         )),
-        other => Err(format!(
-            "indeks {posisi} harus literal, ditemukan {:?}",
-            other
+        other => Err(pesan::tandai(
+            tokens,
+            at,
+            format!("indeks {posisi} harus literal, ditemukan {:?}", other),
         )),
     }
 }

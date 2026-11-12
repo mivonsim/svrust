@@ -89,7 +89,11 @@ pub fn parse_dimension(
 
     let idx = start + 1;
     if idx >= tokens.len() {
-        return Err("expected dimension bound, tetapi input habis".to_string());
+        return Err(pesan::harap(
+            tokens,
+            idx,
+            "expected dimension bound, tetapi input habis",
+        ));
     }
 
     // Batas angka literal, opsional `A - B` lalu opsional `: C`.

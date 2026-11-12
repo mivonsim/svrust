@@ -161,8 +161,8 @@ fn parse_cached_source(
     _path: &Path,
     source_preprocessed: &str,
 ) -> Result<sv_parser::ParseResult, String> {
-    let tokens = sv_lexer::lex(source_preprocessed)
-        .map_err(|e| format!("lexical error: {}", e.message))?;
+    let tokens =
+        sv_lexer::lex(source_preprocessed).map_err(|e| format!("lexical error: {}", e.message))?;
     sv_parser::parse_file(&tokens).map_err(|e| e.to_string())
 }
 
@@ -183,7 +183,10 @@ fn proses_satu_file(
                     modules: vec![],
                     typedefs_global: vec![],
                     packages: vec![],
-                    parse_error: Some((format!("gagal baca {}: {}", path.display(), e), path.display().to_string())),
+                    parse_error: Some((
+                        format!("gagal baca {}: {}", path.display(), e),
+                        path.display().to_string(),
+                    )),
                 },
                 cache_data: None,
             };
@@ -236,7 +239,8 @@ fn proses_satu_file(
                     cache_data: None,
                 };
             }
-        } else {}
+        } else {
+        }
     }
 
     let (source_asli, source) = match read_preprocessed_with_original(path, incdir) {
@@ -730,8 +734,7 @@ pub fn compile_semua_root(
     let workspace = Workspace::detect()?;
     let cache_root = workspace.target_sv.join("cache");
     let mut cache = SvCache::baru_dengan_root(cache_root)?;
-    let collection =
-        collect_modules(paths, incdir, top, Some(&mut cache))?;
+    let collection = collect_modules(paths, incdir, top, Some(&mut cache))?;
     let tops = tops_dipakai(&collection.modules, top)
         .map_err(|error| diagnostic_top_error(error, &collection))?;
 
@@ -969,6 +972,100 @@ fn pisahkan_penanda(error: &str) -> (&str, Option<(usize, usize)>) {
     }
 }
 
+/// Lokasi fallback saat parser error tidak punya penanda `[pos=baris:kolom]`
+/// dan tidak cocok dengan token mana pun.
+///
+/// Strategi (urutan prioritas):
+/// 1. Kalau pesan menyebut "ditemukan <token>", cari token itu di SELURUH
+///    aliran token — penting untuk file besar seperti OpenTitan di mana token
+///    target bisa berada jauh dari awal.
+/// 2. Kalau tidak, cari kata kunci dari pesan di source_asli.
+/// 3. Kalau masih tidak, gunakan baris 1 kolom 1 — bukan baris terakhir
+///    (`endmodule`) agar tidak menyesalat pembaca.
+fn cari_lokasi_fallback(
+    error: &str,
+    tokens: &[SpannedToken],
+    source_asli: &str,
+) -> (usize, usize) {
+    // 1. Coba cari token yang disebut setelah "ditemukan ".
+    if let Some(target) = error
+        .split_once("ditemukan ")
+        .map(|(_, rest)| rest.trim_end_matches(['.', ' ']).trim_matches('`'))
+    {
+        // Target bisa berupa:
+        // - debug representation: `Ident("y")`, `Directive("NUM_REQUESTS")`, `Semi`
+        // - format bahasa: `identifier 's'`, `nama sinyal`, `LParen`
+        for token in tokens.iter() {
+            let debug = format!("{:?}", token.token);
+            if debug.contains(target) || target.contains(&debug) {
+                return (token.span.line, token.span.col);
+            }
+        }
+        // Ekstrak nama ident dari format "identifier 'X'" atau "nama sinyal".
+        if let Some(nama) = target
+            .split_whitespace()
+            .last()
+            .and_then(|w| {
+                let s = w.trim_matches(['\'', '"']).to_string();
+                if s.len() > 1 {
+                    Some(s)
+                } else {
+                    None
+                }
+            })
+        {
+            for token in tokens.iter() {
+                if let sv_lexer::token::Token::Ident(ident) = &token.token {
+                    if ident == &nama {
+                        return (token.span.line, token.span.col);
+                    }
+                }
+            }
+        }
+    }
+    // 2. Coba cari kata kunci dari pesan di source_asli.
+    for kata in error.split_whitespace() {
+        let kata = kata.trim_matches(['(', ')', '[', ']', '{', '}', '"', '\'']);
+        if kata.len() < 3 {
+            continue;
+        }
+        if let Some((baris, _)) = source_asli
+            .lines()
+            .enumerate()
+            .find(|(_, line)| line.contains(kata))
+            .map(|(i, _)| (i + 1, 1))
+        {
+            return (baris, 1);
+        }
+    }
+    // 3. Kalau error soal ekspresi kosong / input habis, cari titik koma,
+    //    kurung kurawal, atau `endmodule` terdekat di source_asli — bukan
+    //    paksa ke baris 1 atau baris terakhir.
+    if error.contains("empty expression") || error.contains("input habis") {
+        for (baris, line) in source_asli.lines().enumerate() {
+            if line.contains(';') || line.contains('{') || line.contains('}')
+                || line.contains("endmodule")
+            {
+                return (baris + 1, 1);
+            }
+        }
+    }
+    // 4. Kalau error soal seleksi / indeks (`[...]`), cari baris yang
+    //    mengandung `[` di source_asli — itu lebih dekat ke masalah asli
+    //    dibandingkan baris 1.
+    if error.contains("seleksi") || error.contains("indeks")
+        || error.contains("part-select")
+    {
+        for (baris, line) in source_asli.lines().enumerate() {
+            if line.contains('[') {
+                return (baris + 1, 1);
+            }
+        }
+    }
+    // 5. Awal file — bukan baris terakhir (`endmodule`).
+    (1, 1)
+}
+
 fn diagnostic_parser(
     error: &str,
     tokens: &[sv_lexer::SpannedToken],
@@ -1031,21 +1128,13 @@ fn diagnostic_parser(
     });
 
     let Some(token_range) = token_range else {
-        if error.contains("expected 'endmodule'") || error.contains("akhir input") {
-            let offset = source_asli.trim_end().len();
-            return sv_diag::Diagnostic::error(
-                "E0002",
-                error,
-                sv_diag::Span::empty(source_id, offset),
-            );
-        }
-        let line = source_asli.lines().count().max(1);
-        let col = source_asli
-            .lines()
-            .last()
-            .map(|line| line.chars().count() + 1)
-            .unwrap_or(1);
-        let span = span_fallback(sources, source_id, line, col)
+        // Error tanpa penanda `[pos=baris:kolom]` dan tanpa token yang
+        // cocok. Jangan jatuhkan ke baris terakhir (`endmodule`) — itu
+        // menyesatkan. Coba cari token yang disebut dalam pesan error,
+        // kalau tidak ada gunakan baris pertama file (lokasi paling awal
+        // yang relevan, bukan baris terakhir).
+        let (fallback_line, fallback_col) = cari_lokasi_fallback(error, tokens, source_asli);
+        let span = span_fallback(sources, source_id, fallback_line, fallback_col)
             .unwrap_or_else(|| sv_diag::Span::empty(source_id, source_asli.len()));
         return sv_diag::Diagnostic::error("E0002", format!("{}: {}", path.display(), error), span);
     };
@@ -1169,6 +1258,60 @@ mod tests {
         assert!(report.contains("2 |   assign a b;"), "{report}");
         assert!(!report.contains("endmodule"), "{report}");
         assert!(!report.contains("[pos="), "penanda bocor: {report}");
+    }
+
+    // Regresi: error `expected module name` pada `module ; endmodule` tidak
+    // boleh jatuh ke baris `endmodule`, harus menunjuk ke `;` pada baris 1.
+    #[test]
+    fn error_module_tanpa_nama_tidak_jatuh_ke_endmodule() {
+        let source = "module ;\n  logic a;\nendmodule\n";
+        let tokens = sv_lexer::lex(source).expect("lex");
+        let error = match sv_parser::parse_module(&tokens) {
+            Ok(_) => panic!("module tanpa nama harus gagal diparse"),
+            Err(error) => error,
+        };
+        assert!(error.contains("[pos="), "{error}");
+
+        let report = render_parser_error(&error, source, "nonama.sv");
+        assert!(report.contains("--> nonama.sv:1:8"), "{report}");
+        assert!(report.contains("1 | module ;"), "{report}");
+        assert!(!report.contains("endmodule"), "{report}");
+        assert!(!report.contains("[pos="), "penanda bocor: {report}");
+    }
+
+    // Regresi: port list yang tidak tertutup (`input a; endmodule`) tidak
+    // boleh melaporkan error di baris `endmodule`.
+    #[test]
+    fn error_port_list_tidak_tertutup_tidak_jatuh_ke_endmodule() {
+        let source = "module m(input a; endmodule\n";
+        let tokens = sv_lexer::lex(source).expect("lex");
+        let error = match sv_parser::parse_module(&tokens) {
+            Ok(_) => panic!("port list tidak tertutup harus gagal diparse"),
+            Err(error) => error,
+        };
+        assert!(error.contains("[pos="), "{error}");
+
+        let report = render_parser_error(&error, source, "port.sv");
+        assert!(report.contains("--> port.sv:1:"), "{report}");
+        assert!(
+            report.contains("1 | module m(input a; endmodule"),
+            "{report}"
+        );
+        assert!(!report.contains("[pos="), "penanda bocor: {report}");
+    }
+
+    // Regresi: `module ` (input habis sebelum nama) harus menunjuk ke awal
+    // berkas, bukan ke baris `endmodule`.
+    #[test]
+    fn error_module_input_habis_tidak_jatuh_ke_endmodule() {
+        let source = "module \nendmodule\n";
+        let tokens = sv_lexer::lex(source).expect("lex");
+        let error = match sv_parser::parse_module(&tokens) {
+            Ok(_) => panic!("module tanpa nama harus gagal diparse"),
+            Err(error) => error,
+        };
+        let report = render_parser_error(&error, source, "habis.sv");
+        assert!(!report.contains("endmodule"), "{report}");
     }
 
     #[test]

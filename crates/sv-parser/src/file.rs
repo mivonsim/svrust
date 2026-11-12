@@ -1,4 +1,5 @@
 // Tanggung jawab: belah token berkas menjadi daftar module dan typedef global.
+use crate::pesan;
 use sv_ast::module::Module;
 use sv_ast::package::PackageDecl;
 use sv_ast::typedef::TypeDefDecl;
@@ -141,7 +142,11 @@ pub fn parse_file(tokens: &[SpannedToken]) -> Result<ParseResult, String> {
             sv_ast::delay_unit::terapkan_module(&mut modul, time_scale);
             // Tolak nama module duplikat dalam satu berkas.
             if out.iter().any(|m: &Module| m.name == modul.name) {
-                return Err(format!("module duplikat: {}", modul.name));
+                return Err(pesan::tandai(
+                    tokens,
+                    idx,
+                    format!("module duplikat: {}", modul.name),
+                ));
             }
             out.push(modul);
             idx = akhir + 1;
@@ -199,10 +204,18 @@ fn parse_package(tokens: &[SpannedToken]) -> Result<Option<(PackageDecl, usize)>
 
     // Nama paket.
     if idx >= tokens.len() {
-        return Err("expected nama paket setelah 'package'".to_string());
+        return Err(pesan::harap(
+            tokens,
+            idx,
+            "expected nama paket setelah 'package'",
+        ));
     }
     let Token::Ident(nama) = &tokens[idx].token else {
-        return Err("expected nama paket setelah 'package'".to_string());
+        return Err(pesan::harap(
+            tokens,
+            idx,
+            "expected nama paket setelah 'package'",
+        ));
     };
     let nama = nama.clone();
     idx += 1;
@@ -252,7 +265,11 @@ fn parse_package(tokens: &[SpannedToken]) -> Result<Option<(PackageDecl, usize)>
     }
 
     if idx >= tokens.len() {
-        return Err("expected 'endpackage' menutup deklarasi paket".to_string());
+        return Err(pesan::harap(
+            tokens,
+            idx,
+            "expected 'endpackage' menutup deklarasi paket",
+        ));
     }
     idx += 1; // lewati 'endpackage'
 

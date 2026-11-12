@@ -1,4 +1,5 @@
 // Tanggung jawab: parse deklarasi task/function beserta port list dan badan.
+use crate::pesan;
 use sv_ast::combinational::CombinationalStatement;
 use sv_ast::routine::{ArgDirection, RoutineArg, RoutineDecl, RoutineKind, TaskCall};
 use sv_ast::width::WidthExpr;
@@ -49,10 +50,7 @@ pub fn parse_routine(tokens: &[SpannedToken]) -> Result<(RoutineDecl, usize), St
                 .get(idx)
                 .and_then(|t| sv_lexer::token::tipe::atom(&t.token));
             idx += 1;
-        } else if matches!(
-            tokens.get(idx).map(|t| &t.token),
-            Some(Token::Ident(_))
-        ) {
+        } else if matches!(tokens.get(idx).map(|t| &t.token), Some(Token::Ident(_))) {
             // Tipe dari typedef atau package, misal `msg_bytes_t` atau
             // `pkg::nama_tipe`. Simpan nama sebagai tipe balik.
             idx += 1;
@@ -125,7 +123,11 @@ pub fn parse_routine(tokens: &[SpannedToken]) -> Result<(RoutineDecl, usize), St
     let (body, consumed) = super::combinational::parse_combinational_block(&tokens[idx..])?;
     idx += consumed;
     if tokens.get(idx).map(|t| &t.token) != Some(&penutup) {
-        return Err(format!("expected {:?} menutup subrutin", penutup));
+        return Err(pesan::tandai(
+            tokens,
+            idx,
+            format!("expected {:?} menutup subrutin", penutup),
+        ));
     }
     idx += 1;
 
@@ -276,7 +278,7 @@ pub fn parse_task_call(tokens: &[SpannedToken]) -> Result<(TaskCall, usize), Str
     };
     let mut idx = 1; // lewati identifier
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::LParen) {
-        return Err("expected '(' setelah nama task".to_string());
+        return Err(pesan::harap(tokens, idx, "expected '(' setelah nama task"));
     }
     idx += 1;
 
@@ -290,12 +292,20 @@ pub fn parse_task_call(tokens: &[SpannedToken]) -> Result<(TaskCall, usize), Str
         }
     }
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::RParen) {
-        return Err("expected ')' closing argumen task".to_string());
+        return Err(pesan::harap(
+            tokens,
+            idx,
+            "expected ')' closing argumen task",
+        ));
     }
     idx += 1;
 
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::Semi) {
-        return Err("expected ';' setelah panggilan task".to_string());
+        return Err(pesan::harap(
+            tokens,
+            idx,
+            "expected ';' setelah panggilan task",
+        ));
     }
     idx += 1;
 
@@ -336,7 +346,7 @@ pub fn parse_return(tokens: &[SpannedToken]) -> Result<(CombinationalStatement, 
         Some(expr)
     };
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::Semi) {
-        return Err("expected ';' setelah return".to_string());
+        return Err(pesan::harap(tokens, idx, "expected ';' setelah return"));
     }
     idx += 1;
     Ok((CombinationalStatement::Return { value, span }, idx))

@@ -1,4 +1,5 @@
 // Tanggung jawab: parse always_ff dan always (proses sekuensial/combinational).
+use crate::pesan;
 use sv_ast::event_edge::EventEdge;
 use sv_ast::event_item::EventItem;
 use sv_ast::statement::{SequentialStatement, Statement};
@@ -76,13 +77,17 @@ pub fn parse_always(tokens: &[SpannedToken]) -> Result<(Statement, usize), Strin
     }
 
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::LParen) {
-        return Err("expected '(', '@*', or event list after 'always @'".to_string());
+        return Err(pesan::harap(
+            tokens,
+            idx,
+            "expected '(', '@*', or event list after 'always @'",
+        ));
     }
 
     // `always @(*)` — sensitivity implisit di dalam kurung.
     if tokens.get(idx + 1).map(|t| &t.token) == Some(&Token::Star) {
         if tokens.get(idx + 2).map(|t| &t.token) != Some(&Token::RParen) {
-            return Err("expected ')' after '@(*'".to_string());
+            return Err(pesan::harap(tokens, idx, "expected ')' after '@(*'"));
         }
         let (body, next) = super::always_comb::parse_comb_body(tokens, idx + 3)?;
         return Ok((
@@ -134,7 +139,7 @@ pub fn parse_always(tokens: &[SpannedToken]) -> Result<(Statement, usize), Strin
         }
     }
     if kedalaman != 0 {
-        return Err("expected ')' closing event list".to_string());
+        return Err(pesan::harap(tokens, idx, "expected ')' closing event list"));
     }
     let (body, next) = super::always_comb::parse_comb_body(tokens, pos)?;
     Ok((Statement::AlwaysComb { events, body, span }, next))
@@ -148,11 +153,11 @@ fn parse_event_list(
     mut idx: usize,
 ) -> Result<(Vec<EventItem>, usize), String> {
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::At) {
-        return Err("expected '@' in event control".to_string());
+        return Err(pesan::harap(tokens, idx, "expected '@' in event control"));
     }
     idx += 1;
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::LParen) {
-        return Err("expected '(' after '@'".to_string());
+        return Err(pesan::harap(tokens, idx, "expected '(' after '@'"));
     }
     super::event_control::parse_event_items(tokens, idx + 1)
 }
@@ -165,7 +170,7 @@ fn parse_seq_body(
     span: sv_lexer::span::Span,
 ) -> Result<(Statement, usize), String> {
     if idx >= tokens.len() {
-        return Err("expected body".to_string());
+        return Err(pesan::harap(tokens, idx, "expected body"));
     }
 
     // LRM §9.3: `always_ff @(posedge clk);` dengan body kosong sah — proses
@@ -207,9 +212,19 @@ fn parse_seq_block(
     mut idx: usize,
 ) -> Result<(Vec<SequentialStatement>, usize), String> {
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::Begin) {
-        return Err("expected 'begin'".to_string());
+        return Err(pesan::harap(tokens, idx, "expected 'begin'"));
     }
     idx += 1;
+    // LRM §12.9: `begin : label` — label opsional setelah `begin`.
+    if tokens.get(idx).map(|t| &t.token) == Some(&Token::Colon) {
+        idx += 1; // lewati ':'
+        if tokens
+            .get(idx)
+            .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
+        {
+            idx += 1; // lewati nama label
+        }
+    }
     let mut body = Vec::new();
     while idx < tokens.len() && tokens[idx].token != Token::End {
         // Compiler directive dilewati.
@@ -261,9 +276,16 @@ fn parse_seq_block(
         idx += consumed;
     }
     if idx >= tokens.len() {
-        return Err("expected 'end'".to_string());
+        return Err(pesan::harap(tokens, idx, "expected 'end'"));
     }
     idx += 1; // skip 'end'
+              // `end : label` bentuk labeled block (LRM §12.9).
+    if idx < tokens.len() && tokens[idx].token == Token::Colon {
+        idx += 1; // lewati ':'
+        if idx < tokens.len() && matches!(tokens[idx].token, Token::Ident(_)) {
+            idx += 1; // lewati nama label
+        }
+    }
     Ok((body, idx))
 }
 
@@ -285,7 +307,7 @@ fn parse_seq_if(tokens: &[SpannedToken]) -> Result<(SequentialStatement, usize),
     let mut idx = 1; // skip 'if'
 
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::LParen) {
-        return Err("expected '(' after if".to_string());
+        return Err(pesan::harap(tokens, idx, "expected '(' after if"));
     }
     idx += 1;
 
@@ -293,7 +315,7 @@ fn parse_seq_if(tokens: &[SpannedToken]) -> Result<(SequentialStatement, usize),
     idx += consumed;
 
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::RParen) {
-        return Err("expected ')' after if condition".to_string());
+        return Err(pesan::harap(tokens, idx, "expected ')' after if condition"));
     }
     idx += 1;
 
@@ -337,7 +359,7 @@ fn parse_seq_statement(tokens: &[SpannedToken]) -> Result<(SequentialStatement, 
         let (lhs, mut idx) = super::lvalue::parse_lvalue(&tokens[1..])?;
         idx += 1;
         if tokens.get(idx).map(|t| &t.token) != Some(&Token::Semi) {
-            return Err("expected ';' after increment".to_string());
+            return Err(pesan::harap(tokens, idx, "expected ';' after increment"));
         }
         idx += 1;
         let target = lhs.name.clone();
@@ -420,11 +442,14 @@ fn parse_seq_statement(tokens: &[SpannedToken]) -> Result<(SequentialStatement, 
         if idx < tokens.len() {
             idx += 1;
         }
-        return Ok((SequentialStatement::Block {
-            label: None,
-            body: Vec::new(),
-            span: tokens[0].span,
-        }, idx));
+        return Ok((
+            SequentialStatement::Block {
+                label: None,
+                body: Vec::new(),
+                span: tokens[0].span,
+            },
+            idx,
+        ));
     }
 
     // LRM §12.4: `if (syarat) ... else ...` di dalam blok sekuensial.
@@ -454,7 +479,7 @@ fn parse_seq_statement(tokens: &[SpannedToken]) -> Result<(SequentialStatement, 
         let span = tokens[0].span;
         idx += 1;
         if tokens.get(idx).map(|t| &t.token) != Some(&Token::Semi) {
-            return Err("expected ';' after increment".to_string());
+            return Err(pesan::harap(tokens, idx, "expected ';' after increment"));
         }
         idx += 1;
         let target = lhss[0].name.clone();
@@ -537,7 +562,7 @@ fn parse_forever_seq(tokens: &[SpannedToken]) -> Result<(SequentialStatement, us
     let mut idx = 1; // skip 'forever'
 
     if idx >= tokens.len() {
-        return Err("expected forever body".to_string());
+        return Err(pesan::harap(tokens, idx, "expected forever body"));
     }
     let body = if tokens[idx].token == Token::Semi {
         idx += 1;
@@ -569,13 +594,17 @@ fn parse_procedural_assign_seq(
         vec![lhs]
     };
     if idx >= tokens.len() || tokens[idx].token != Token::Eq {
-        return Err("expected '=' setelah 'assign'".to_string());
+        return Err(pesan::harap(tokens, idx, "expected '=' setelah 'assign'"));
     }
     idx += 1;
     let (rhs, consumed) = super::expression::parse_expression(&tokens[idx..])?;
     idx += consumed;
     if idx >= tokens.len() || tokens[idx].token != Token::Semi {
-        return Err("expected ';' setelah ekspresi 'assign'".to_string());
+        return Err(pesan::harap(
+            tokens,
+            idx,
+            "expected ';' setelah ekspresi 'assign'",
+        ));
     }
     idx += 1;
     // Gabungkan multiple LHS jadi sequential assignments
@@ -608,7 +637,7 @@ fn parse_deassign_seq(tokens: &[SpannedToken]) -> Result<(SequentialStatement, u
     let (lhs, consumed) = super::lvalue::parse_lvalue(&tokens[idx..])?;
     idx += consumed;
     if idx >= tokens.len() || tokens[idx].token != Token::Semi {
-        return Err("expected ';' setelah 'deassign'".to_string());
+        return Err(pesan::harap(tokens, idx, "expected ';' setelah 'deassign'"));
     }
     idx += 1;
     Ok((SequentialStatement::Deassign { lhs, span }, idx))

@@ -33,16 +33,21 @@ pub fn parse_param_list(
             Token::Parameter => false,
             Token::LocalParam => true,
             ref lain => {
-                return Err(format!(
-                    "expected 'parameter' atau 'localparam', ditemukan {:?}",
-                    lain
+                return Err(pesan::tandai(
+                    tokens,
+                    idx,
+                    format!("expected 'parameter' atau 'localparam', ditemukan {:?}", lain),
                 ))
             }
         };
         idx += 1;
 
         if idx >= tokens.len() {
-            return Err("expected nama parameter, tetapi input habis".to_string());
+            return Err(pesan::harap(
+                tokens,
+                idx,
+                "expected nama parameter, tetapi input habis",
+            ));
         }
         // Parameter boleh bermula dengan tipe, misal `parameter string Name`
         // atau `parameter int ListenPort` (LRM §6.20.1).
@@ -92,9 +97,9 @@ pub fn parse_param_list(
             && tokens
                 .get(idx + 1)
                 .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
-            && tokens.get(idx + 2).is_some_and(|t| {
-                t.token == Token::Eq || t.token == Token::LBracket
-            })
+            && tokens
+                .get(idx + 2)
+                .is_some_and(|t| t.token == Token::Eq || t.token == Token::LBracket)
         {
             // `parameter string Name = ...` atau `parameter string Name[dim] = ...`
             // `string` adalah tipe, `Name` adalah nama.
@@ -107,8 +112,12 @@ pub fn parse_param_list(
         } else if tokens
             .get(idx)
             .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
-            && tokens.get(idx + 1).is_some_and(|t| t.token == Token::LBracket)
-            && tokens.get(idx + 2).is_some_and(|t| matches!(&t.token, Token::Ident(_)))
+            && tokens
+                .get(idx + 1)
+                .is_some_and(|t| t.token == Token::LBracket)
+            && tokens
+                .get(idx + 2)
+                .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
         {
             // `parameter tipe [dim] Nama = ...` — tipe dengan packed dimension
             // sebelum nama parameter (misal `parameter pad_type_e [N] x = ...`).
@@ -191,7 +200,11 @@ pub fn parse_param_list(
         let (default, default_str) = if idx < tokens.len() && tokens[idx].token == Token::Eq {
             idx += 1;
             if idx >= tokens.len() {
-                return Err("expected nilai default parameter, tetapi input habis".to_string());
+                return Err(pesan::harap(
+                    tokens,
+                    idx,
+                    "expected nilai default parameter, tetapi input habis",
+                ));
             }
             // Nilai `localparam` adalah ekspresi konstanta, bukan hanya literal:
             // `localparam int Share = (EnMasking) ? 2 : 1`. Ekspresinya disimpan
@@ -202,7 +215,11 @@ pub fn parse_param_list(
                 if localparams.iter().any(|p| p.name == nama)
                     || params.iter().any(|p: &ParamDecl| p.name == nama)
                 {
-                    return Err(format!("parameter duplikat: {}", nama));
+                    return Err(pesan::tandai(
+                        tokens,
+                        idx,
+                        format!("parameter duplikat: {}", nama),
+                    ));
                 }
                 localparams.push(sv_ast::width::LocalParamDecl {
                     name: nama,
@@ -282,7 +299,11 @@ pub fn parse_param_list(
         }
 
         if params.iter().any(|p: &ParamDecl| p.name == nama) {
-            return Err(format!("parameter duplikat: {}", nama));
+            return Err(pesan::tandai(
+                tokens,
+                idx,
+                format!("parameter duplikat: {}", nama),
+            ));
         }
         params.push(ParamDecl {
             name: nama.clone(),
@@ -445,16 +466,14 @@ mod tests {
         let prim_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../opentitan/hw/ip/prim/rtl");
         let dirs = [dir, rtl_dir, prim_dir.as_ref()];
         let pp = sv_preprocessor::preprocess_with_dirs(&text, &dirs, path).expect("preprocess");
-        eprintln!("preprocessed len={}", pp.source.len());
         let tokens = lex(&pp.source).expect("lex");
         match parse_module(&tokens) {
-            Ok(m) => eprintln!(
-                "OK module={} ports={} params={}",
-                m.name,
-                m.ports.len(),
-                m.params.len()
-            ),
-            Err(e) => eprintln!("ERR: {e}"),
+            Ok(m) => {
+                let _ = m;
+            }
+            Err(e) => {
+                let _ = e;
+            }
         }
     }
 }

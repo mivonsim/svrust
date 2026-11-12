@@ -126,8 +126,8 @@ pub fn parse_declaration(tokens: &[SpannedToken]) -> Result<(Vec<Declaration>, u
 
     let span = tokens[0].span;
     let mut idx = 1; // skip type keyword (atau ident pertama dari nama tipe hierarkis)
-    // Lewati sisa nama tipe hierarkis: `pkg::subpkg::nama_tipe` — setiap `::`
-    // (dua token Colon) diikuti oleh ident adalah bagian dari nama tipe.
+                     // Lewati sisa nama tipe hierarkis: `pkg::subpkg::nama_tipe` — setiap `::`
+                     // (dua token Colon) diikuti oleh ident adalah bagian dari nama tipe.
     while idx + 2 < tokens.len()
         && matches!(tokens[idx].token, Token::Colon)
         && matches!(tokens[idx + 1].token, Token::Colon)
@@ -183,10 +183,12 @@ pub fn parse_declaration(tokens: &[SpannedToken]) -> Result<(Vec<Declaration>, u
         && matches!(tokens[idx].token, Token::Ident(_))
         && matches!(tokens[idx + 1].token, Token::Colon)
         && matches!(tokens[idx + 2].token, Token::Colon)
-        && tokens.get(idx + 3).is_some_and(|t| matches!(&t.token, Token::Ident(_)))
+        && tokens
+            .get(idx + 3)
+            .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
     {
         idx += 4; // lewati pkg :: type
-        // Bisa ada `::` lagi untuk nested package: `pkg::sub::type`
+                  // Bisa ada `::` lagi untuk nested package: `pkg::sub::type`
         while idx + 2 < tokens.len()
             && matches!(tokens[idx].token, Token::Colon)
             && matches!(tokens[idx + 1].token, Token::Colon)
@@ -240,7 +242,7 @@ pub fn parse_declaration(tokens: &[SpannedToken]) -> Result<(Vec<Declaration>, u
     let mut declarations = Vec::new();
     loop {
         if idx >= tokens.len() {
-            return Err("expected signal name".to_string());
+            return Err(pesan::harap(tokens, idx, "expected signal name"));
         }
         let name = match &tokens[idx].token {
             Token::Ident(n) => n.clone(),

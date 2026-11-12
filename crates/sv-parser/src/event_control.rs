@@ -1,4 +1,5 @@
 // Tanggung jawab: parse event control `@(posedge clk)` sebagai statement.
+use crate::pesan;
 use sv_ast::combinational::CombinationalStatement;
 use sv_ast::event_edge::EventEdge;
 use sv_ast::event_item::EventItem;
@@ -20,7 +21,7 @@ pub fn parse_event_control(
     let span = tokens[0].span;
     let mut idx = 1;
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::LParen) {
-        return Err("expected '(' after '@'".to_string());
+        return Err(pesan::harap(tokens, idx, "expected '(' after '@'"));
     }
     idx += 1;
 
@@ -44,7 +45,11 @@ pub fn parse_event_control(
         let (stmts, dipakai) = super::combinational::parse_combinational_block(&tokens[idx + 1..])?;
         let mut pos = idx + 1 + dipakai;
         if tokens.get(pos).map(|t| &t.token) != Some(&Token::End) {
-            return Err("expected 'end' closing event control body".to_string());
+            return Err(pesan::harap(
+                tokens,
+                idx,
+                "expected 'end' closing event control body",
+            ));
         }
         pos += 1;
         (stmts, pos)

@@ -1,5 +1,6 @@
 // Tanggung jawab: parse deklarasi `typedef` skalar, `typedef enum`, dan
 // `typedef struct packed`.
+use crate::pesan;
 use sv_ast::expression::Expr;
 use sv_ast::typedef::{EnumMember, StructFieldDef, TypeDefBody, TypeDefDecl};
 use sv_ast::width::WidthExpr;
@@ -27,7 +28,11 @@ pub fn parse_typedef(tokens: &[SpannedToken]) -> Result<(TypeDefDecl, usize), St
         let nama = baca_nama(tokens, idx)?;
         idx += 1;
         if tokens.get(idx).map(|t| &t.token) != Some(&Token::Semi) {
-            return Err("expected ';' menutup typedef class".to_string());
+            return Err(pesan::harap(
+                tokens,
+                idx,
+                "expected ';' menutup typedef class",
+            ));
         }
         idx += 1;
         return Ok((
@@ -79,7 +84,11 @@ pub fn parse_typedef(tokens: &[SpannedToken]) -> Result<(TypeDefDecl, usize), St
         idx += consumed;
 
         if tokens.get(idx).map(|t| &t.token) != Some(&Token::LBrace) {
-            return Err("expected '{' membuka daftar enum".to_string());
+            return Err(pesan::harap(
+                tokens,
+                idx,
+                "expected '{' membuka daftar enum",
+            ));
         }
         idx += 1;
         let mut members = Vec::new();
@@ -109,7 +118,11 @@ pub fn parse_typedef(tokens: &[SpannedToken]) -> Result<(TypeDefDecl, usize), St
             }
         }
         if tokens.get(idx).map(|t| &t.token) != Some(&Token::RBrace) {
-            return Err("expected '}' menutup daftar enum".to_string());
+            return Err(pesan::harap(
+                tokens,
+                idx,
+                "expected '}' menutup daftar enum",
+            ));
         }
         idx += 1;
 
@@ -162,7 +175,11 @@ pub fn parse_typedef(tokens: &[SpannedToken]) -> Result<(TypeDefDecl, usize), St
             idx += 1;
         }
         if tokens.get(idx).map(|t| &t.token) != Some(&Token::LBrace) {
-            return Err("expected '{' membuka struct typedef".to_string());
+            return Err(pesan::harap(
+                tokens,
+                idx,
+                "expected '{' membuka struct typedef",
+            ));
         }
         idx += 1;
 
@@ -230,7 +247,11 @@ pub fn parse_typedef(tokens: &[SpannedToken]) -> Result<(TypeDefDecl, usize), St
             });
         }
         if tokens.get(idx).map(|t| &t.token) != Some(&Token::RBrace) {
-            return Err("expected '}' menutup struct typedef".to_string());
+            return Err(pesan::harap(
+                tokens,
+                idx,
+                "expected '}' menutup struct typedef",
+            ));
         }
         idx += 1;
         let name = baca_nama(tokens, idx)?;
