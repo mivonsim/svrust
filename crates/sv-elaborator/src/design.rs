@@ -598,7 +598,8 @@ fn isi_body(
     // yang sudah dipakai sinyal, dan hanya berlaku untuk nama polos (tanpa
     // prefix instans). Nilai awal di bawah memakai cast, jadi pendaftaran ini
     // harus sebelumnya.
-    daftarkan_tipe(symbols, module, typedefs_global, params, packages, "")?;
+    let package_tabel = PackageTable::new();
+    daftarkan_tipe(symbols, module, typedefs_global, params, &package_tabel, "")?;
 
     // Nilai awal variabel pada waktu nol (LRM §6.2.2).
     for decl in &module.declarations {
