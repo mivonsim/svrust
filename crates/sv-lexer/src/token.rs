@@ -225,6 +225,7 @@ pub enum Token {
     Bang,
     EqEq,
     BangEq,
+    BangEqEq,
     Plus,
     Minus,
     /// `++` — increment (LRM §12.5).

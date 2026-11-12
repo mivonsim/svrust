@@ -79,6 +79,7 @@ fn op_pada_level(token: &Token, level: u8) -> Option<BinaryOp> {
         (Token::AndAnd, 2) => Some(BinaryOp::LogAnd),
         (Token::EqEq, 3) => Some(BinaryOp::Eq),
         (Token::BangEq, 3) => Some(BinaryOp::NotEq),
+        (Token::BangEqEq, 3) => Some(BinaryOp::NotEqEq),
         // LRM §11.4.3: `inside` sama level dengan equality operator.
         (Token::Inside, 3) => Some(BinaryOp::Inside),
         (Token::Lt, 4) => Some(BinaryOp::Lt),

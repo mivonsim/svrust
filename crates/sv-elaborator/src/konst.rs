@@ -397,6 +397,7 @@ fn binary(op: BinaryOp, a: u64, b: u64) -> Result<u64, ElaborateError> {
         BinaryOp::Xor => a ^ b,
         BinaryOp::Eq => u64::from(a == b),
         BinaryOp::NotEq => u64::from(a != b),
+        BinaryOp::NotEqEq => u64::from(a != b),
         BinaryOp::Lt => u64::from(a < b),
         BinaryOp::Gt => u64::from(a > b),
         BinaryOp::Le => u64::from(a <= b),

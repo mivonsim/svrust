@@ -166,7 +166,12 @@ pub fn scan_operator(
         '!' => {
             if chars.peek() == Some(&'=') {
                 makan(chars, byte_offset, col);
-                Ok(Token::BangEq)
+                if chars.peek() == Some(&'=') {
+                    makan(chars, byte_offset, col);
+                    Ok(Token::BangEqEq)
+                } else {
+                    Ok(Token::BangEq)
+                }
             } else {
                 Ok(Token::Bang)
             }

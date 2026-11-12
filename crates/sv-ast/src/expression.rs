@@ -210,6 +210,7 @@ pub enum BinaryOp {
     Sar,
     Eq,
     NotEq,
+    NotEqEq,
     Lt,
     Gt,
     Le,

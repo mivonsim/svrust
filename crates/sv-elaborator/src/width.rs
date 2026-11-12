@@ -24,7 +24,7 @@ pub fn infer_binary(op: BinOp, lhs: DataType, rhs: DataType) -> DataType {
         // `inside`: hasil selalu 1 bit (boolean).
         BinOp::Inside => DataType::bit(),
         // Perbandingan: hasil 1 bit, selalu unsigned.
-        BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => DataType::bit(),
+        BinOp::Eq | BinOp::NotEq | BinOp::NotEqEq | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => DataType::bit(),
         // Logika: hasil 1 bit.
         BinOp::LogAnd | BinOp::LogOr => DataType::bit(),
     }

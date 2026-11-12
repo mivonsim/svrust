@@ -25,6 +25,7 @@ pub enum BinOp {
     Pow,
     Eq,
     NotEq,
+    NotEqEq,
     Lt,
     Gt,
     Le,
@@ -99,7 +100,7 @@ impl BinOp {
     pub fn is_relational(self) -> bool {
         matches!(
             self,
-            BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge
+            BinOp::Eq | BinOp::NotEq | BinOp::NotEqEq | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge
         )
     }
 

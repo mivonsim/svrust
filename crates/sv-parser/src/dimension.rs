@@ -63,10 +63,7 @@ fn parse_literal_dimension(
                 return Ok(None);
             }
             cursor += 1;
-            if msb < lsb {
-                return Err(format!("invalid range [{}:{}]", msb, lsb));
-            }
-            let width = msb - lsb + 1;
+            let width = msb.abs_diff(lsb) + 1;
             let width =
                 usize::try_from(width).map_err(|_| format!("dimension too large: {width}"))?;
             return Ok(Some((WidthExpr::Literal(width), cursor - start)));

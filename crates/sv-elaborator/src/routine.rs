@@ -1574,6 +1574,13 @@ fn eval_bin_const(op: BinaryOp, a: u64, b: u64, width: u32) -> u64 {
                 0
             }
         }
+        BinaryOp::NotEqEq => {
+            if a != b {
+                1
+            } else {
+                0
+            }
+        }
         BinaryOp::Lt => {
             if a < b {
                 1
