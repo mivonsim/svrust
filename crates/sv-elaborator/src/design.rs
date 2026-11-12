@@ -336,6 +336,41 @@ pub fn elaborate_top(
         });
     }
 
+    // Daftarkan typedef dari paket agar tersedia saat resolusi tipe di modul
+    // yang mengimpor paket tersebut (misal `aes_reg_pkg::aes_reg2hw_t` atau
+    // `aes_reg2hw_t` setelah `import aes_reg_pkg::*`).
+    for pkg_decl in packages {
+        for decl in &pkg_decl.typedefs {
+            let lebar = match &decl.body {
+                sv_ast::typedef::TypeDefBody::Scalar { width, .. } => {
+                    match width {
+                        sv_ast::width::WidthExpr::Literal(w) => *w as u32,
+                        _ => 1,
+                    }
+                }
+                sv_ast::typedef::TypeDefBody::Enum { base_width, .. } => {
+                    match base_width {
+                        sv_ast::width::WidthExpr::Literal(w) => *w as u32,
+                        _ => 1,
+                    }
+                }
+                sv_ast::typedef::TypeDefBody::Struct { fields } => {
+                    fields.iter().fold(0u32, |acc, f| {
+                        match &f.width {
+                            sv_ast::width::WidthExpr::Literal(w) => acc + *w as u32,
+                            _ => acc,
+                        }
+                    })
+                }
+            };
+            let nama_kualifikasi = format!("{}::{}", pkg_decl.name, decl.name);
+            let _ = symbols.insert_type(&nama_kualifikasi, lebar, false, decl.span);
+            if symbols.type_info(decl.name.as_str()).is_none() {
+                let _ = symbols.insert_type(decl.name.as_str(), lebar, false, decl.span);
+            }
+        }
+    }
+
     isi_body(
         &mut design,
         &mut symbols,
@@ -598,8 +633,7 @@ fn isi_body(
     // yang sudah dipakai sinyal, dan hanya berlaku untuk nama polos (tanpa
     // prefix instans). Nilai awal di bawah memakai cast, jadi pendaftaran ini
     // harus sebelumnya.
-    let package_tabel = PackageTable::new();
-    daftarkan_tipe(symbols, module, typedefs_global, params, &package_tabel, "")?;
+    daftarkan_tipe(symbols, module, typedefs_global, params, packages, "")?;
 
     // Nilai awal variabel pada waktu nol (LRM §6.2.2).
     for decl in &module.declarations {

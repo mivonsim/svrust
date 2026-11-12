@@ -517,7 +517,13 @@ pub fn lebar_deklarasi(
         Some(nama) => match table.tipe(nama, span) {
             Ok(info) => info,
             Err(_) => {
-                if nama.contains("::") {
+                // Coba cari nama tipe tanpa prefix paket (mis. `aes_reg2hw_t`
+                // dari `aes_reg_pkg::aes_reg2hw_t`).
+                if let Some((_, info)) =
+                    table.iter_tipe().find(|(k, _)| k.ends_with(&format!("::{nama}")))
+                {
+                    info
+                } else if nama.contains("::") {
                     nama.split_once("::")
                         .and_then(|(_, tipe_nama)| table.tipe(tipe_nama, span).ok())
                         .unwrap_or(TypeInfo {
