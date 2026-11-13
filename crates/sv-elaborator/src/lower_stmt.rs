@@ -66,9 +66,9 @@ fn lower_comb_statement(
             "deklarasi lokal tidak boleh dilower sebagai statement",
             decl.span,
         )),
-        CombinationalStatement::PortDeclSkip => unreachable!(
-            "PortDeclSkip harus difilter oleh lower_comb_block sebelum sampai ke sini"
-        ),
+        CombinationalStatement::PortDeclSkip => {
+            unreachable!("PortDeclSkip harus difilter oleh lower_comb_block sebelum sampai ke sini")
+        }
         CombinationalStatement::ExprStmt { span, .. } => Err(ElaborateError::new(
             "ekspresi tanpa efek samping tidak menghasilkan statement IR",
             *span,
@@ -113,7 +113,7 @@ fn lower_comb_statement(
                 target,
                 slice,
                 extra_slices: Vec::new(),
-                    part_dinamis: None,
+                part_dinamis: None,
                 value,
                 span: to_ir_span(*span),
             })
@@ -469,7 +469,7 @@ pub fn lower_module_statement(
                         target,
                         slice,
                         extra_slices: Vec::new(),
-                    part_dinamis: None,
+                        part_dinamis: None,
                         value,
                         style: AssignStyle::Blocking,
                     },
@@ -653,7 +653,7 @@ fn lower_seq_statement(
                 target,
                 slice,
                 extra_slices: Vec::new(),
-                    part_dinamis: None,
+                part_dinamis: None,
                 value,
                 span: to_ir_span(*span),
             })
@@ -1181,7 +1181,7 @@ fn lower_for_step(
         target,
         slice,
         extra_slices: Vec::new(),
-                    part_dinamis: None,
+        part_dinamis: None,
         value,
         style: AssignStyle::Blocking,
     })

@@ -84,6 +84,8 @@ fn op_pada_level(token: &Token, level: u8) -> Option<BinaryOp> {
         (Token::Inside, 3) => Some(BinaryOp::Inside),
         (Token::Lt, 4) => Some(BinaryOp::Lt),
         (Token::Gt, 4) => Some(BinaryOp::Gt),
+        // `->` — implikasi dalam SVA (LRM §11.4.10).
+        (Token::Implies, 3) => Some(BinaryOp::Implies),
         // `<=` di konteks ekspresi = less-equal (LRM §11.4).
         (Token::NonBlocking, 4) => Some(BinaryOp::Le),
         (Token::Ge, 4) => Some(BinaryOp::Ge),
@@ -190,30 +192,48 @@ fn parse_postfix(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
     if idx < tokens.len() && tokens[idx].token == Token::Cast {
         let span = tokens[idx].span;
         idx += 1; // lewati '\''
-        if idx >= tokens.len() || tokens[idx].token != Token::LParen {
+                  // `'{...}` — unsized concatenation cast (LRM §6.14/§11.8.1).
+        if idx < tokens.len() && tokens[idx].token == Token::LBrace {
+            let (expr, consumed) = super::expression::parse_brace(&tokens[idx..])?;
+            idx += consumed;
+            let cast = match base {
+                Expr::Ident { name, .. } => Expr::Cast {
+                    type_name: name,
+                    operand: Box::new(expr),
+                    span,
+                },
+                other => Expr::SizeCastExpr {
+                    width_expr: Box::new(other),
+                    operand: Box::new(expr),
+                    span,
+                },
+            };
+            base = cast;
+        } else if idx >= tokens.len() || tokens[idx].token != Token::LParen {
             return Err(pesan::harap(tokens, idx, "expected '(' setelah tanda cast"));
+        } else {
+            idx += 1;
+            let (operand, consumed) = parse_expression(&tokens[idx..])?;
+            idx += consumed;
+            if idx >= tokens.len() || tokens[idx].token != Token::RParen {
+                return Err(pesan::harap(tokens, idx, "expected ')' menutup cast"));
+            }
+            idx += 1;
+            let cast = match base {
+                Expr::Ident { name, .. } => Expr::Cast {
+                    type_name: name,
+                    operand: Box::new(operand),
+                    span,
+                },
+                // Size cast dengan lebar ekspresi, misal `(2*Width)'(x)`.
+                other => Expr::SizeCastExpr {
+                    width_expr: Box::new(other),
+                    operand: Box::new(operand),
+                    span,
+                },
+            };
+            base = cast;
         }
-        idx += 1;
-        let (operand, consumed) = parse_expression(&tokens[idx..])?;
-        idx += consumed;
-        if idx >= tokens.len() || tokens[idx].token != Token::RParen {
-            return Err(pesan::harap(tokens, idx, "expected ')' menutup cast"));
-        }
-        idx += 1;
-        let cast = match base {
-            Expr::Ident { name, .. } => Expr::Cast {
-                type_name: name,
-                operand: Box::new(operand),
-                span,
-            },
-            // Size cast dengan lebar ekspresi, misal `(2*Width)'(x)`.
-            other => Expr::SizeCastExpr {
-                width_expr: Box::new(other),
-                operand: Box::new(operand),
-                span,
-            },
-        };
-        base = cast;
     }
 
     // LRM §13.4: `nama(argumen, ...)` adalah pemanggilan function. Handle
@@ -288,17 +308,11 @@ fn parse_postfix(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
             if idx < tokens.len() && tokens[idx].token == Token::LParen {
                 idx += 1; // skip '('
                 let mut args = Vec::new();
-                while idx < tokens.len()
-                    && tokens[idx].token != Token::RParen
-                {
-                    let (arg, consumed) = super::expression::parse_expression(
-                        &tokens[idx..],
-                    )?;
+                while idx < tokens.len() && tokens[idx].token != Token::RParen {
+                    let (arg, consumed) = super::expression::parse_expression(&tokens[idx..])?;
                     args.push(arg);
                     idx += consumed;
-                    if tokens.get(idx).map(|t| &t.token)
-                        == Some(&Token::Comma)
-                    {
+                    if tokens.get(idx).map(|t| &t.token) == Some(&Token::Comma) {
                         idx += 1;
                     }
                 }
@@ -310,14 +324,11 @@ fn parse_postfix(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
                     ));
                 }
                 idx += 1; // skip ')'
-                // Convert obj.method(args) to method(obj, args)
+                          // Convert obj.method(args) to method(obj, args)
                 let (object, method) = match base {
                     Expr::HierarchicalRef { mut parts, span } => {
                         let method = parts.pop().unwrap();
-                        (
-                            Expr::HierarchicalRef { parts, span },
-                            method,
-                        )
+                        (Expr::HierarchicalRef { parts, span }, method)
                     }
                     Expr::Ident { name, span } => {
                         // Can't have method on bare ident without dot
@@ -341,18 +352,11 @@ fn parse_postfix(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
                     span: tokens[idx - 1].span,
                 };
             }
-        } else if idx + 1 < tokens.len()
-            && tokens[idx].token == Token::Colon
-            && tokens[idx + 1].token == Token::Colon
-        {
+        } else if idx + 1 < tokens.len() && tokens[idx].token == Token::ColonColon {
             // `::` — scope resolution untuk hierarki paket, misal `pkg::func`.
-            idx += 2;
+            idx += 1;
             if idx >= tokens.len() {
-                return Err(pesan::harap(
-                    tokens,
-                    idx,
-                    "expected nama setelah '::'",
-                ));
+                return Err(pesan::harap(tokens, idx, "expected nama setelah '::'"));
             }
             let part = match &tokens[idx].token {
                 Token::Ident(n) => n.clone(),
@@ -835,18 +839,17 @@ fn parse_primary(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
             // identifier dengan pemisah `::`.
             let mut full_name = n.clone();
             let mut consumed = 1;
-            while consumed + 2 < tokens.len()
-                && matches!(tokens.get(consumed).map(|t| &t.token), Some(&Token::Colon))
+            while consumed + 1 < tokens.len()
                 && matches!(
-                    tokens.get(consumed + 1).map(|t| &t.token),
-                    Some(&Token::Colon)
+                    tokens.get(consumed).map(|t| &t.token),
+                    Some(&Token::ColonColon)
                 )
                 && matches!(
-                    tokens.get(consumed + 2).map(|t| &t.token),
+                    tokens.get(consumed + 1).map(|t| &t.token),
                     Some(&Token::Ident(_))
                 )
             {
-                consumed += 3; // lewati `:`, `:`, dan nama bagian
+                consumed += 2; // lewati `::` dan nama bagian
                 if let Token::Ident(part) = &tokens[consumed - 1].token {
                     full_name.push_str("::");
                     full_name.push_str(part);
@@ -1166,25 +1169,35 @@ fn try_parse_replication(
     span: sv_lexer::span::Span,
 ) -> Result<(Expr, usize), String> {
     // Cek shift replication operator: `{<< n { ... }}` atau `{>> n { ... }}`.
+    // Jika setelah `<<`/`>>` langsung ada `{`, count dianggap 1 (default),
+    // misal `{<<{deny_mask}}`.
     let mut repl_idx = 1; // skip '{'
-    let _shift_op =
-        if repl_idx < tokens.len() && matches!(tokens[repl_idx].token, Token::Shl | Token::Shr) {
-            // Shift operator ada; skip dan lanjutkan parse count.
-            repl_idx += 1;
-            Some(())
-        } else {
-            None
-        };
+    if repl_idx < tokens.len() && matches!(tokens[repl_idx].token, Token::Shl | Token::Shr) {
+        repl_idx += 1;
+        Some(())
+    } else {
+        None
+    };
     // Count boleh ekspresi apa pun; setelahnya harus ada `{` yang menandai awal
     // operand. Ini yang membedakan `{n{x}}` dari `{a, b}`.
-    let (_, panjang_count) = parse_expression(&tokens[repl_idx..])?;
-    let nilai_mulai = repl_idx + panjang_count;
+    let (nilai_mulai, panjang_count) =
+        if repl_idx < tokens.len() && tokens[repl_idx].token == Token::LBrace {
+            // `{<<{x}}` — count default 1, `{` segera mengikuti shift operator.
+            (repl_idx, 0)
+        } else {
+            let (_, panjang_count) = parse_expression(&tokens[repl_idx..])?;
+            (repl_idx + panjang_count, panjang_count)
+        };
     if tokens.get(nilai_mulai).map(|t| &t.token) != Some(&Token::LBrace) {
         return Err("bukan replication: tidak ada '{' setelah count".to_string());
     }
     // Count diparse sebagai ekspresi penuh supaya identifier parameter diterima;
     // nilainya di-resolve elaborator lewat tabel parameter.
-    let (count, _) = parse_expression(&tokens[repl_idx..])?;
+    let (count, _) = if panjang_count == 0 {
+        (Expr::Number(1), 0)
+    } else {
+        parse_expression(&tokens[repl_idx..])?
+    };
     let (value, mut consumed) = parse_expression(&tokens[nilai_mulai + 1..])?;
     // LRM §11.8.2: bentuknya `{ constant_expression { concatenation } }` —
     // isinya concatenation, bukan replication lagi. `{2{2{a}}}` karena itu

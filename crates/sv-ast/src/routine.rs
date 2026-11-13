@@ -1,9 +1,9 @@
 // Tanggung jawab: node AST untuk deklarasi task/function SystemVerilog.
-use serde::{Deserialize, Serialize};
 use crate::combinational::CombinationalStatement;
 use crate::declaration::UnpackedDims;
 use crate::expression::Expr;
 use crate::width::WidthExpr;
+use serde::{Deserialize, Serialize};
 use sv_lexer::span::Span;
 
 /// Arah argumen task/function (LRM §13.3).

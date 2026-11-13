@@ -1,6 +1,6 @@
 // Tanggung jawab: node AST untuk system task testbench.
-use serde::{Deserialize, Serialize};
 use crate::expression::Expr;
+use serde::{Deserialize, Serialize};
 use sv_lexer::span::Span;
 
 /// Argumen system task: string format, ekspresi, atau named association.

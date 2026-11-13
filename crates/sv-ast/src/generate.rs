@@ -1,10 +1,10 @@
 // Tanggung jawab: node AST untuk region generate (LRM §27).
-use serde::{Deserialize, Serialize};
 use crate::declaration::Declaration;
 use crate::expression::Expr;
 use crate::instance::Instance;
 use crate::lvalue::Lvalue;
 use crate::statement::Statement;
+use serde::{Deserialize, Serialize};
 use sv_lexer::span::Span;
 
 /// Region `generate ... endgenerate` beserta variabel genvar yang dipakai.

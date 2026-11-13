@@ -64,8 +64,35 @@ pub fn parse_combinational_statement(
         Token::Assign => {
             let span = tokens[0].span;
             let mut idx = 1; // skip 'assign'
-                             // LRM §11.8.1: concatenation pada LHS, misal `{a, b} = {c, d}`,
-                             // setara dengan `a = c; b = d;`. Parse setiap elemen LHS terpisah.
+                             // Delay opsional: `assign #1ps lhs = rhs;` (LRM §11.4).
+                             // Nilai delay dikonsumsi tapi diabaikan — efek timing ditangani
+                             // oleh runtime, bukan parser.
+                             // Delay opsional: `assign #1ps lhs = rhs;` (LRM §11.4).
+                             // TODO: Implement penanganan delay secara penuh. Untuk sekarang,
+                             // lewati `#[number][unit]` jika ada.
+            if tokens.get(idx).map(|t| &t.token) == Some(&Token::Hash) {
+                idx += 1; // skip '#'
+                if idx < tokens.len() {
+                    // Skip angka dan satuan waktu opsional
+                    if let Some(Token::Number(_)) = tokens.get(idx).map(|t| &t.token) {
+                        idx += 1; // skip angka
+                        if tokens
+                            .get(idx)
+                            .map(|t| matches!(t.token, Token::Ident(_)))
+                            .unwrap_or(false)
+                        {
+                            idx += 1; // skip satuan waktu
+                        }
+                    }
+                }
+                eprintln!(
+                    "DEBUG: after delay handling, idx={}, next_token={:?}",
+                    idx,
+                    tokens.get(idx).map(|t| &t.token)
+                );
+            }
+            // LRM §11.8.1: concatenation pada LHS, misal `{a, b} = {c, d}`,
+            // setara dengan `a = c; b = d;`. Parse setiap elemen LHS terpisah.
             let lhss = if tokens.get(idx).map(|t| &t.token) == Some(&Token::LBrace) {
                 let (lhs_vec, consumed) = parse_concat_lvalue(&tokens[idx..])?;
                 idx += consumed;
@@ -235,7 +262,9 @@ pub fn parse_combinational_statement(
                     Some(Token::Casex) => CaseKind::Casex,
                     _ => CaseKind::Exact,
                 };
-                return parse_case(&tokens[1..], kind);
+                return parse_case(&tokens[1..], kind).map(|(stmt, consumed)| {
+                    (stmt, consumed + 1) // hitung token 'unique' yang dilewati
+                });
             }
             let span = tokens[0].span;
             // LRM §13.3: `nama(args);` adalah pemanggilan task, dibedakan dari
@@ -243,6 +272,20 @@ pub fn parse_combinational_statement(
             if tokens.get(1).map(|t| &t.token) == Some(&Token::LParen) {
                 let (call, consumed) = super::routine::parse_task_call(tokens)?;
                 return Ok((CombinationalStatement::TaskCall(call), consumed));
+            }
+            // Method call: `obj.method(args);` — treat as expression statement
+            if tokens.get(1).map(|t| &t.token) == Some(&Token::Dot) {
+                let (expr, consumed) = super::expression::parse_expression(tokens)?;
+                if tokens.get(consumed).map(|t| &t.token) != Some(&Token::Semi) {
+                    return Err("expected ';' after method call".to_string());
+                }
+                return Ok((
+                    CombinationalStatement::ExprStmt {
+                        expr: Box::new(expr),
+                        span: tokens[0].span,
+                    },
+                    consumed + 1,
+                ));
             }
             // LRM §13.3: task tanpa argumen boleh dipanggil tanpa kurung,
             // yaitu `nama;`. Bentuk ini sah karena nama task sudah pasti
@@ -816,6 +859,31 @@ pub fn parse_combinational_block(
                     body.push(CombinationalStatement::Decl(decl));
                 }
                 idx += consumed;
+            }
+            // Deklarasi variabel dengan tipe diturunkan (typedef/Ident),
+            // misal `matrix_col_t out;` atau `sp2v_e [N-1:0] out;` di dalam
+            // function/block. Pola: tipe (Ident) diikuti dimensi packed opsional,
+            // lalu nama variabel (Ident) dan ';'.
+            Token::Ident(_) => {
+                let mut j = idx + 1;
+                // Lewati dimensi packed `[...]` setelah tipe.
+                while j < tokens.len() && tokens[j].token == Token::LBracket {
+                    j = crate::module::lewati_kurung_siku(tokens, j);
+                }
+                let is_decl = j + 1 < tokens.len()
+                    && matches!(tokens[j].token, Token::Ident(_))
+                    && tokens[j + 1].token == Token::Semi;
+                if is_decl {
+                    let (decls, consumed) = super::declaration::parse_declaration(&tokens[idx..])?;
+                    for decl in decls {
+                        body.push(CombinationalStatement::Decl(decl));
+                    }
+                    idx += consumed;
+                } else {
+                    let (stmt, consumed) = parse_combinational_statement(&tokens[idx..])?;
+                    body.push(stmt);
+                    idx += consumed;
+                }
             }
             // `localparam` di dalam blok combinational — lewati hingga ';'.
             Token::LocalParam => {

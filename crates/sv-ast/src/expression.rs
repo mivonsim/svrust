@@ -219,6 +219,8 @@ pub enum BinaryOp {
     Inside,
     LogAnd,
     LogOr,
+    /// `->` — implikasi logis (LRM: `a -> b` = `!a || b`).
+    Implies,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

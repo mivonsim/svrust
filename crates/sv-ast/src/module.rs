@@ -1,11 +1,11 @@
 // Tanggung jawab: node AST untuk module SystemVerilog.
-use serde::{Deserialize, Serialize};
 use crate::declaration::Declaration;
 use crate::generate::GenerateRegion;
 use crate::instance::Instance;
 use crate::port::Port;
 use crate::statement::Statement;
 use crate::width::ParamDecl;
+use serde::{Deserialize, Serialize};
 use sv_lexer::span::Span;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

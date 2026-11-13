@@ -1,6 +1,6 @@
 // Tanggung jawab: `timescale` unit/precision (LRM §21.8).
-use serde::{Deserialize, Serialize};
 use crate::time_unit::TimeUnit;
+use serde::{Deserialize, Serialize};
 
 /// Skala waktu modul: satuan `#delay` tanpa satuan dan satuan pembulatan.
 ///

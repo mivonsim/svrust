@@ -404,7 +404,11 @@ fn ekspresi(expr: &mut Expr, scale: TimeScale) {
         | Expr::BuiltinCast { operand, .. }
         | Expr::SizeCast { operand, .. }
         | Expr::SignCast { operand, .. } => ekspresi(operand, scale),
-        Expr::SizeCastExpr { operand, width_expr, .. } => {
+        Expr::SizeCastExpr {
+            operand,
+            width_expr,
+            ..
+        } => {
             ekspresi(operand, scale);
             ekspresi(width_expr, scale);
         }

@@ -342,24 +342,18 @@ pub fn elaborate_top(
     for pkg_decl in packages {
         for decl in &pkg_decl.typedefs {
             let lebar = match &decl.body {
-                sv_ast::typedef::TypeDefBody::Scalar { width, .. } => {
-                    match width {
-                        sv_ast::width::WidthExpr::Literal(w) => *w as u32,
-                        _ => 1,
-                    }
-                }
-                sv_ast::typedef::TypeDefBody::Enum { base_width, .. } => {
-                    match base_width {
-                        sv_ast::width::WidthExpr::Literal(w) => *w as u32,
-                        _ => 1,
-                    }
-                }
+                sv_ast::typedef::TypeDefBody::Scalar { width, .. } => match width {
+                    sv_ast::width::WidthExpr::Literal(w) => *w as u32,
+                    _ => 1,
+                },
+                sv_ast::typedef::TypeDefBody::Enum { base_width, .. } => match base_width {
+                    sv_ast::width::WidthExpr::Literal(w) => *w as u32,
+                    _ => 1,
+                },
                 sv_ast::typedef::TypeDefBody::Struct { fields } => {
-                    fields.iter().fold(0u32, |acc, f| {
-                        match &f.width {
-                            sv_ast::width::WidthExpr::Literal(w) => acc + *w as u32,
-                            _ => acc,
-                        }
+                    fields.iter().fold(0u32, |acc, f| match &f.width {
+                        sv_ast::width::WidthExpr::Literal(w) => acc + *w as u32,
+                        _ => acc,
                     })
                 }
             };

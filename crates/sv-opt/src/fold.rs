@@ -105,6 +105,8 @@ fn nilai_bin(op: BinOp, a: u64, b: u64, lebar: u32, signed: bool) -> Option<u64>
         // `truthy` pada konstanta selalu `nilai != 0`.
         BinOp::LogAnd => Some(u64::from(a != 0 && b != 0)),
         BinOp::LogOr => Some(u64::from(a != 0 || b != 0)),
+        // `a -> b` = `!a || b`: false hanya bila a non-nol dan b nol.
+        BinOp::Implies => Some(u64::from(a == 0 || b != 0)),
     }
 }
 

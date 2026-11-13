@@ -1,7 +1,7 @@
 // Tanggung jawab: node AST untuk target assignment (sinyal atau irisannya).
-use serde::{Deserialize, Serialize};
 use crate::expression::Expr;
 use crate::width::WidthExpr;
+use serde::{Deserialize, Serialize};
 use sv_lexer::span::Span;
 
 /// Irisan bit target: `[i]` untuk bit-select, `[msb:lsb]` untuk part-select.
@@ -36,9 +36,7 @@ impl Slice {
     /// Lebar irisan dalam bit. Hanya bisa dihitung bila kedua batas literal.
     pub fn width(&self) -> Option<u64> {
         match (&self.msb, &self.lsb) {
-            (WidthExpr::Literal(m), WidthExpr::Literal(l)) => {
-                Some(*m as u64 - *l as u64 + 1)
-            }
+            (WidthExpr::Literal(m), WidthExpr::Literal(l)) => Some(*m as u64 - *l as u64 + 1),
             _ => None,
         }
     }
@@ -47,9 +45,7 @@ impl Slice {
     /// Digunakan elaborator setelah ekspresi parameter di-resolve.
     pub fn as_literal(self) -> Option<(u32, u32)> {
         match (&self.msb, &self.lsb) {
-            (WidthExpr::Literal(m), WidthExpr::Literal(l)) => {
-                Some((*m as u32, *l as u32))
-            }
+            (WidthExpr::Literal(m), WidthExpr::Literal(l)) => Some((*m as u32, *l as u32)),
             _ => None,
         }
     }

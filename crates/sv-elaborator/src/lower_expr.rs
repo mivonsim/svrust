@@ -942,6 +942,7 @@ fn map_binary_op(op: BinaryOp) -> BinOp {
         BinaryOp::NotEqEq => BinOp::NotEqEq,
         BinaryOp::Lt => BinOp::Lt,
         BinaryOp::Gt => BinOp::Gt,
+        BinaryOp::Implies => BinOp::Implies,
         BinaryOp::Le => BinOp::Le,
         BinaryOp::Ge => BinOp::Ge,
         BinaryOp::LogAnd => BinOp::LogAnd,

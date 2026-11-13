@@ -11,9 +11,25 @@ pub fn parse_continuous_assign(tokens: &[SpannedToken]) -> Result<(Statement, us
     }
     let span = tokens[0].span;
     let mut idx = 1; // skip 'assign'
-                     // Drive strength specification: `assign (strength0, strength1) lhs = rhs;`
-                     // Ini bukan standar SystemVerilog tetapi dipakai OpenTitan DV. Lewati
-                     // hingga ')' penutup.
+                     // Delay opsional: `assign #1ps lhs = rhs;` (LRM §11.4).
+    if tokens.get(idx).map(|t| &t.token) == Some(&Token::Hash) {
+        idx += 1; // skip '#'
+        if idx < tokens.len() {
+            // Nilai delay harus berupa angka literal: `1`, `10`, dll.
+            if let Some(Token::Number(_)) = tokens.get(idx).map(|t| &t.token) {
+                idx += 1; // skip angka
+                          // Satuan waktu opsional: `ps`, `ns`, `us`, `ms`, `s`, `fs`
+                if let Some(Token::Ident(n)) = tokens.get(idx).map(|t| &t.token) {
+                    if matches!(n.as_str(), "ps" | "ns" | "us" | "ms" | "s" | "fs") {
+                        idx += 1; // skip satuan waktu
+                    }
+                }
+            }
+        }
+    }
+    // Drive strength specification: `assign (strength0, strength1) lhs = rhs;`
+    // Ini bukan standar SystemVerilog tetapi dipakai OpenTitan DV. Lewati
+    // hingga ')' penutup.
     if tokens.get(idx).map(|t| &t.token) == Some(&Token::LParen) {
         let mut depth = 1u32;
         idx += 1;

@@ -439,6 +439,7 @@ fn nilai_konstan(
                 BinaryOp::NotEqEq => u64::from(a != b),
                 BinaryOp::Lt => u64::from(a < b),
                 BinaryOp::Gt => u64::from(a > b),
+                BinaryOp::Implies => u64::from(a == 0 || b != 0),
                 BinaryOp::Le => u64::from(a <= b),
                 BinaryOp::Ge => u64::from(a >= b),
                 BinaryOp::LogAnd => u64::from(a != 0 && b != 0),
@@ -520,8 +521,9 @@ pub fn lebar_deklarasi(
             Err(_) => {
                 // Coba cari nama tipe tanpa prefix paket (mis. `aes_reg2hw_t`
                 // dari `aes_reg_pkg::aes_reg2hw_t`).
-                if let Some((_, info)) =
-                    table.iter_tipe().find(|(k, _)| k.ends_with(&format!("::{nama}")))
+                if let Some((_, info)) = table
+                    .iter_tipe()
+                    .find(|(k, _)| k.ends_with(&format!("::{nama}")))
                 {
                     info
                 } else if nama.contains("::") {

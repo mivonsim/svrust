@@ -201,6 +201,8 @@ pub enum Token {
     RBrace,
     Semi,
     Colon,
+    /// `::` — scope resolution paket/hierarki (LRM §6.6, §26).
+    ColonColon,
     Comma,
     Hash,
     Dot,
@@ -216,6 +218,8 @@ pub enum Token {
     /// Dipisah dari `Shr` karena `>>` selalu mengisi nol, sedangkan `>>>`
     /// mengisi bit sign bila tipe hasil signed.
     Sar,
+    /// `->` — implikasi dalam SVA (LRM §15.5.1).
+    Implies,
     And,
     AndAnd,
     Or,

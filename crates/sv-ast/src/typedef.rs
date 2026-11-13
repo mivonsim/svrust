@@ -1,7 +1,7 @@
 // Tanggung jawab: node AST untuk deklarasi `typedef` dan `typedef enum`.
-use serde::{Deserialize, Serialize};
 use crate::expression::Expr;
 use crate::width::WidthExpr;
+use serde::{Deserialize, Serialize};
 use sv_lexer::span::Span;
 
 /// Satu field dalam `struct packed` (LRM §6.7).

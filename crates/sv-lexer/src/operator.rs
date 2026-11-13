@@ -112,7 +112,14 @@ pub fn scan_operator(
         '{' => Ok(Token::LBrace),
         '}' => Ok(Token::RBrace),
         ';' => Ok(Token::Semi),
-        ':' => Ok(Token::Colon),
+        ':' => {
+            if chars.peek() == Some(&':') {
+                makan(chars, byte_offset, col);
+                Ok(Token::ColonColon)
+            } else {
+                Ok(Token::Colon)
+            }
+        }
         ',' => Ok(Token::Comma),
         '#' => Ok(Token::Hash),
         '.' => Ok(Token::Dot),
@@ -131,6 +138,9 @@ pub fn scan_operator(
             if chars.peek() == Some(&'-') {
                 makan(chars, byte_offset, col);
                 Ok(Token::Decr)
+            } else if chars.peek() == Some(&'>') {
+                makan(chars, byte_offset, col);
+                Ok(Token::Implies)
             } else {
                 Ok(Token::Minus)
             }

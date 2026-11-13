@@ -34,6 +34,8 @@ pub enum BinOp {
     Inside,
     LogAnd,
     LogOr,
+    /// `->` — implikasi logis: `!a || b`.
+    Implies,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,7 +102,13 @@ impl BinOp {
     pub fn is_relational(self) -> bool {
         matches!(
             self,
-            BinOp::Eq | BinOp::NotEq | BinOp::NotEqEq | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge
+            BinOp::Eq
+                | BinOp::NotEq
+                | BinOp::NotEqEq
+                | BinOp::Lt
+                | BinOp::Gt
+                | BinOp::Le
+                | BinOp::Ge
         )
     }
 

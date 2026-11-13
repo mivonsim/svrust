@@ -13,7 +13,13 @@ pub fn parse_lvalue(tokens: &[SpannedToken]) -> Result<(Lvalue, usize), String> 
     }
     let name = match &tokens[0].token {
         Token::Ident(n) => n.clone(),
-        other => return Err(pesan::tandai(tokens, 0, format!("expected LHS signal name, ditemukan {:?}", other))),
+        other => {
+            return Err(pesan::tandai(
+                tokens,
+                0,
+                format!("expected LHS signal name, ditemukan {:?}", other),
+            ))
+        }
     };
     let span = tokens[0].span;
 
@@ -29,16 +35,32 @@ pub fn parse_lvalue(tokens: &[SpannedToken]) -> Result<(Lvalue, usize), String> 
         let closing_awal = (cursor + 1..=tokens.len())
             .find(|&i| tokens.get(i).map(|t| &t.token) == Some(&Token::RBracket));
         let Some(first_closing) = closing_awal else {
-            return Err(pesan::harap(tokens, cursor, "expected ']' closing LHS select"));
+            return Err(pesan::harap(
+                tokens,
+                cursor,
+                "expected ']' closing LHS select",
+            ));
         };
         if first_closing == cursor + 1 {
-            return Err(pesan::harap(tokens, cursor, "kurung siku seleksi kosong `[]` belum didukung"));
+            return Err(pesan::harap(
+                tokens,
+                cursor,
+                "kurung siku seleksi kosong `[]` belum didukung",
+            ));
         }
         if tokens[cursor + 1].token == Token::Colon {
-            return Err(pesan::harap(tokens, cursor + 1, "part-select dengan batas bawah kosong `[:lsb]` belum didukung"));
+            return Err(pesan::harap(
+                tokens,
+                cursor + 1,
+                "part-select dengan batas bawah kosong `[:lsb]` belum didukung",
+            ));
         }
         if tokens.get(first_closing - 1).map(|t| &t.token) == Some(&Token::Colon) {
-            return Err(pesan::harap(tokens, first_closing - 1, "part-select dengan batas atas kosong `[msb:]` belum didukung"));
+            return Err(pesan::harap(
+                tokens,
+                first_closing - 1,
+                "part-select dengan batas atas kosong `[msb:]` belum didukung",
+            ));
         }
 
         // Indexed part-select `a[base +: width]` / `[base -: width]` (LRM §7.8)
@@ -113,8 +135,9 @@ pub fn parse_lvalue(tokens: &[SpannedToken]) -> Result<(Lvalue, usize), String> 
                             cursor = second_closing + 1;
                         } else {
                             // Indeks dinamis setelah genvar: data[i][j] — simpan sebagai ekspresi.
-                            let (expr, consumed) =
-                                super::expression::parse_expression(&tokens[cursor + 1..second_closing])?;
+                            let (expr, consumed) = super::expression::parse_expression(
+                                &tokens[cursor + 1..second_closing],
+                            )?;
                             extra_slices.push(Slice {
                                 msb: WidthExpr::Expr {
                                     msb: Box::new(expr.clone()),
@@ -406,7 +429,7 @@ pub fn parse_lvalue(tokens: &[SpannedToken]) -> Result<(Lvalue, usize), String> 
             extra_slices.push(slice_val);
             cursor = next_cursor;
         }
-        }
+    }
 
     Ok((
         Lvalue {
@@ -448,20 +471,21 @@ fn parse_slice_index(tokens: &[SpannedToken]) -> Result<(Slice, usize), String> 
         // msb, ':', lsb
         return Ok((Slice { msb, lsb }, 3));
     }
-    Ok((Slice {
-        msb: msb.clone(),
-        lsb: msb,
-    }, 1))
+    Ok((
+        Slice {
+            msb: msb.clone(),
+            lsb: msb,
+        },
+        1,
+    ))
 }
 
 fn parse_index(tokens: &[SpannedToken], at: usize, posisi: &str) -> Result<WidthExpr, String> {
     match tokens.get(at).map(|t| &t.token) {
-        Some(Token::Number(n)) => {
-            Ok(WidthExpr::Literal(u32::try_from(*n).unwrap_or(0) as usize))
-        }
-        Some(Token::BasedNumber { value, .. }) => {
-            Ok(WidthExpr::Literal(u32::try_from(*value).unwrap_or(0) as usize))
-        }
+        Some(Token::Number(n)) => Ok(WidthExpr::Literal(u32::try_from(*n).unwrap_or(0) as usize)),
+        Some(Token::BasedNumber { value, .. }) => Ok(WidthExpr::Literal(
+            u32::try_from(*value).unwrap_or(0) as usize,
+        )),
         // Indeks non-literal: parameter atau ekspresi. Simpan sebagai Expr
         // agar elaborator bisa mengevaluasinya ke literal nanti.
         Some(Token::Ident(n)) => {

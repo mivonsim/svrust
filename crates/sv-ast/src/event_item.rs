@@ -1,6 +1,6 @@
 // Tanggung jawab: satu item event control (sisi edge + sinyal) pada `@(...)`.
-use serde::{Deserialize, Serialize};
 use super::event_edge::EventEdge;
+use serde::{Deserialize, Serialize};
 use sv_lexer::span::Span;
 
 /// Satu pasangan sisi edge dan sinyal yang diawasi di dalam `@(...)`.

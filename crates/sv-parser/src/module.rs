@@ -148,20 +148,22 @@ fn parse_param_body(
     } else if tokens
         .get(idx)
         .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
-        && tokens.get(idx + 1).is_some_and(|t| t.token == Token::Colon)
-        && tokens.get(idx + 2).is_some_and(|t| t.token == Token::Colon)
+        && tokens
+            .get(idx + 1)
+            .is_some_and(|t| t.token == Token::ColonColon)
+        && tokens
+            .get(idx + 2)
+            .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
         && tokens
             .get(idx + 3)
             .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
-        && tokens
-            .get(idx + 4)
-            .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
-        && tokens.get(idx + 5).is_some_and(|t| {
+        && tokens.get(idx + 4).is_some_and(|t| {
             t.token == Token::Eq || t.token == Token::LBracket || t.token == Token::Comma
         })
     {
         // `parameter pkg::type Nama = ...` — tipe dengan scope paket (LRM §6.20.1).
-        idx += 4; // lewati pkg :: type
+        // Bentuk: `Ident` `::` `Ident` `Ident` `=`. `::` adalah satu token `ColonColon`.
+        idx += 3; // lewati pkg :: type
     } else if tokens
         .get(idx)
         .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
@@ -567,15 +569,15 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
             }
 
             // Qualified type: `nama_paket::nama_tipe` (misal `ast_pkg::awire_t`).
-            // `::` adalah dua token `Colon`, keduanya harus dilewati.
+            // `::` adalah satu token `ColonColon`, harus dilewati.
             while idx < tokens.len() {
                 if matches!(tokens[idx].token, Token::Ident(_))
                     && !is_net_type(&tokens[idx].token)
-                    && tokens.get(idx + 1).map(|t| &t.token) == Some(&Token::Colon)
+                    && tokens.get(idx + 1).map(|t| &t.token) == Some(&Token::ColonColon)
                 {
                     idx += 1; // skip nama paket
-                              // Lewati semua token `Colon` (biasanya dua untuk `::`).
-                    while idx < tokens.len() && matches!(tokens[idx].token, Token::Colon) {
+                              // Lewati token `ColonColon` (`::`).
+                    while idx < tokens.len() && matches!(tokens[idx].token, Token::ColonColon) {
                         idx += 1;
                     }
                     if matches!(tokens.get(idx).map(|t| &t.token), Some(&Token::Ident(_))) {
@@ -1106,10 +1108,11 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                 if tokens
                     .get(idx)
                     .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
-                    && tokens.get(idx + 1).is_some_and(|t| t.token == Token::Colon)
-                    && tokens.get(idx + 2).is_some_and(|t| t.token == Token::Colon)
                     && tokens
-                        .get(idx + 3)
+                        .get(idx + 1)
+                        .is_some_and(|t| t.token == Token::ColonColon)
+                    && tokens
+                        .get(idx + 2)
                         .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
                 {
                     match super::typedef::parse_typed_declaration(&tokens[idx..]) {

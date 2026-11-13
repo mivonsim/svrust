@@ -1,6 +1,6 @@
 // Tanggung jawab: node AST untuk instansiasi module.
-use serde::{Deserialize, Serialize};
 use crate::expression::Expr;
+use serde::{Deserialize, Serialize};
 use sv_lexer::span::Span;
 
 /// Override parameter bernama, misal `.WIDTH(16)`.

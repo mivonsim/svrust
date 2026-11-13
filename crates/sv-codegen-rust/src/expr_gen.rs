@@ -122,14 +122,9 @@ fn write_bits_expr(expr: &Expr, out: &mut String, indent: &Indent) {
                 BinOp::Pow => write_helper_binary("pow", expr_width(expr), lhs, rhs, out, indent),
                 // `inside` — periksa apakah lhs sama dengan salah satu elemen
                 // dalam concatenation rhs, chunk per chunk dengan lebar lhs.
-                BinOp::Inside => write_helper_binary(
-                    "bit_inside",
-                    lhs.data_type().width,
-                    lhs,
-                    rhs,
-                    out,
-                    indent,
-                ),
+                BinOp::Inside => {
+                    write_helper_binary("bit_inside", lhs.data_type().width, lhs, rhs, out, indent)
+                }
                 _ => {
                     out.push('(');
                     write_expr(lhs, out, indent);
@@ -549,6 +544,8 @@ fn bin_op_token(op: BinOp) -> &'static str {
         BinOp::Ge => ">=",
         BinOp::LogAnd => "&&",
         BinOp::LogOr => "||",
+        // `->` — implikasi logis, ditulis sebagai `(!a || b)` di write_bool_expr.
+        BinOp::Implies => "->",
         // `**` — perpangkatan, dipanggil lewat helper runtime.
         BinOp::Pow => "pow",
         // `inside` — pemeriksaan keanggotaan lewat helper runtime.
@@ -569,6 +566,7 @@ fn bin_op_bool(op: BinOp) -> bool {
             | BinOp::Ge
             | BinOp::LogAnd
             | BinOp::LogOr
+            | BinOp::Implies
     )
 }
 
@@ -603,6 +601,15 @@ fn write_bool_expr(expr: &Expr, out: &mut String, indent: &Indent) {
         Expr::Bin { op, lhs, rhs, .. } if *op == BinOp::LogOr => {
             out.push('(');
             write_truthy(lhs, out, indent);
+            out.push_str(" || ");
+            write_truthy(rhs, out, indent);
+            out.push(')');
+        }
+        Expr::Bin { op, lhs, rhs, .. } if *op == BinOp::Implies => {
+            out.push('(');
+            out.push_str("!(");
+            write_truthy(lhs, out, indent);
+            out.push(')');
             out.push_str(" || ");
             write_truthy(rhs, out, indent);
             out.push(')');

@@ -1595,6 +1595,13 @@ fn eval_bin_const(op: BinaryOp, a: u64, b: u64, width: u32) -> u64 {
                 0
             }
         }
+        BinaryOp::Implies => {
+            if a == b || a == 0 {
+                1
+            } else {
+                0
+            }
+        }
         BinaryOp::Le => {
             if a <= b {
                 1

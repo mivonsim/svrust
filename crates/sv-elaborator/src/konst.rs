@@ -363,9 +363,7 @@ fn semua_ident_dikenal(expr: &Expr, params: &ParamTable) -> bool {
             width_expr,
             operand,
             ..
-        } => {
-            semua_ident_dikenal(width_expr, params) && semua_ident_dikenal(operand, params)
-        }
+        } => semua_ident_dikenal(width_expr, params) && semua_ident_dikenal(operand, params),
     }
 }
 
@@ -404,6 +402,8 @@ fn binary(op: BinaryOp, a: u64, b: u64) -> Result<u64, ElaborateError> {
         BinaryOp::Ge => u64::from(a >= b),
         BinaryOp::LogAnd => u64::from(a != 0 && b != 0),
         BinaryOp::LogOr => u64::from(a != 0 || b != 0),
+        // `a -> b` = `!a || b`: false hanya bila a bernilai non-nol dan b nol.
+        BinaryOp::Implies => u64::from(a == 0 || b != 0),
     };
     Ok(hasil)
 }

@@ -1,6 +1,6 @@
 // Tanggung jawab: node AST untuk port module.
-use serde::{Deserialize, Serialize};
 use crate::width::WidthExpr;
+use serde::{Deserialize, Serialize};
 use sv_lexer::span::Span;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

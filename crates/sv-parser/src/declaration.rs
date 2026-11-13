@@ -128,12 +128,11 @@ pub fn parse_declaration(tokens: &[SpannedToken]) -> Result<(Vec<Declaration>, u
     let mut idx = 1; // skip type keyword (atau ident pertama dari nama tipe hierarkis)
                      // Lewati sisa nama tipe hierarkis: `pkg::subpkg::nama_tipe` — setiap `::`
                      // (dua token Colon) diikuti oleh ident adalah bagian dari nama tipe.
-    while idx + 2 < tokens.len()
-        && matches!(tokens[idx].token, Token::Colon)
-        && matches!(tokens[idx + 1].token, Token::Colon)
-        && matches!(tokens[idx + 2].token, Token::Ident(_))
+    while idx + 1 < tokens.len()
+        && matches!(tokens[idx].token, Token::ColonColon)
+        && matches!(tokens[idx + 1].token, Token::Ident(_))
     {
-        idx += 3; // lewati `:`, `:`, dan nama bagian
+        idx += 2; // lewati `::` dan nama bagian
     }
 
     // `struct` / `union` packed (LRM §6.7, §8): body berisi daftar field

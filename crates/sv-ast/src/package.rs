@@ -1,7 +1,7 @@
 // Tanggung jawab: deklarasi paket SystemVerilog dan parameter paketnya.
-use serde::{Deserialize, Serialize};
 use crate::typedef::TypeDefDecl;
 use crate::width::LocalParamDecl;
+use serde::{Deserialize, Serialize};
 use sv_lexer::span::Span;
 
 /// Deklarasi satu paket `package Nama ... endpackage` (LRM §26).

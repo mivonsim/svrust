@@ -228,13 +228,10 @@ fn parse_arg(tokens: &[SpannedToken]) -> Result<(RoutineArg, usize), String> {
             }
             // Lewati `::` scope jika ada: `pkg::type`
             while idx + 1 < tokens.len()
-                && tokens[idx].token == Token::Colon
-                && tokens[idx + 1].token == Token::Colon
+                && tokens[idx].token == Token::ColonColon
+                && matches!(tokens[idx + 1].token, Token::Ident(_))
             {
                 idx += 2;
-                if idx < tokens.len() && matches!(tokens[idx].token, Token::Ident(_)) {
-                    idx += 1;
-                }
             }
         }
     }

@@ -29,18 +29,37 @@ pub fn parse_param_list(
     while idx < tokens.len() && tokens[idx].token != Token::RParen {
         // `localparam` di dalam `#(...)` adalah konstanta terkunci yang tidak
         // boleh di-override saat instansiasi (LRM §6.20.1).
+        // SV juga mengizinkan parameter tanpa kata kunci `parameter`,
+        // misal `#(lc_tx_t ActVal = On)` (LRM §6.20.1).
         let is_local = match tokens[idx].token {
             Token::Parameter => false,
             Token::LocalParam => true,
             ref lain => {
-                return Err(pesan::tandai(
-                    tokens,
-                    idx,
-                    format!("expected 'parameter' atau 'localparam', ditemukan {:?}", lain),
-                ))
+                // Kalau bukan `parameter`/`localparam`, coba deteksi apakah
+                // ini parameter tanpa kata kunci: `tipe nama = nilai` atau
+                // `tipe nama[dim] = nilai`.
+                let looks_like_param = matches!(lain, Token::Ident(_))
+                    || sv_lexer::token::tipe::bisa_mulai_deklarasi(lain);
+                if looks_like_param {
+                    // Parameter tanpa kata kunci — tidak ada `is_local`.
+                    false
+                } else {
+                    return Err(pesan::tandai(
+                        tokens,
+                        idx,
+                        format!(
+                            "expected 'parameter' atau 'localparam', ditemukan {:?}",
+                            lain
+                        ),
+                    ));
+                }
             }
         };
-        idx += 1;
+        // Kalau token awal bukan `parameter`/`localparam`, jangan maju idx
+        // (biarkan parsing tipe di bawah menangani).
+        if matches!(tokens[idx].token, Token::Parameter | Token::LocalParam) {
+            idx += 1;
+        }
 
         if idx >= tokens.len() {
             return Err(pesan::harap(
@@ -132,23 +151,24 @@ pub fn parse_param_list(
         } else if tokens
             .get(idx)
             .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
-            && tokens.get(idx + 1).is_some_and(|t| t.token == Token::Colon)
-            && tokens.get(idx + 2).is_some_and(|t| t.token == Token::Colon)
+            && tokens
+                .get(idx + 1)
+                .is_some_and(|t| t.token == Token::ColonColon)
+            && tokens
+                .get(idx + 2)
+                .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
             && tokens
                 .get(idx + 3)
                 .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
-            && tokens
-                .get(idx + 4)
-                .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
-            && tokens.get(idx + 5).is_some_and(|t| {
+            && tokens.get(idx + 4).is_some_and(|t| {
                 t.token == Token::Eq || t.token == Token::LBracket || t.token == Token::Comma
             })
         {
             // `parameter pkg::type Nama = ...` — tipe dengan scope paket (LRM §6.20.1).
-            // Bentuk: `Ident` `::` `Ident` `Ident` `=`. `::` adalah dua token `Colon`.
+            // Bentuk: `Ident` `::` `Ident` `Ident` `=`. `::` adalah satu token `ColonColon`.
             let tn = match &tokens[idx].token {
                 Token::Ident(pkg) => {
-                    let tipe = match &tokens[idx + 3].token {
+                    let tipe = match &tokens[idx + 2].token {
                         Token::Ident(t) => t.clone(),
                         _ => String::new(),
                     };
@@ -156,7 +176,7 @@ pub fn parse_param_list(
                 }
                 _ => None,
             };
-            idx += 4; // lewati pkg :: type
+            idx += 3; // lewati pkg :: type
             tn
         } else {
             None
@@ -239,17 +259,18 @@ pub fn parse_param_list(
             let scoped = tokens
                 .get(idx)
                 .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
-                && tokens.get(idx + 1).is_some_and(|t| t.token == Token::Colon)
-                && tokens.get(idx + 2).is_some_and(|t| t.token == Token::Colon)
                 && tokens
-                    .get(idx + 3)
+                    .get(idx + 1)
+                    .is_some_and(|t| t.token == Token::ColonColon)
+                && tokens
+                    .get(idx + 2)
                     .is_some_and(|t| matches!(&t.token, Token::Ident(_)));
             if scoped {
                 let pkg = match &tokens[idx].token {
                     Token::Ident(n) => n.clone(),
                     _ => String::new(),
                 };
-                let nama = match &tokens[idx + 3].token {
+                let nama = match &tokens[idx + 2].token {
                     Token::Ident(n) => n.clone(),
                     _ => String::new(),
                 };

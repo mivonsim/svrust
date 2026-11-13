@@ -401,17 +401,16 @@ pub fn parse_typed_declaration(
     };
     let mut idx = 1;
     // Nama tipe berkualifikasi paket: `pkg::nama_tipe` (mis.
-    // `prim_alert_pkg::alert_tx_t`). `::` adalah dua token `Colon`.
-    if tokens.get(idx).map(|t| &t.token) == Some(&Token::Colon)
-        && tokens.get(idx + 1).map(|t| &t.token) == Some(&Token::Colon)
+    // `prim_alert_pkg::alert_tx_t`). `::` adalah satu token `ColonColon`.
+    if tokens.get(idx).map(|t| &t.token) == Some(&Token::ColonColon)
         && tokens
-            .get(idx + 2)
+            .get(idx + 1)
             .is_some_and(|t| matches!(&t.token, Token::Ident(_)))
     {
-        if let Token::Ident(n) = &tokens[idx + 2].token {
+        if let Token::Ident(n) = &tokens[idx + 1].token {
             type_name = format!("{}::{}", type_name, n);
         }
-        idx += 3;
+        idx += 2;
     }
 
     let signed = matches!(tokens.get(idx).map(|t| &t.token), Some(Token::Signed));

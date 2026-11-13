@@ -982,11 +982,7 @@ fn pisahkan_penanda(error: &str) -> (&str, Option<(usize, usize)>) {
 /// 2. Kalau tidak, cari kata kunci dari pesan di source_asli.
 /// 3. Kalau masih tidak, gunakan baris 1 kolom 1 — bukan baris terakhir
 ///    (`endmodule`) agar tidak menyesalat pembaca.
-fn cari_lokasi_fallback(
-    error: &str,
-    tokens: &[SpannedToken],
-    source_asli: &str,
-) -> (usize, usize) {
+fn cari_lokasi_fallback(error: &str, tokens: &[SpannedToken], source_asli: &str) -> (usize, usize) {
     // 1. Coba cari token yang disebut setelah "ditemukan ".
     if let Some(target) = error
         .split_once("ditemukan ")
@@ -1002,18 +998,14 @@ fn cari_lokasi_fallback(
             }
         }
         // Ekstrak nama ident dari format "identifier 'X'" atau "nama sinyal".
-        if let Some(nama) = target
-            .split_whitespace()
-            .last()
-            .and_then(|w| {
-                let s = w.trim_matches(['\'', '"']).to_string();
-                if s.len() > 1 {
-                    Some(s)
-                } else {
-                    None
-                }
-            })
-        {
+        if let Some(nama) = target.split_whitespace().last().and_then(|w| {
+            let s = w.trim_matches(['\'', '"']).to_string();
+            if s.len() > 1 {
+                Some(s)
+            } else {
+                None
+            }
+        }) {
             for token in tokens.iter() {
                 if let sv_lexer::token::Token::Ident(ident) = &token.token {
                     if ident == &nama {
@@ -1043,7 +1035,9 @@ fn cari_lokasi_fallback(
     //    paksa ke baris 1 atau baris terakhir.
     if error.contains("empty expression") || error.contains("input habis") {
         for (baris, line) in source_asli.lines().enumerate() {
-            if line.contains(';') || line.contains('{') || line.contains('}')
+            if line.contains(';')
+                || line.contains('{')
+                || line.contains('}')
                 || line.contains("endmodule")
             {
                 return (baris + 1, 1);
@@ -1053,9 +1047,7 @@ fn cari_lokasi_fallback(
     // 4. Kalau error soal seleksi / indeks (`[...]`), cari baris yang
     //    mengandung `[` di source_asli — itu lebih dekat ke masalah asli
     //    dibandingkan baris 1.
-    if error.contains("seleksi") || error.contains("indeks")
-        || error.contains("part-select")
-    {
+    if error.contains("seleksi") || error.contains("indeks") || error.contains("part-select") {
         for (baris, line) in source_asli.lines().enumerate() {
             if line.contains('[') {
                 return (baris + 1, 1);
@@ -1080,17 +1072,14 @@ fn cari_baris_dari_error(error: &str, source_asli: &str) -> Option<usize> {
         .map(|(_, rest)| rest.trim_end_matches(['.', ' ']).trim_matches('`'))
     {
         // Ekstrak nama ident dari format "identifier 'X'".
-        let nama = target
-            .split_whitespace()
-            .last()
-            .and_then(|w| {
-                let s = w.trim_matches(['\'', '"']).to_string();
-                if s.len() > 1 {
-                    Some(s)
-                } else {
-                    None
-                }
-            });
+        let nama = target.split_whitespace().last().and_then(|w| {
+            let s = w.trim_matches(['\'', '"']).to_string();
+            if s.len() > 1 {
+                Some(s)
+            } else {
+                None
+            }
+        });
         if let Some(nama) = nama {
             if let Some((baris, _)) = source_asli
                 .lines()
