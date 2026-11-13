@@ -457,10 +457,11 @@ fn pos_colon(tokens: &[SpannedToken]) -> usize {
 /// Hanya literal yang diterima untuk `Slice::as_literal()`; ekspresi non-literal
 /// disimpan sebagai `WidthExpr::Expr` dan di-resolve saat elaborasi.
 fn parse_slice_index(tokens: &[SpannedToken]) -> Result<(Slice, usize), String> {
-    let msb = parse_index(tokens, 0, "msb")?;
-    let is_part_select = tokens.get(1).map(|t| &t.token) == Some(&Token::Colon);
+    let (msb, msb_consumed) = parse_index(tokens, 0, "msb")?;
+    let after_msb = msb_consumed;
+    let is_part_select = tokens.get(after_msb).map(|t| &t.token) == Some(&Token::Colon);
     if is_part_select {
-        let lsb = parse_index(tokens, 2, "lsb")?;
+        let (lsb, lsb_consumed) = parse_index(tokens, after_msb + 1, "lsb")?;
         // Validasi lsb <= msb hanya bila kedua batas literal.
         match (&msb, &lsb) {
             (WidthExpr::Literal(m), WidthExpr::Literal(l)) if *l > *m => {
@@ -469,32 +470,42 @@ fn parse_slice_index(tokens: &[SpannedToken]) -> Result<(Slice, usize), String> 
             _ => {}
         }
         // msb, ':', lsb
-        return Ok((Slice { msb, lsb }, 3));
+        return Ok((Slice { msb, lsb }, after_msb + 1 + lsb_consumed));
     }
     Ok((
         Slice {
             msb: msb.clone(),
             lsb: msb,
         },
-        1,
+        after_msb,
     ))
 }
 
-fn parse_index(tokens: &[SpannedToken], at: usize, posisi: &str) -> Result<WidthExpr, String> {
+fn parse_index(
+    tokens: &[SpannedToken],
+    at: usize,
+    posisi: &str,
+) -> Result<(WidthExpr, usize), String> {
     match tokens.get(at).map(|t| &t.token) {
-        Some(Token::Number(n)) => Ok(WidthExpr::Literal(u32::try_from(*n).unwrap_or(0) as usize)),
-        Some(Token::BasedNumber { value, .. }) => Ok(WidthExpr::Literal(
-            u32::try_from(*value).unwrap_or(0) as usize,
+        Some(Token::Number(n)) => Ok((
+            WidthExpr::Literal(u32::try_from(*n).unwrap_or(0) as usize),
+            1,
+        )),
+        Some(Token::BasedNumber { value, .. }) => Ok((
+            WidthExpr::Literal(u32::try_from(*value).unwrap_or(0) as usize),
+            1,
         )),
         // Indeks non-literal: parameter atau ekspresi. Simpan sebagai Expr
         // agar elaborator bisa mengevaluasinya ke literal nanti.
-        Some(Token::Ident(n)) => {
+        Some(Token::Ident(_)) => {
             let (expr, consumed) = super::expression::parse_expression(&tokens[at..])?;
-            let _ = consumed;
-            Ok(WidthExpr::Expr {
-                msb: Box::new(expr),
-                lsb: None,
-            })
+            Ok((
+                WidthExpr::Expr {
+                    msb: Box::new(expr),
+                    lsb: None,
+                },
+                consumed,
+            ))
         }
         other => Err(pesan::tandai(
             tokens,
