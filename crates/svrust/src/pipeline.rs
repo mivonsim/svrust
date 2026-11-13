@@ -15,20 +15,47 @@ use sv_lexer::SpannedToken;
 
 use crate::workspace::Workspace;
 
-/// Ekspansi berkas `.f` (file list) menjadi daftar berkas SV konkret.
+/// Ekspansi berkas `.f` (file list) dan direktori menjadi daftar berkas SV konkret.
 /// Baris kosong dan komentar (`//`, `#`) dilewati; path relatif terhadap
 /// direktori berkas `.f`. Berkas `.f` bersarang juga diekspansi.
+/// Direktori di-rekursif untuk menemukan semua berkas `.sv` dan `.svh`.
 pub fn expand_rtl_inputs(paths: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
     let mut result = Vec::new();
     let mut visited = HashSet::new();
     for p in paths {
         if p.extension().and_then(|e| e.to_str()) == Some("f") {
             expand_f_file(p, &mut result, &mut visited)?;
+        } else if p.is_dir() {
+            expand_dir(p, &mut result, &mut visited)?;
         } else {
             result.push(p.clone());
         }
     }
     Ok(result)
+}
+
+/// Rekursif kumpulkan semua berkas `.sv` dan `.svh` di dalam direktori.
+fn expand_dir(
+    dir: &Path,
+    result: &mut Vec<PathBuf>,
+    visited: &mut HashSet<PathBuf>,
+) -> Result<(), String> {
+    let canonical = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    if !visited.insert(canonical.clone()) {
+        return Ok(());
+    }
+    for entry in fs::read_dir(dir).map_err(|e| format!("gagal baca direktori {}: {}", dir.display(), e))? {
+        let entry = entry.map_err(|e| format!("gagal baca entri direktori: {}", e))?;
+        let path = entry.path();
+        if path.is_dir() {
+            expand_dir(&path, result, visited)?;
+        } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            if ext == "sv" || ext == "svh" {
+                result.push(path);
+            }
+        }
+    }
+    Ok(())
 }
 
 fn expand_f_file(
