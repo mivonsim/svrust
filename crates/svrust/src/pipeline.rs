@@ -548,14 +548,14 @@ pub(crate) fn diagnostic_elaborator(
             .min_by_key(|origin| origin.source.0)
     });
     let Some(origin) = origin else {
-        return diagnostic_tanpa_lokasi("E0201", pesan);
+        return diagnostic_tanpa_lokasi("E0201", pesan, None, None);
     };
 
     let Some(preprocessed) = collection.source_preprocessed.get(&origin.source) else {
-        return diagnostic_tanpa_lokasi("E0201", pesan);
+        return diagnostic_tanpa_lokasi("E0201", pesan, None, None);
     };
     let Some(source_file) = collection.sources.get(origin.source) else {
-        return diagnostic_tanpa_lokasi("E0201", pesan);
+        return diagnostic_tanpa_lokasi("E0201", pesan, None, None);
     };
     let line = baris_sumber_asli(&source_file.text, preprocessed, error.span.line)
         .unwrap_or(error.span.line);
@@ -571,15 +571,21 @@ pub(crate) fn diagnostic_elaborator(
     )
 }
 
-pub(crate) fn diagnostic_tanpa_lokasi(kode: &str, pesan: impl Into<String>) -> crate::CliError {
-    crate::CliError::reported(
-        vec![sv_diag::Diagnostic::new(
-            sv_diag::Severity::Error,
-            kode,
-            pesan,
-        )],
-        SourceMap::new(),
-    )
+pub(crate) fn diagnostic_tanpa_lokasi(
+    kode: &str,
+    pesan: impl Into<String>,
+    sources: Option<SourceMap>,
+    span: Option<sv_diag::Span>,
+) -> crate::CliError {
+    let mut diag = sv_diag::Diagnostic::new(
+        sv_diag::Severity::Error,
+        kode,
+        pesan,
+    );
+    if let Some(span) = span {
+        diag.primary = Some(sv_diag::Label { span, message: String::new() });
+    }
+    crate::CliError::reported(vec![diag], sources.unwrap_or_default())
 }
 
 pub(crate) fn diagnostic_top_error(
@@ -591,13 +597,13 @@ pub(crate) fn diagnostic_top_error(
         if !diagnostics.is_empty() {
             return crate::CliError::reported(diagnostics, collection.sources.clone());
         }
-        return diagnostic_tanpa_lokasi("E0201", pesan);
+        return diagnostic_tanpa_lokasi("E0201", pesan, None, None);
     };
     let Some(origin) = collection.module_origins.get(&module.name) else {
-        return diagnostic_tanpa_lokasi("E0201", pesan);
+        return diagnostic_tanpa_lokasi("E0201", pesan, None, None);
     };
     let Some(source) = collection.sources.get(origin.source) else {
-        return diagnostic_tanpa_lokasi("E0201", pesan);
+        return diagnostic_tanpa_lokasi("E0201", pesan, None, None);
     };
     let span = span_fallback(
         &collection.sources,
@@ -1618,7 +1624,7 @@ mod tests {
 
     #[test]
     fn error_tanpa_span_memakai_kode_domain() {
-        let report = diagnostic_tanpa_lokasi("E0101", "lexical error")
+        let report = diagnostic_tanpa_lokasi("E0101", "lexical error", None, None)
             .report()
             .expect("error harus dirender");
         assert!(report.contains("[E0101]"));
