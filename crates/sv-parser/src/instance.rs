@@ -130,9 +130,9 @@ pub fn parse_instance(tokens: &[SpannedToken]) -> Result<(Instance, usize), Stri
                 return Err(crate::pesan::harap(tokens, idx, "expected nama sinyal"));
             }
             let signal_span = tokens[idx].span;
-            // Jika diawali dengan '{', ini concatenation expression (misal
-            // `.a({b, c})`), bukan nama sinyal polos.
-            if tokens[idx].token == Token::LBrace {
+            // Jika diawali dengan '{' atau `'` (cast/based literal), ini
+            // ekspresi (misal `.a({b, c})` atau `.a('0)`), bukan nama sinyal polos.
+            if tokens[idx].token == Token::LBrace || tokens[idx].token == Token::Cast {
                 let (expr, consumed) = super::expression::parse_expression(&tokens[idx..])?;
                 idx += consumed;
                 if idx >= tokens.len() || tokens[idx].token != Token::RParen {

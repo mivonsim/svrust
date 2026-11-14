@@ -882,7 +882,10 @@ fn lingkup_expr(e: &AstExpr, prefix: &str, koneksi: &KoneksiMap, _asal: Span) ->
             span: *span,
         },
         // Hierarchical ref dan string konstanta tidak perlu prefix instans.
-        AstExpr::HierarchicalRef { .. } | AstExpr::StringConst { .. } => e.clone(),
+        // MemberAccess juga sama.
+        AstExpr::HierarchicalRef { .. }
+        | AstExpr::MemberAccess { .. }
+        | AstExpr::StringConst { .. } => e.clone(),
     }
 }
 

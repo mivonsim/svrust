@@ -373,6 +373,8 @@ fn nama_expr(expr: &mut Expr, ctx: &Ctx) {
             nama_expr(base, ctx);
             nama_expr(index, ctx);
         }
+        // MemberAccess (`base[index].field`) juga bisa merujuk variabel lokal.
+        Expr::MemberAccess { base, .. } => nama_expr(base, ctx),
         Expr::SelectDynamic { base, msb, lsb, .. } => {
             nama_expr(base, ctx);
             nama_expr(msb, ctx);

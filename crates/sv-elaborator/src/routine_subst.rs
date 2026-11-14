@@ -820,6 +820,11 @@ fn rename_expr(expr: &Expr, peta: &HashMap<String, String>) -> Expr {
             parts: parts.clone(),
             span: *span,
         },
+        Expr::MemberAccess { base, member, span } => Expr::MemberAccess {
+            base: Box::new(rename_expr(base, peta)),
+            member: member.clone(),
+            span: *span,
+        },
     }
 }
 

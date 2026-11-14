@@ -75,7 +75,9 @@ pub fn lower_expression_dengan_konteks(
         // resolusi_paket_modul sebelum lowering, jadi tidak boleh sampai ke sini.
         // Bila masih sampai (misal hierarki lintas modul dalam assign), buat
         // referensi sinyal 1-bit default agar elaborasi tidak gagal total.
-        AstExpr::HierarchicalRef { .. } | AstExpr::StringConst { .. } => {
+        AstExpr::HierarchicalRef { .. }
+        | AstExpr::MemberAccess { .. }
+        | AstExpr::StringConst { .. } => {
             Ok(Expr::signal_ref(0, DataType::logic(1)))
         }
         // Literal desimal polos: LRM §5.7.1 menetapkan lebar 32 bit, dan
@@ -827,6 +829,7 @@ pub fn span_expr(expr: &AstExpr) -> sv_lexer::span::Span {
         | AstExpr::SignCast { span, .. }
         | AstExpr::Bits { span, .. }
         | AstExpr::HierarchicalRef { span, .. }
+        | AstExpr::MemberAccess { span, .. }
         | AstExpr::StringConst { span, .. } => *span,
         // `Number`, `Sized`, `SystemTime` tidak menyimpan span.
         AstExpr::Number(_) | AstExpr::Sized { .. } | AstExpr::SystemTime { .. } => {

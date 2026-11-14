@@ -350,7 +350,9 @@ impl TypeTable {
                 args: args.iter().map(|a| self.ganti_literal(a)).collect(),
                 span: *span,
             },
-            Expr::HierarchicalRef { .. } | Expr::StringConst { .. } => expr.clone(),
+            Expr::HierarchicalRef { .. }
+            | Expr::MemberAccess { .. }
+            | Expr::StringConst { .. } => expr.clone(),
         }
     }
 }

@@ -329,6 +329,11 @@ fn parse_struct_union(
     let jenis = if is_struct { "struct" } else { "union" };
     let mut idx = 1; // skip `struct`/`union`
 
+    // Lewati `packed` bila ada: `struct packed { ... }` (LRM §6.7).
+    if tokens.get(idx).is_some_and(|t| matches!(&t.token, Token::Ident(n) if n == "packed")) {
+        idx += 1;
+    }
+
     // Expect `{`
     if tokens.get(idx).map(|t| &t.token) != Some(&Token::LBrace) {
         return Err(crate::pesan::tandai(

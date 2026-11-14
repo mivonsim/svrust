@@ -360,6 +360,7 @@ fn ekspresi(expr: &mut Expr, scale: TimeScale) {
         | Expr::Sized { .. }
         | Expr::StringConst { .. }
         | Expr::HierarchicalRef { .. }
+        | Expr::MemberAccess { .. }
         | Expr::DpiCall { .. } => {}
         Expr::Binary { lhs, rhs, .. } => {
             ekspresi(lhs, scale);

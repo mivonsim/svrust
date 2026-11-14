@@ -518,6 +518,9 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
                 Token::Input => sv_ast::port::PortDirection::Input,
                 Token::Output => sv_ast::port::PortDirection::Output,
                 Token::Inout => sv_ast::port::PortDirection::Inout,
+                // Directive OpenTitan (mis. `INOUT_AO`, `INOUT_AI`) — treat as
+                // inout karena keduanya arah dua arah.
+                Token::Directive(_) => sv_ast::port::PortDirection::Inout,
                 // Tipe net tanpa qualifier arah: `logic clk_i` → clk_i adalah
                 // nama port, tipe adalah logic implisit.
                 Token::Wire | Token::Logic | Token::Reg | Token::Bit | Token::Ident(_) => {
@@ -529,7 +532,7 @@ pub fn parse_module(tokens: &[SpannedToken]) -> Result<Module, String> {
             };
             if matches!(
                 tokens[idx].token,
-                Token::Input | Token::Output | Token::Inout
+                Token::Input | Token::Output | Token::Inout | Token::Directive(_)
             ) {
                 arah_terakhir = direction;
                 tipe_terakhir = None;

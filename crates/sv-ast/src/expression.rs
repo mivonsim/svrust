@@ -63,6 +63,14 @@ pub enum Expr {
         index: Box<Expr>,
         span: Span,
     },
+    /// Akses anggota `base[index].field` — indeks dinamis diikuti oleh nama
+    /// field (LRM §6.6, §7.8). Base boleh berupa Select/SelectDynamic/
+    /// IndexDynamic yang diikuti oleh `.member`.
+    MemberAccess {
+        base: Box<Expr>,
+        member: String,
+        span: Span,
+    },
     /// Part-select dinamis `a[msb:lsb]` dengan batas non-konstanta (LRM §7.8).
     ///
     /// Memerlukan helper runtime untuk menghitung irisan pada saat simulasi.

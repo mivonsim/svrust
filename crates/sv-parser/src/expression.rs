@@ -295,9 +295,10 @@ fn parse_postfix(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
                     parts: vec![name, part],
                     span,
                 },
-                Expr::Select { span, .. } | Expr::SelectDynamic { span, .. } => {
-                    Expr::HierarchicalRef {
-                        parts: vec![part],
+                Expr::Select { span, .. } | Expr::SelectDynamic { span, .. } | Expr::IndexDynamic { span, .. } => {
+                    Expr::MemberAccess {
+                        base: Box::new(base),
+                        member: part,
                         span,
                     }
                 }
@@ -1122,6 +1123,14 @@ fn parse_primary(tokens: &[SpannedToken]) -> Result<(Expr, usize), String> {
                 },
                 idx,
             ))
+        }
+        // Directive (makro backtick yang tidak diperluas preprocessor, mis.
+        // `` `NUM_REQUESTS ``, `` `DATA_LENGTH ``). Tangani sebagai
+        // placeholder identifier agar ekspresi yang menggunakannya tidak gagal
+        // total saat parsing.
+        Token::Directive(nama) => {
+            let span = tokens[0].span;
+            Ok((Expr::Ident { name: nama.clone(), span }, 1))
         }
         _ => Err(crate::pesan::tandai(
             tokens,

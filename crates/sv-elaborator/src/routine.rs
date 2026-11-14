@@ -1070,6 +1070,11 @@ impl<'a> Inliner<'a> {
                 parts: parts.clone(),
                 span: *span,
             },
+            Expr::MemberAccess { base, member, span } => Expr::MemberAccess {
+                base: Box::new(self.expr(base)?),
+                member: member.clone(),
+                span: *span,
+            },
         })
     }
 

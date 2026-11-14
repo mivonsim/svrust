@@ -533,8 +533,10 @@ fn subst_expr(expr: &AstExpr, env: &GenvarEnv, scope: &ScopeBlok) -> AstExpr {
             }
         }
         // Hierarchical ref dan string konstanta tidak berisi genvar yang perlu
-        // disubstitusi, jadi dikembalikan apa adanya.
-        AstExpr::HierarchicalRef { .. } | AstExpr::StringConst { .. } => expr.clone(),
+        // disubstitusi, jadi dikembalikan apa adanya. MemberAccess juga sama.
+        AstExpr::HierarchicalRef { .. }
+        | AstExpr::MemberAccess { .. }
+        | AstExpr::StringConst { .. } => expr.clone(),
         // Panggilan function sudah ter-expand sebelum elaborasi, tapi nama
         // argumennya tetap perlu disubstitusi bila node ini lolos ke sini.
         AstExpr::FunctionCall { name, args, span } => AstExpr::FunctionCall {

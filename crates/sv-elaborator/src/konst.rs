@@ -350,6 +350,7 @@ fn semua_ident_dikenal(expr: &Expr, params: &ParamTable) -> bool {
         Expr::IndexDynamic { base, index, .. } => {
             semua_ident_dikenal(base, params) && semua_ident_dikenal(index, params)
         }
+        Expr::MemberAccess { base, .. } => semua_ident_dikenal(base, params),
         Expr::HierarchicalRef { .. } | Expr::StringConst { .. } => false,
         Expr::SystemTime { .. } => true,
         Expr::FunctionCall { .. } => false,

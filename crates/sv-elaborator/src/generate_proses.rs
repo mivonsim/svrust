@@ -389,8 +389,10 @@ pub(crate) fn subst_expr(expr: &AstExpr, env: &GenvarEnv, scope: &ScopeBlok) -> 
             span: *span,
         },
         // Hierarchical ref dan string konstanta tidak berisi genvar yang perlu
-        // disubstitusi.
-        AstExpr::HierarchicalRef { .. } | AstExpr::StringConst { .. } => expr.clone(),
+        // disubstitusi. MemberAccess juga sama.
+        AstExpr::HierarchicalRef { .. }
+        | AstExpr::MemberAccess { .. }
+        | AstExpr::StringConst { .. } => expr.clone(),
     }
 }
 
