@@ -11,6 +11,14 @@ pub mod workspace;
 pub use cli_error::CliError;
 
 pub fn run(args: Vec<String>) {
+    // Konfigurasi rayon thread pool dengan stack yang lebih besar
+    // untuk menghindari stack overload saat memproses banyak berkas
+    // RTL sekaligus (mis. seluruh direktori opentitan dengan 3900+ berkas).
+    rayon::ThreadPoolBuilder::new()
+        .stack_size(64 * 1024 * 1024) // 64MB per thread
+        .build_global()
+        .ok();
+
     use crate::cli::{parse_args, print_usage};
     match parse_args(args) {
         Ok(opts) => {
